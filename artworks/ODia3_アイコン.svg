@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="1000"
+   height="1000"
+   viewBox="0 0 264.5833 264.5833"
+   version="1.1"
+   id="svg1"
+   inkscape:version="1.4.4 (dcaf3e7d9e, 2026-05-05)"
+   sodipodi:docname="ODia3_アイコン.svg"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:cc="http://creativecommons.org/ns#">
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="px"
+     showguides="false"
+     inkscape:zoom="0.8"
+     inkscape:cx="500.625"
+     inkscape:cy="460"
+     inkscape:window-width="1920"
+     inkscape:window-height="1008"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="layer1" />
+  <defs
+     id="defs1" />
+  <g
+     inkscape:label="Layer 1"
+     inkscape:groupmode="layer"
+     id="layer1">
+    <rect
+       style="fill:#cc0088;fill-opacity:1;stroke-width:0;stroke-linecap:round;stroke-linejoin:round;paint-order:stroke markers fill;stroke-dasharray:none"
+       id="rect1"
+       width="145.52081"
+       height="211.66664"
+       x="119.06249"
+       y="21.16667" />
+    <path
+       id="rect2"
+       style="fill:#dd77aa;fill-opacity:1;stroke-width:0;stroke-linecap:round;stroke-linejoin:round;paint-order:stroke markers fill;stroke-dasharray:none"
+       d="M 59.531238,34.395829 V 246.06246 L 119.06249,232.8333 V 21.166664 Z"
+       sodipodi:nodetypes="ccccc" />
+    <path
+       id="rect3"
+       style="fill:#b20077;fill-opacity:1;stroke-width:0;stroke-linecap:round;stroke-linejoin:round;paint-order:stroke markers fill;stroke-dasharray:none"
+       d="M 0,21.16667 V 232.8333 l 59.531247,13.22917 V 34.395835 Z"
+       sodipodi:nodetypes="ccccc" />
+    <path
+       id="path1"
+       style="fill:#ffffff;fill-opacity:1;stroke-width:0;stroke-linecap:round;stroke-linejoin:round;paint-order:stroke markers fill;stroke-dasharray:none"
+       d="M 171.97915 55.562493 A 34.395828 34.395828 0 0 0 137.58332 89.958322 A 34.395828 34.395828 0 0 0 171.97915 124.35415 A 34.395828 34.395828 0 0 0 206.37497 89.958322 A 34.395828 34.395828 0 0 0 171.97915 55.562493 z M 171.97915 71.437491 A 18.52083 18.52083 0 0 1 190.49998 89.958322 A 18.52083 18.52083 0 0 1 171.97915 108.47915 A 18.52083 18.52083 0 0 1 153.45831 89.958322 A 18.52083 18.52083 0 0 1 171.97915 71.437491 z " />
+    <path
+       id="path2"
+       style="fill:#ffffff;fill-opacity:1;stroke-width:0;stroke-linecap:round;stroke-linejoin:round;paint-order:stroke markers fill;stroke-dasharray:none"
+       d="m 216.95831,55.562493 v 15.874998 c 5.84501,1e-6 10.58333,4.73832 10.58333,10.583332 0,5.845012 -4.73832,10.583331 -10.58333,10.583332 v 15.874995 c 8.03689,0 14.55208,6.51519 14.55208,14.55208 0,8.0369 -6.51518,14.55209 -14.55208,14.55209 -3.85944,-4e-5 -7.56079,-1.53322 -10.28981,-4.26228 l -11.22516,11.22516 c 5.70609,5.70621 13.44525,8.91207 21.51497,8.91211 16.80441,8e-5 30.44172,-13.62267 30.42708,-30.42708 -0.008,-8.97602 -4.00701,-17.48408 -10.88771,-23.248186 4.43313,-4.855421 6.91297,-11.187443 6.91896,-17.762221 0.0133,-14.612526 -11.8458,-26.45833 -26.45833,-26.45833 z"
+       sodipodi:nodetypes="ccsccssccsscsc" />
+    <text
+       xml:space="preserve"
+       style="font-weight:bold;font-size:47.625px;line-height:1.5;font-family:'Google Sans Flex';-inkscape-font-specification:'Google Sans Flex Bold';letter-spacing:0px;writing-mode:lr-tb;direction:ltr;fill:#ffffff;fill-opacity:1;stroke-width:0;stroke-linecap:round;stroke-linejoin:round;paint-order:stroke markers fill;stroke-dasharray:none"
+       x="153.22287"
+       y="200.11757"
+       id="text1">Dia</text>
+  </g>
+  <metadata
+     id="metadata1">
+    <rdf:RDF>
+      <cc:License
+         rdf:about="http://creativecommons.org/publicdomain/zero/1.0/">
+        <cc:permits
+           rdf:resource="http://creativecommons.org/ns#Reproduction" />
+        <cc:permits
+           rdf:resource="http://creativecommons.org/ns#Distribution" />
+        <cc:permits
+           rdf:resource="http://creativecommons.org/ns#DerivativeWorks" />
+      </cc:License>
+      <cc:Work
+         rdf:about="">
+        <cc:license
+           rdf:resource="http://creativecommons.org/publicdomain/zero/1.0/" />
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+</svg>
