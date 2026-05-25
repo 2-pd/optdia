@@ -5,7 +5,7 @@ import sys
 from PySide6.QtWidgets import QApplication, QMainWindow
 
 
-APP_NAME = "ODia3"
+APP_NAME = "OptDia"
 __version__ = "26.06-1"
 
 
