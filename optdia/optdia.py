@@ -20,6 +20,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"{APP_NAME} v{__version__}")
         self.resize(960, 640)
 
+        # メニューバーの設定
+        self._init_menu_bar()
+
         # セントラルウィジェットの設定
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -74,6 +77,24 @@ class MainWindow(QMainWindow):
         # 右側のコンテンツ表示エリア (将来の拡張用)
         self.content_container = QWidget()
         main_layout.addWidget(self.content_container, stretch=1)
+
+    def _init_menu_bar(self):
+        """メニューバーを初期化し、基本項目を追加する"""
+        menu_bar = self.menuBar()
+
+        # ファイル(F)
+        file_menu = menu_bar.addMenu("ファイル(&F)")
+        file_menu.addAction("新規プロジェクト(&N)")
+        file_menu.addAction("プロジェクトを開く(&O)")
+        file_menu.addSeparator()
+        file_menu.addAction("上書き保存(&S)")
+        file_menu.addAction("名前を付けて保存(&A)")
+        file_menu.addSeparator()
+        file_menu.addAction("終了(&Q)")
+
+        # 編集(E)、ヘルプ(H) を追加
+        menu_bar.addMenu("編集(&E)")
+        menu_bar.addMenu("ヘルプ(&H)")
 
 
 # アプリ起動処理
