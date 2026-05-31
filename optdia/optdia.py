@@ -135,7 +135,9 @@ class MainWindow(QMainWindow):
         new_project_action = file_menu.addAction("新規プロジェクト(&N)")
         new_project_action.setShortcut("Ctrl+N")
         new_project_action.triggered.connect(self._on_new_project)
-        file_menu.addAction("プロジェクトを開く(&O)")
+        open_project_action = file_menu.addAction("プロジェクトを開く(&O)")
+        open_project_action.setShortcut("Ctrl+O")
+        open_project_action.triggered.connect(self._on_open_project)
         file_menu.addSeparator()
         save_action = file_menu.addAction("上書き保存(&S)")
         save_action.setShortcut("Ctrl+S")
@@ -156,6 +158,26 @@ class MainWindow(QMainWindow):
         """新規プロジェクトとして、新しくアプリを起動する"""
         # 現在実行中の Python インタープリタとスクリプトパスを使用して、引数なしで新しいプロセスを開始
         subprocess.Popen([sys.executable, sys.argv[0]])
+
+    def _on_open_project(self):
+        """プロジェクトを開くダイアログを表示し、条件に応じて現在のプロセスまたは別プロセスで開く"""
+        filepath, _ = QFileDialog.getOpenFileName(
+            self,
+            "プロジェクトを開く",
+            "",
+            "OptDiaプロジェクトファイル (*.optdia)"
+        )
+        if not filepath:
+            return
+
+        # 現在のプロジェクトが「編集されていない新規状態」であれば、現在のプロセスでロードする
+        if self.filepath is None and not self.is_modified:
+            self.project = load_project(filepath)
+            self.filepath = filepath
+            self.set_modified(False)
+        else:
+            # それ以外（既にファイルを開いているか、変更がある場合）は別プロセスで開く
+            subprocess.Popen([sys.executable, sys.argv[0], filepath])
 
     def _on_save_project(self):
         """現在のファイルパスに上書き保存する。パスがない場合は名前を付けて保存を実行する"""
