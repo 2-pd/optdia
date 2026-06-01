@@ -5,11 +5,51 @@ import sys
 import os
 import subprocess
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFileDialog, QMessageBox
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QPushButton, QFileDialog, QMessageBox, QDialog, QLabel,
+    QLineEdit, QTextEdit, QDialogButtonBox
+)
 from project import OptDiaProject, load_project
 
 APP_NAME = "OptDia"
 __version__ = "26.06-1"
+
+
+# プロジェクトのメタデータを編集するダイアログ
+class ProjectPropertiesDialog(QDialog):
+    def __init__(self, parent, project: OptDiaProject):
+        super().__init__(parent)
+        self.project = project
+        self.setWindowTitle("プロジェクトのプロパティ")
+        self.resize(480, 480)
+
+        layout = QVBoxLayout(self)
+
+        layout.addWidget(QLabel("路線系統名:"))
+        self.name_edit = QLineEdit(self.project.metadata.get("railroad_name", ""))
+        layout.addWidget(self.name_edit)
+
+        layout.addWidget(QLabel("説明:"))
+        self.description_edit = QTextEdit(self.project.metadata.get("description", ""))
+        layout.addWidget(self.description_edit)
+
+        layout.addWidget(QLabel("ライセンス:"))
+        self.license_edit = QTextEdit(self.project.metadata.get("license_text", ""))
+        layout.addWidget(self.license_edit)
+
+        # OK / Cancel ボタン
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def accept(self):
+        """メタデータを更新してダイアログを閉じる"""
+        self.project.metadata["railroad_name"] = self.name_edit.text()
+        self.project.metadata["description"] = self.description_edit.toPlainText()
+        self.project.metadata["license_text"] = self.license_edit.toPlainText()
+        super().accept()
 
 
 # メインウィンドウ
@@ -146,6 +186,9 @@ class MainWindow(QMainWindow):
         save_as_action.setShortcut("Ctrl+Shift+S")
         save_as_action.triggered.connect(self._on_save_as_project)
         file_menu.addSeparator()
+        properties_action = file_menu.addAction("プロジェクトのプロパティ")
+        file_menu.addSeparator()
+        properties_action.triggered.connect(self._on_project_properties)
         exit_action = file_menu.addAction("終了(&Q)")
         exit_action.setShortcut("Ctrl+Q")
         exit_action.triggered.connect(self.close)
@@ -175,6 +218,7 @@ class MainWindow(QMainWindow):
             self.project = load_project(filepath)
             self.filepath = filepath
             self.set_modified(False)
+            self._update_window_title()
         else:
             # それ以外（既にファイルを開いているか、変更がある場合）は別プロセスで開く
             subprocess.Popen([sys.executable, sys.argv[0], filepath])
@@ -203,6 +247,12 @@ class MainWindow(QMainWindow):
             self.project.save_project(filepath)
             self.filepath = filepath
             self.set_modified(False)
+
+    def _on_project_properties(self):
+        """プロジェクトのプロパティダイアログを表示する"""
+        dialog = ProjectPropertiesDialog(self, self.project)
+        if dialog.exec() == QDialog.Accepted:
+            self.set_modified(True)
 
 
 # アプリ起動処理
