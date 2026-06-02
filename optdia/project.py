@@ -1,5 +1,6 @@
 import json
 import os
+import gzip
 
 # プロジェクトファイルの仕様バージョン (optdia_project.ts の定義に準拠)
 PROJECT_SCHEMA_VERSION = "2026.06.001"
@@ -128,9 +129,13 @@ class OptDiaProject:
     def save_project(self, filepath: str):
         """
         プロジェクトデータを指定されたパスに JSON 形式で保存します。
+        拡張子が .optd の場合は gzip 圧縮を行います。
         """
         data = self.to_dict()
-        with open(filepath, "w", encoding="utf-8") as f:
+        is_compressed = filepath.lower().endswith(".optd")
+        open_func = gzip.open if is_compressed else open
+
+        with open_func(filepath, "wt", encoding="utf-8") as f:
             # 日本語がエスケープされないよう ensure_ascii=False を指定し、インデント付きで保存します
             json.dump(data, f, ensure_ascii=False, indent=4)
 
@@ -138,11 +143,15 @@ class OptDiaProject:
 def load_project(filepath: str) -> OptDiaProject:
     """
     指定されたパスから JSON ファイルを読み込み、OptDiaProject インスタンスを生成します。
+    拡張子が .optd の場合は gzip 展開を行います。
     """
     if not os.path.exists(filepath):
         raise FileNotFoundError(f"Project file not found: {filepath}")
 
-    with open(filepath, "r", encoding="utf-8") as f:
+    is_compressed = filepath.lower().endswith(".optd")
+    open_func = gzip.open if is_compressed else open
+
+    with open_func(filepath, "rt", encoding="utf-8") as f:
         data = json.load(f)
     
     return OptDiaProject(data)

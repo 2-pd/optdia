@@ -208,7 +208,7 @@ class MainWindow(QMainWindow):
             self,
             "プロジェクトを開く",
             "",
-            "OptDiaプロジェクトファイル (*.optdia)"
+            "OptDiaプロジェクトファイル (*.optdia *.optd)"
         )
         if not filepath:
             return
@@ -233,16 +233,19 @@ class MainWindow(QMainWindow):
 
     def _on_save_as_project(self):
         """名前を付けて保存ダイアログを表示し、プロジェクトを保存する"""
-        filepath, _ = QFileDialog.getSaveFileName(
+        filepath, selected_filter = QFileDialog.getSaveFileName(
             self,
             "名前を付けて保存",
             "",
-            "OptDiaプロジェクトファイル (*.optdia)"
+            "OptDiaプロジェクトファイル (*.optd);;非圧縮OptDiaプロジェクトファイル (*.optdia)"
         )
         if filepath:
             # 拡張子が指定されていない場合に補完する
-            if not filepath.lower().endswith(".optdia"):
-                filepath += ".optdia"
+            if not (filepath.lower().endswith(".optdia") or filepath.lower().endswith(".optd")):
+                if ".optd" in selected_filter:
+                    filepath += ".optd"
+                else:
+                    filepath += ".optdia"
             
             self.project.save_project(filepath)
             self.filepath = filepath
