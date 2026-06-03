@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 from project import OptDiaProject, load_project
 
+# アプリケーション名とバージョン番号
 APP_NAME = "OptDia"
 __version__ = "26.06-1"
 
@@ -50,6 +51,49 @@ class ProjectPropertiesDialog(QDialog):
         self.project.metadata["description"] = self.description_edit.toPlainText()
         self.project.metadata["license_text"] = self.license_edit.toPlainText()
         super().accept()
+
+
+# アプリケーション情報ダイアログ
+class AboutDialog(QDialog):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle(f"{APP_NAME} について")
+        self.setFixedSize(480, 320)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(40, 40, 40, 20)
+
+        # アプリケーション名
+        name_label = QLabel(APP_NAME)
+        name_label.setStyleSheet("font-size: 24px; font-weight: bold;")
+        name_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(name_label)
+
+        # バージョン番号
+        version_label = QLabel(f"Version {__version__}")
+        version_label.setStyleSheet("font-size: 16px; color: #555555;")
+        version_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(version_label)
+
+        # 将来的な拡張用のスペース
+        layout.addStretch()
+
+        # ボタンエリア (情報のコピー / OK)
+        button_layout = QHBoxLayout()
+        copy_btn = QPushButton("コピー(&C)")
+        copy_btn.clicked.connect(self._copy_to_clipboard)
+        ok_btn = QPushButton("OK")
+        ok_btn.clicked.connect(self.accept)
+
+        button_layout.addStretch()
+        button_layout.addWidget(copy_btn)
+        button_layout.addWidget(ok_btn)
+        layout.addLayout(button_layout)
+
+    def _copy_to_clipboard(self):
+        """アプリ名とバージョン番号をクリップボードにコピーする"""
+        clipboard = QApplication.clipboard()
+        clipboard.setText(f"{APP_NAME} v{__version__}")
 
 
 # メインウィンドウ
@@ -193,9 +237,13 @@ class MainWindow(QMainWindow):
         exit_action.setShortcut("Ctrl+Q")
         exit_action.triggered.connect(self.close)
 
-        # 編集(E)、ヘルプ(H) を追加
+        # 編集(E)
         menu_bar.addMenu("編集(&E)")
-        menu_bar.addMenu("ヘルプ(&H)")
+
+        # ヘルプ(H)
+        help_menu = menu_bar.addMenu("ヘルプ(&H)")
+        about_action = help_menu.addAction(f"{APP_NAME}について(&A)")
+        about_action.triggered.connect(self._on_about)
 
     def _on_new_project(self):
         """新規プロジェクトとして、新しくアプリを起動する"""
@@ -256,6 +304,11 @@ class MainWindow(QMainWindow):
         dialog = ProjectPropertiesDialog(self, self.project)
         if dialog.exec() == QDialog.Accepted:
             self.set_modified(True)
+
+    def _on_about(self):
+        """バージョン情報を表示する"""
+        dialog = AboutDialog(self)
+        dialog.exec()
 
 
 # アプリ起動処理
