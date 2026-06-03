@@ -5,11 +5,13 @@ import sys
 import os
 import subprocess
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QFileDialog, QMessageBox, QDialog, QLabel,
     QLineEdit, QTextEdit, QDialogButtonBox
 )
+import assets_rc
 from project import OptDiaProject, load_project
 
 # アプリケーション名とバージョン番号
@@ -62,6 +64,12 @@ class AboutDialog(QDialog):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(40, 40, 40, 20)
+
+        # アイコン
+        icon_label = QLabel()
+        icon_label.setPixmap(QIcon(":/assets/app_icon.ico").pixmap(128, 128))
+        icon_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(icon_label)
 
         # アプリケーション名
         name_label = QLabel(APP_NAME)
@@ -314,6 +322,9 @@ class MainWindow(QMainWindow):
 # アプリ起動処理
 def main():
     app = QApplication(sys.argv)
+
+    # アプリケーションアイコンの設定
+    app.setWindowIcon(QIcon(":/assets/app_icon.ico"))
 
     # コマンドライン引数でファイルパスが指定されている場合はロード、
     # そうでない場合は新規プロジェクトを生成
