@@ -3,6 +3,7 @@
 
 import sys
 import os
+import re
 import subprocess
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
@@ -56,6 +57,77 @@ class ProjectPropertiesDialog(QDialog):
         super().accept()
 
 
+# 路線の追加ダイアログ
+class AddLineDialog(QDialog):
+    def __init__(self, parent, project: OptDiaProject):
+        super().__init__(parent)
+        self.project = project
+        self.setWindowTitle("路線の追加")
+        self.setFixedSize(480, 240)
+
+        layout = QVBoxLayout(self)
+
+        # 路線ID
+        layout.addWidget(QLabel("路線ID:"))
+        self.id_edit = QLineEdit()
+        self.id_edit.textChanged.connect(self._clear_id_error)
+        layout.addWidget(self.id_edit)
+
+        # 警告表示スペース
+        self.warning_label = QLabel("")
+        self.warning_label.setStyleSheet("color: red; padding-left: 5px;")
+        layout.addWidget(self.warning_label)
+
+        # 路線名
+        layout.addWidget(QLabel("路線名:"))
+        self.name_edit = QLineEdit()
+        layout.addWidget(self.name_edit)
+
+        layout.addStretch()
+
+        # ボタンエリア (追加 / キャンセル)
+        button_layout = QHBoxLayout()
+        self.add_button = QPushButton("追加")
+        self.cancel_button = QPushButton("キャンセル")
+
+        button_layout.addStretch()
+        button_layout.addWidget(self.add_button)
+        button_layout.addWidget(self.cancel_button)
+        layout.addLayout(button_layout)
+
+        self.add_button.clicked.connect(self._on_add_clicked)
+        self.cancel_button.clicked.connect(self.reject)
+
+    def _clear_id_error(self):
+        """ID入力欄のエラー表示状態をクリアする"""
+        self.id_edit.setStyleSheet("")
+        self.warning_label.setText("")
+
+    def _on_add_clicked(self):
+        """入力内容を検証し、問題なければ accept する"""
+        line_id = self.id_edit.text().strip()
+
+        # スタイルをリセット
+        self.id_edit.setStyleSheet("")
+
+        if not line_id:
+            self.warning_label.setText("IDを指定してください")
+            self.id_edit.setStyleSheet("background-color: #ffeeee;")
+            return
+
+        if not re.match(r"^[a-zA-Z0-9_]+$", line_id):
+            self.warning_label.setText("IDには半角英数字とアンダーバーのみが使用可能です")
+            self.id_edit.setStyleSheet("background-color: #ffeeee;")
+            return
+
+        if line_id in self.project.lines:
+            self.warning_label.setText("既に使用されているIDです")
+            self.id_edit.setStyleSheet("background-color: #ffeeee;")
+            return
+
+        self.accept()
+
+
 # 路線・駅情報編集ダイアログ
 class LineStationEditorDialog(QDialog):
     def __init__(self, parent, project: OptDiaProject):
@@ -88,8 +160,9 @@ class LineStationEditorDialog(QDialog):
         self._populate_line_list()
 
         # 路線追加ボタン
-        add_line_button = QPushButton("路線の追加")
-        left_layout.addWidget(add_line_button)
+        self.add_line_button = QPushButton("路線の追加")
+        self.add_line_button.clicked.connect(self._on_add_line)
+        left_layout.addWidget(self.add_line_button)
 
         main_layout.addWidget(left_panel)
 
@@ -122,6 +195,31 @@ class LineStationEditorDialog(QDialog):
         self.project.lines_order = new_order
         if hasattr(self.parent(), "set_modified"):
             self.parent().set_modified(True)
+
+    def _on_add_line(self):
+        """路線の追加ダイアログを表示する"""
+        dialog = AddLineDialog(self, self.project)
+        if dialog.exec() == QDialog.Accepted:
+            line_id = dialog.id_edit.text().strip()
+            line_name = dialog.name_edit.text().strip()
+
+            # プロジェクトデータに新規路線を追加
+            self.project.lines[line_id] = {
+                "line_id": line_id,
+                "line_name": line_name,
+                "line_color": "#333333",
+                "line_symbol": None,
+                "inbound_direction_is_forward_direction": True,
+                "station_list": []
+            }
+            self.project.lines_order.append(line_id)
+
+            # リスト表示を更新
+            self._populate_line_list()
+            
+            # 変更フラグを立てる
+            if hasattr(self.parent(), "set_modified"):
+                self.parent().set_modified(True)
 
 
 # アプリケーション情報ダイアログ
