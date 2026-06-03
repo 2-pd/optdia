@@ -9,7 +9,8 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QFileDialog, QMessageBox, QDialog, QLabel,
-    QLineEdit, QTextEdit, QDialogButtonBox
+    QLineEdit, QTextEdit, QDialogButtonBox, QListWidget, QTabWidget,
+    QListWidgetItem
 )
 import assets_rc
 from project import OptDiaProject, load_project
@@ -53,6 +54,74 @@ class ProjectPropertiesDialog(QDialog):
         self.project.metadata["description"] = self.description_edit.toPlainText()
         self.project.metadata["license_text"] = self.license_edit.toPlainText()
         super().accept()
+
+
+# 路線・駅情報編集ダイアログ
+class LineStationEditorDialog(QDialog):
+    def __init__(self, parent, project: OptDiaProject):
+        super().__init__(parent)
+        self.project = project
+        self.setWindowTitle("路線・駅情報")
+        self.setFixedSize(720, 480)
+
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # 左側の垂直レイアウト (幅200px固定)
+        left_panel = QWidget()
+        left_panel.setFixedWidth(200)
+        left_panel.setStyleSheet("background-color: #f7f7f7; border-right: 1px solid #dddddd;")
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(10, 10, 10, 10)
+        left_layout.setSpacing(5)
+
+        left_layout.addWidget(QLabel("<b>路線の一覧</b>"))
+        
+        # 路線リスト
+        self.line_list_widget = QListWidget()
+        self.line_list_widget.setDragDropMode(QListWidget.InternalMove)
+        self.line_list_widget.model().rowsMoved.connect(self._on_lines_reordered)
+        left_layout.addWidget(self.line_list_widget)
+
+        # 初期リストの構築
+        self._populate_line_list()
+
+        # 路線追加ボタン
+        add_line_button = QPushButton("路線の追加")
+        left_layout.addWidget(add_line_button)
+
+        main_layout.addWidget(left_panel)
+
+        # 右側のタブウィジェット
+        right_panel = QTabWidget()
+        right_panel.addTab(QWidget(), "路線情報")
+        right_panel.addTab(QWidget(), "駅情報")
+        main_layout.addWidget(right_panel)
+
+    def _populate_line_list(self):
+        """プロジェクトに登録されている路線をリストに表示する"""
+        self.line_list_widget.clear()
+        for line_id in self.project.lines_order:
+            line = self.project.lines[line_id]
+            symbol = line.get("line_symbol", "")
+            name = line.get("line_name", "")
+            display_text = f"[{symbol}]{name}" if symbol else name
+            
+            item = QListWidgetItem(display_text)
+            item.setData(Qt.UserRole, line_id)
+            self.line_list_widget.addItem(item)
+
+    def _on_lines_reordered(self, parent, start, end, destination, row):
+        """並び替えられたリストの状態をプロジェクトデータに反映する"""
+        new_order = []
+        for i in range(self.line_list_widget.count()):
+            item = self.line_list_widget.item(i)
+            new_order.append(item.data(Qt.UserRole))
+        
+        self.project.lines_order = new_order
+        if hasattr(self.parent(), "set_modified"):
+            self.parent().set_modified(True)
 
 
 # アプリケーション情報ダイアログ
@@ -155,6 +224,7 @@ class MainWindow(QMainWindow):
         # 1つ目のボタン: 路線・駅情報
         self.btn_lines = QPushButton("路線・駅情報")
         self.btn_lines.setFixedHeight(50)
+        self.btn_lines.clicked.connect(self._on_edit_lines_stations)
         self.btn_lines.setStyleSheet(button_style)
         sidebar_layout.addWidget(self.btn_lines)
 
@@ -316,6 +386,11 @@ class MainWindow(QMainWindow):
     def _on_about(self):
         """バージョン情報を表示する"""
         dialog = AboutDialog(self)
+        dialog.exec()
+
+    def _on_edit_lines_stations(self):
+        """路線・駅情報編集ダイアログを表示する"""
+        dialog = LineStationEditorDialog(self, self.project)
         dialog.exec()
 
 
