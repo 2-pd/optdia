@@ -80,9 +80,9 @@ interface optdia_station_track {
 // 路線に駅情報を紐付けるためのオブジェクト
 interface optdia_line_station {
     station_id : string; // 駅ID
-    station_number : string; // 駅番号
-    inbound_main_track : string; // 上り本線の乗り場ID
-    outbound_main_track : string; // 下り本線の乗り場ID
+    station_number : string | null; // 駅番号
+    inbound_main_track : string | null; // 上り本線の乗り場ID
+    outbound_main_track : string | null; // 下り本線の乗り場ID
     absolute_standard_running_time : number | null; // 起点駅からの基準運転時分(秒単位、未入力の場合はnull)
 }
 
@@ -155,7 +155,7 @@ interface optdia_train {
 // 列車の経由駅情報
 interface optdia_train_stop {
     station_id : string; // 駅ID
-    track_id : string; // 乗り場ID
+    track_id : string | null; // 乗り場ID
     arrival_time : string; // 到着時刻(hh:mm:ss形式)
     departure_time : string; // 発車時刻(hh:mm:ss形式)
     stop_type : 1 | 0 | -1; // 客扱い情報(1:停車、0:通過、-1運転停車)

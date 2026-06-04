@@ -11,7 +11,8 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QFileDialog, QMessageBox, QDialog, QLabel,
     QLineEdit, QTextEdit, QDialogButtonBox, QListWidget, QTabWidget,
-    QListWidgetItem, QCheckBox, QColorDialog, QStackedWidget
+    QListWidgetItem, QCheckBox, QColorDialog, QStackedWidget,
+    QRadioButton, QComboBox
 )
 import assets_rc
 from project import OptDiaProject, load_project
@@ -140,6 +141,153 @@ class AddLineDialog(QDialog):
         self.accept()
 
 
+# 駅の追加ダイアログ
+class AddStationDialog(QDialog):
+    def __init__(self, parent, project: OptDiaProject, exclude_line_id: str = None):
+        super().__init__(parent)
+        self.project = project
+        self.setWindowTitle("駅の追加")
+        self.setFixedSize(480, 480)
+
+        layout = QVBoxLayout(self)
+
+        # 選択肢
+        self.new_station_radio = QRadioButton("このプロジェクトでは未登録の駅を追加する")
+        self.existing_station_radio = QRadioButton("既に別路線に登録済みの駅を追加する")
+        self.new_station_radio.setChecked(True)
+        layout.addWidget(self.new_station_radio)
+        layout.addWidget(self.existing_station_radio)
+
+        # 入力エリアのスタックウィジェット
+        self.input_stack = QStackedWidget()
+        layout.addWidget(self.input_stack)
+
+        # --- 選択肢1: 新規駅 ---
+        new_station_page = QWidget()
+        new_layout = QVBoxLayout(new_station_page)
+        new_layout.addWidget(QLabel("駅ID:"))
+        self.station_id_edit = QLineEdit()
+        self.station_id_edit.setPlaceholderText("例) osaka")
+        self.station_id_edit.textChanged.connect(self._clear_id_error)
+        new_layout.addWidget(self.station_id_edit)
+
+        # 警告表示スペース
+        self.warning_label = QLabel("")
+        self.warning_label.setStyleSheet("color: red; padding-left: 5px;")
+        new_layout.addWidget(self.warning_label)
+
+        new_layout.addWidget(QLabel("駅名:"))
+        self.station_name_edit = QLineEdit()
+        self.station_name_edit.setPlaceholderText("例) 大阪")
+        new_layout.addWidget(self.station_name_edit)
+
+        # 駅名(ひらがな)
+        new_layout.addWidget(QLabel("駅名(ひらがな):"))
+        self.station_name_kana_edit = QLineEdit()
+        self.station_name_kana_edit.setPlaceholderText("例) おおさか")
+        new_layout.addWidget(self.station_name_kana_edit)
+        new_layout.addStretch()
+        self.input_stack.addWidget(new_station_page)
+
+        # --- 選択肢2: 既存駅 ---
+        existing_station_page = QWidget()
+        existing_layout = QVBoxLayout(existing_station_page)
+        existing_layout.addWidget(QLabel("路線の選択:"))
+        self.line_combo = QComboBox()
+        existing_layout.addWidget(self.line_combo)
+
+        existing_layout.addWidget(QLabel("駅の選択:"))
+        self.station_combo = QComboBox()
+        existing_layout.addWidget(self.station_combo)
+        existing_layout.addStretch()
+        self.input_stack.addWidget(existing_station_page)
+
+        # ラジオボタンの切り替えイベント
+        self.new_station_radio.toggled.connect(self._on_radio_toggled)
+        self.existing_station_radio.toggled.connect(self._on_radio_toggled)
+
+        # 既存駅ページ用のデータ投入
+        for line_id in self.project.lines_order:
+            if line_id == exclude_line_id:
+                continue
+            line_name = self.project.lines[line_id].get("line_name", line_id)
+            self.line_combo.addItem(line_name, line_id)
+        
+        # 他の路線が存在しない場合は、既存駅からの追加を選択不可にする
+        if self.line_combo.count() == 0:
+            self.existing_station_radio.setEnabled(False)
+
+        self.line_combo.currentIndexChanged.connect(self._on_line_combo_changed)
+        self._on_line_combo_changed() # 初期化
+
+        layout.addStretch()
+
+        # ボタンエリア
+        button_layout = QHBoxLayout()
+        self.add_button = QPushButton("追加")
+        self.cancel_button = QPushButton("キャンセル")
+        button_layout.addStretch()
+        button_layout.addWidget(self.add_button)
+        button_layout.addWidget(self.cancel_button)
+        layout.addLayout(button_layout)
+
+        self.add_button.clicked.connect(self._on_add_clicked)
+        self.cancel_button.clicked.connect(self.reject)
+
+    def _clear_id_error(self):
+        """ID入力欄のエラー表示状態をクリアする"""
+        self.station_id_edit.setStyleSheet("")
+        self.warning_label.setText("")
+
+    def _on_radio_toggled(self):
+        """ラジオボタンの選択に合わせて表示を切り替える"""
+        if self.new_station_radio.isChecked():
+            self.input_stack.setCurrentIndex(0)
+        else:
+            self.input_stack.setCurrentIndex(1)
+
+    def _on_line_combo_changed(self):
+        """選択された路線の駅リストをコンボボックスに反映する"""
+        self.station_combo.clear()
+        line_id = self.line_combo.currentData()
+        if not line_id:
+            return
+        line_data = self.project.lines.get(line_id)
+        for station_item in line_data.get("station_list", []):
+            sid = station_item.get("station_id")
+            s_data = self.project.stations.get(sid)
+            name = s_data.get("station_name", sid) if s_data else sid
+            self.station_combo.addItem(name, sid)
+
+    def _on_add_clicked(self):
+        """入力内容の検証"""
+        if self.new_station_radio.isChecked():
+            station_id = self.station_id_edit.text().strip()
+            station_name = self.station_name_edit.text().strip()
+
+            self._clear_id_error()
+
+            if not station_id:
+                self.warning_label.setText("駅IDを入力してください。")
+                self.station_id_edit.setStyleSheet("background-color: #ffeeee;")
+                return
+            if not re.match(r"^[a-zA-Z0-9_]+$", station_id):
+                self.warning_label.setText("IDには半角英数字とアンダーバーのみ使用可能です。")
+                self.station_id_edit.setStyleSheet("background-color: #ffeeee;")
+                return
+            if station_id in self.project.stations:
+                self.warning_label.setText("この駅IDは既に使用されています。")
+                self.station_id_edit.setStyleSheet("background-color: #ffeeee;")
+                return
+        else:
+            if self.station_combo.currentIndex() < 0:
+                QMessageBox.warning(self, "エラー", "追加する駅を選択してください。")
+                return
+            # 既にリストに存在するかのチェックなどは呼び出し側で行う
+
+        self.accept()
+
+
 # 路線・駅情報編集ダイアログ
 class LineStationEditorDialog(QDialog):
     def __init__(self, parent, project: OptDiaProject):
@@ -155,9 +303,9 @@ class LineStationEditorDialog(QDialog):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # 左側の垂直レイアウト (幅200px固定)
+        # 左側の垂直レイアウト (幅160px固定)
         left_panel = QWidget()
-        left_panel.setFixedWidth(200)
+        left_panel.setFixedWidth(160)
         left_panel.setStyleSheet("background-color: #f7f7f7; border-right: 1px solid #dddddd;")
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(10, 10, 10, 10)
@@ -195,6 +343,39 @@ class LineStationEditorDialog(QDialog):
         # タブウィジェット (路線がある場合)
         self.right_panel_tabs = QTabWidget()
         self.right_stack.addWidget(self.right_panel_tabs)
+
+        # --- 「駅情報」タブの内容 ---
+        self.station_info_tab = QWidget()
+        station_tab_main_layout = QHBoxLayout(self.station_info_tab)
+        station_tab_main_layout.setContentsMargins(0, 0, 0, 0)
+        station_tab_main_layout.setSpacing(0)
+
+        # 左側の垂直レイアウト (幅200px固定)
+        station_left_panel = QWidget()
+        station_left_panel.setFixedWidth(200)
+        station_left_panel.setStyleSheet("background-color: #f7f7f7; border-right: 1px solid #dddddd;")
+        station_left_layout = QVBoxLayout(station_left_panel)
+        station_left_layout.setContentsMargins(10, 10, 10, 10)
+        station_left_layout.setSpacing(5)
+
+        station_left_layout.addWidget(QLabel("<b>駅</b>"))
+
+        # 駅リスト
+        self.station_list_widget = QListWidget()
+        station_left_layout.addWidget(self.station_list_widget)
+
+        # 駅追加ボタン
+        self.add_station_button = QPushButton("駅の追加")
+        self.add_station_button.clicked.connect(self._on_add_station)
+        station_left_layout.addWidget(self.add_station_button)
+
+        station_tab_main_layout.addWidget(station_left_panel)
+
+        # 右側の駅情報入力フォーム (内容は未実装)
+        self.station_editor_form_widget = QWidget()
+        station_tab_main_layout.addWidget(self.station_editor_form_widget, stretch=1)
+
+        self.right_panel_tabs.addTab(self.station_info_tab, "駅情報")
 
         # --- 「路線情報」タブの内容 ---
         self.line_info_tab = QWidget()
@@ -244,7 +425,6 @@ class LineStationEditorDialog(QDialog):
         self.line_info_layout.addStretch() # 内容を上部に寄せる
 
         self.right_panel_tabs.addTab(self.line_info_tab, "路線情報")
-        self.right_panel_tabs.addTab(QWidget(), "駅情報") # 駅情報タブは現状空
 
         # 初期リストの構築
         self._populate_line_list()
@@ -262,6 +442,8 @@ class LineStationEditorDialog(QDialog):
         self.color_button.setEnabled(enabled)
         self.line_symbol_edit.setEnabled(enabled)
         self.inbound_direction_checkbox.setEnabled(enabled)
+        self.station_list_widget.setEnabled(enabled)
+        self.add_station_button.setEnabled(enabled)
         
         if not enabled:
             self.line_name_edit.blockSignals(True)
@@ -272,6 +454,7 @@ class LineStationEditorDialog(QDialog):
             self.color_button.setText("#000000")
             self.color_square_label.setPixmap(create_color_square_pixmap("#000000"))
             self.line_symbol_edit.clear()
+            self.station_list_widget.clear()
             self.inbound_direction_checkbox.setChecked(False)
             self.line_name_edit.blockSignals(False)
             self.line_symbol_edit.blockSignals(False)
@@ -328,12 +511,15 @@ class LineStationEditorDialog(QDialog):
         self.line_id_display.setText(self.current_selected_line_id)
         self.line_name_edit.setText(self.current_selected_line_data.get("line_name", ""))
         
-        current_color = self.current_selected_line_data.get("line_color", "#000000")
+        current_color = self.current_selected_line_data.get("line_color", "#333333")
         self.color_button.setText(current_color)
         self.color_square_label.setPixmap(create_color_square_pixmap(current_color))
 
         self.line_symbol_edit.setText(self.current_selected_line_data.get("line_symbol") or "")
         self.inbound_direction_checkbox.setChecked(self.current_selected_line_data.get("inbound_direction_is_forward_direction", True))
+
+        # 選択された路線に紐づく駅をリストに表示
+        self._populate_station_list(self.current_selected_line_data)
 
         # シグナルブロックを解除
         self.line_name_edit.blockSignals(False)
@@ -381,7 +567,7 @@ class LineStationEditorDialog(QDialog):
     def _on_pick_color(self):
         """色選択ダイアログを表示し、選択された色をプロジェクトデータに反映する"""
         if self.current_selected_line_data:
-            initial_color = QColor(self.current_selected_line_data.get("line_color", "#000000"))
+            initial_color = QColor(self.current_selected_line_data.get("line_color", "#333333"))
             color = QColorDialog.getColor(initial_color, self)
             if color.isValid():
                 new_color_hex = color.name()
@@ -419,6 +605,72 @@ class LineStationEditorDialog(QDialog):
             # 新しく追加された路線を選択状態にする
             if self.line_list_widget.count() > 0:
                 self.line_list_widget.setCurrentRow(self.line_list_widget.count() - 1)
+
+    def _populate_station_list(self, line_data: dict):
+        """選択された路線に紐づく駅をリストに表示する"""
+        self.station_list_widget.clear()
+        station_list = line_data.get("station_list", [])
+        for station_item in station_list:
+            station_id = station_item.get("station_id")
+            station_number = station_item.get("station_number")
+            station_data = self.project.stations.get(station_id)
+
+            name = station_data.get("station_name", station_id) if station_data else station_id
+            display_text = f"[{station_number}] {name}" if station_number else name
+
+            item = QListWidgetItem(display_text)
+            item.setData(Qt.UserRole, station_id)
+            self.station_list_widget.addItem(item)
+
+    def _on_add_station(self):
+        """駅の追加ダイアログを表示し、プロジェクトデータに反映する"""
+        if not self.current_selected_line_id:
+            return
+
+        dialog = AddStationDialog(self, self.project, self.current_selected_line_id)
+        if dialog.exec() == QDialog.Accepted:
+            if dialog.new_station_radio.isChecked():
+                # 新規駅の作成
+                station_id = dialog.station_id_edit.text().strip()
+                station_name = dialog.station_name_edit.text().strip()
+                
+                self.project.stations[station_id] = {
+                    "station_id": station_id,
+                    "station_name": station_name, # 駅名
+                    "station_name_kana": dialog.station_name_kana_edit.text().strip(), # 駅名(かな)
+                    "station_initial": None,
+                    "is_major_station": False,
+                    "is_signal_station": False,
+                    "show_arrival_time": False,
+                    "show_track_number": False,
+                    "tracks": {},
+                    "tracks_order": []
+                }
+                new_station_id = station_id
+            else:
+                # 既存駅の参照
+                new_station_id = dialog.station_combo.currentData()
+
+            # 選択中の路線の駅リストに追加
+            station_list = self.current_selected_line_data.get("station_list", [])
+            # 重複チェック
+            if any(s.get("station_id") == new_station_id for s in station_list):
+                QMessageBox.warning(self, "エラー", "選択された駅は編集中の路線に登録済みです。")
+                return
+            
+            station_list.append({
+                "station_id": new_station_id,
+                "station_number": None,
+                "inbound_main_track": None,
+                "outbound_main_track": None,
+                "absolute_standard_running_time": None
+            })
+            self.current_selected_line_data["station_list"] = station_list
+            
+            # UI更新
+            self._populate_station_list(self.current_selected_line_data)
+            if hasattr(self.parent(), "set_modified"):
+                self.parent().set_modified(True)
 
 
 # アプリケーション情報ダイアログ
