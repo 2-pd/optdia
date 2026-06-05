@@ -5,14 +5,15 @@ import sys
 import os
 import re
 import subprocess
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QIcon, QColor, QPainter, QPixmap, QFont
+from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QIcon, QColor, QPainter, QPixmap, QFont, QTextDocument, QAbstractTextDocumentLayout
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QFileDialog, QMessageBox, QDialog, QLabel,
     QLineEdit, QTextEdit, QDialogButtonBox, QListWidget, QTabWidget,
     QListWidgetItem, QCheckBox, QColorDialog, QStackedWidget,
-    QRadioButton, QComboBox, QGroupBox, QFormLayout, QSpinBox
+    QRadioButton, QComboBox, QGroupBox, QFormLayout, QSpinBox,
+    QStyledItemDelegate, QStyleOptionViewItem, QStyle
 )
 import assets_rc
 from project import OptDiaProject, load_project
@@ -58,6 +59,37 @@ class ProjectPropertiesDialog(QDialog):
         super().accept()
 
 
+# リストボックス内の HTML (Rich Text) をレンダリングするためのデリゲート
+class HtmlDelegate(QStyledItemDelegate):
+    def paint(self, painter, option, index):
+        options = QStyleOptionViewItem(option)
+        self.initStyleOption(options, index)
+
+        painter.save()
+        doc = QTextDocument()
+        doc.setDefaultFont(options.font)
+        doc.setHtml(options.text)
+        
+        # 背景（選択状態など）の描画
+        options.text = ""
+        style = options.widget.style()
+        style.drawControl(QStyle.CE_ItemViewItem, options, painter)
+        
+        # テキストの描画位置調整（垂直中央揃え）
+        text_rect = style.subElementRect(QStyle.SE_ItemViewItemText, options, options.widget)
+        painter.translate(text_rect.left(), text_rect.top() + (text_rect.height() - doc.size().height()) / 2)
+        doc.documentLayout().draw(painter, QAbstractTextDocumentLayout.PaintContext())
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        options = QStyleOptionViewItem(option)
+        self.initStyleOption(options, index)
+        doc = QTextDocument()
+        doc.setDefaultFont(options.font)
+        doc.setHtml(options.text)
+        return QSize(doc.idealWidth(), doc.size().height() + 4)  # 少し余白を追加
+
+
 # 指定した色で塗りつぶされた正方形のピクスマップを作成するヘルパー関数
 def create_color_square_pixmap(color_hex: str, size: int = 20):
     pixmap = QPixmap(size, size)
@@ -67,6 +99,7 @@ def create_color_square_pixmap(color_hex: str, size: int = 20):
     painter.drawRect(0, 0, size - 1, size - 1)
     painter.end()
     return pixmap
+
 
 # 路線の追加ダイアログ
 class AddLineDialog(QDialog):
@@ -418,10 +451,10 @@ class LineStationEditorDialog(QDialog):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # 左側の垂直レイアウト (幅160px固定)
+        # 左側の垂直レイアウト (幅200px固定)
         left_panel = QWidget()
-        left_panel.setFixedWidth(160)
-        left_panel.setStyleSheet("background-color: #f7f7f7; border-right: 1px solid #dddddd;")
+        left_panel.setFixedWidth(200)
+        left_panel.setStyleSheet("background-color: #f7f7f7;")
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(10, 10, 10, 10)
         left_layout.setSpacing(5)
@@ -430,6 +463,8 @@ class LineStationEditorDialog(QDialog):
         
         # 路線リスト
         self.line_list_widget = QListWidget()
+        self.line_list_widget.setStyleSheet("font-size: 14px;")
+        self.line_list_widget.setItemDelegate(HtmlDelegate(self))
         self.line_list_widget.setDragDropMode(QListWidget.InternalMove)
         self.line_list_widget.itemSelectionChanged.connect(self._on_line_selected)
         self.line_list_widget.model().rowsMoved.connect(self._on_lines_reordered)
@@ -439,6 +474,13 @@ class LineStationEditorDialog(QDialog):
         self.add_line_button = QPushButton("路線の追加")
         self.add_line_button.clicked.connect(self._on_add_line)
         left_layout.addWidget(self.add_line_button)
+
+        # 並び替えに関する説明文を追加
+        left_layout.addSpacing(10)
+        drag_info_label = QLabel("路線や駅はドラッグ操作で並び替え可能です")
+        drag_info_label.setWordWrap(True)
+        drag_info_label.setStyleSheet("color: #888888; font-size: 12px;")
+        left_layout.addWidget(drag_info_label)
 
         main_layout.addWidget(left_panel)
 
@@ -529,7 +571,14 @@ class LineStationEditorDialog(QDialog):
         station_initial_layout.addStretch()
         left_vertical_layout.addLayout(station_initial_layout)
 
+        # 1文字表記に関する説明文
+        initial_info_label = QLabel("1文字表記はその駅を始発・終着とする列車が設定されている駅と路線の分岐駅で必須です")
+        initial_info_label.setWordWrap(True)
+        initial_info_label.setStyleSheet("color: #888888; font-size: 12px;")
+        left_vertical_layout.addWidget(initial_info_label)
+
         # 各種チェックボックス
+        left_vertical_layout.addSpacing(20)
         self.is_major_station_checkbox = QCheckBox("主要駅")
         self.is_major_station_checkbox.stateChanged.connect(self._on_station_base_info_changed)
         left_vertical_layout.addWidget(self.is_major_station_checkbox)
@@ -542,6 +591,7 @@ class LineStationEditorDialog(QDialog):
         self.show_track_number_checkbox = QCheckBox("乗り場を表示")
         self.show_track_number_checkbox.stateChanged.connect(self._on_station_base_info_changed)
         left_vertical_layout.addWidget(self.show_track_number_checkbox)
+        left_vertical_layout.addStretch()
         bottom_base_info_layout.addLayout(left_vertical_layout)
 
         # 2つ目の垂直配置レイアウト
@@ -568,7 +618,10 @@ class LineStationEditorDialog(QDialog):
 
         # 2つ目のQGroupBox: <路線名>に関連する駅情報
         self.line_station_group = QGroupBox("路線に関連する駅情報")
-        line_station_main_layout = QHBoxLayout(self.line_station_group)
+        line_station_main_layout = QVBoxLayout(self.line_station_group)
+
+        # フォーム要素を横に並べるためのサブレイアウト
+        line_station_forms_layout = QHBoxLayout()
 
         # 1つ目の垂直レイアウト (駅番号、基準運転時分)
         ls_left_form = QFormLayout()
@@ -582,7 +635,7 @@ class LineStationEditorDialog(QDialog):
         self.running_time_spin.setSuffix(" 秒")
         self.running_time_spin.valueChanged.connect(self._on_line_station_info_changed)
         ls_left_form.addRow("起点駅からの基準運転時分:", self.running_time_spin)
-        line_station_main_layout.addLayout(ls_left_form)
+        line_station_forms_layout.addLayout(ls_left_form)
 
         # 2つ目の垂直レイアウト (上下本線)
         ls_right_form = QFormLayout()
@@ -592,7 +645,14 @@ class LineStationEditorDialog(QDialog):
         self.outbound_track_combo = QComboBox()
         self.outbound_track_combo.currentIndexChanged.connect(self._on_line_station_info_changed)
         ls_right_form.addRow("下り本線:", self.outbound_track_combo)
-        line_station_main_layout.addLayout(ls_right_form)
+        line_station_forms_layout.addLayout(ls_right_form)
+
+        line_station_main_layout.addLayout(line_station_forms_layout)
+
+        # 説明文の追加
+        calc_info_label = QLabel("基準運転時分は入力済みの時刻表から自動算出することもできます")
+        calc_info_label.setStyleSheet("color: #888888; font-size: 12px;")
+        line_station_main_layout.addWidget(calc_info_label)
 
         station_form_layout.addWidget(self.line_station_group)
 
@@ -755,7 +815,9 @@ class LineStationEditorDialog(QDialog):
             line = self.project.lines[line_id]
             symbol = line.get("line_symbol") or ""
             name = line.get("line_name", "")
-            display_text = f"[{symbol}] {name}" if symbol else name
+            color = line.get("line_color", "#333333")
+            # 記号部分を路線の色で着色するHTML
+            display_text = f"<font color='{color}'><b>[{symbol}]</b></font> {name}" if symbol else name
             
             item = QListWidgetItem(display_text)
             item.setData(Qt.UserRole, line_id)
@@ -853,7 +915,8 @@ class LineStationEditorDialog(QDialog):
             if selected_items and selected_items[0].data(Qt.UserRole) == line_id:
                 symbol = line_data.get("line_symbol") or ""
                 name = line_data.get("line_name", "")
-                display_text = f"[{symbol}] {name}" if symbol else name
+                color = line_data.get("line_color", "#333333")
+                display_text = f"<font color='{color}'><b>[{symbol}]</b></font> {name}" if symbol else name
                 selected_items[0].setText(display_text)
 
     def _on_line_symbol_changed(self, text: str):
@@ -869,7 +932,8 @@ class LineStationEditorDialog(QDialog):
             if selected_items and selected_items[0].data(Qt.UserRole) == line_id:
                 symbol = line_data.get("line_symbol") or ""
                 name = line_data.get("line_name", "")
-                display_text = f"[{symbol}] {name}" if symbol else name
+                color = line_data.get("line_color", "#333333")
+                display_text = f"<font color='{color}'><b>[{symbol}]</b></font> {name}" if symbol else name
                 selected_items[0].setText(display_text)
 
     def _on_inbound_direction_changed(self, state: int):
@@ -892,6 +956,15 @@ class LineStationEditorDialog(QDialog):
                 self.current_selected_line_data["line_color"] = new_color_hex
                 self.color_button.setText(new_color_hex)
                 self.color_square_label.setPixmap(create_color_square_pixmap(new_color_hex))
+                
+                # リスト側の色表示も更新する
+                selected_items = self.line_list_widget.selectedItems()
+                if selected_items:
+                    symbol = self.current_selected_line_data.get("line_symbol") or ""
+                    name = self.current_selected_line_data.get("line_name", "")
+                    display_text = f"<font color='{new_color_hex}'><b>[{symbol}]</b></font> {name}" if symbol else name
+                    selected_items[0].setText(display_text)
+
                 if hasattr(self.parent(), "set_modified"):
                     self.parent().set_modified(True)
 
