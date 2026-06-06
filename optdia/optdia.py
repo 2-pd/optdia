@@ -3,6 +3,8 @@
 
 import sys
 import os
+import random
+import string
 import re
 import subprocess
 from PySide6.QtCore import Qt, QSize
@@ -1344,6 +1346,165 @@ class LineStationEditorDialog(QDialog):
                 self.parent().set_modified(True)
 
 
+# 列車種別の追加ダイアログ
+class AddTrainTypeDialog(QDialog):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle("種別の追加")
+        self.setFixedSize(480, 240)
+
+        layout = QVBoxLayout(self)
+        form_layout = QFormLayout()
+
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("例) 区間急行")
+        form_layout.addRow("列車種別名:", self.name_edit)
+
+        self.nickname_edit = QLineEdit()
+        self.nickname_edit.setPlaceholderText("例) ラピート")
+        form_layout.addRow("列車愛称(なければ空欄):", self.nickname_edit)
+
+        self.short_name_edit = QLineEdit()
+        self.short_name_edit.setPlaceholderText("例) 区急")
+        self.short_name_edit.setFixedWidth(100)
+        form_layout.addRow("短縮表記:", self.short_name_edit)
+
+        layout.addLayout(form_layout)
+        layout.addStretch()
+
+        # ボタンエリア
+        button_layout = QHBoxLayout()
+        self.add_button = QPushButton("追加")
+        self.cancel_button = QPushButton("キャンセル")
+        button_layout.addStretch()
+        button_layout.addWidget(self.add_button)
+        button_layout.addWidget(self.cancel_button)
+        layout.addLayout(button_layout)
+
+        self.add_button.clicked.connect(self._on_add_clicked)
+        self.cancel_button.clicked.connect(self.reject)
+
+    def _on_add_clicked(self):
+        """入力チェック"""
+        if not self.name_edit.text().strip():
+            QMessageBox.warning(self, "エラー", "列車種別名を入力してください。")
+            return
+        if not self.short_name_edit.text().strip():
+            QMessageBox.warning(self, "エラー", "短縮表記を入力してください。")
+            return
+        self.accept()
+
+
+# 列車種別情報編集ダイアログ
+class TrainTypeEditorDialog(QDialog):
+    def __init__(self, parent, project: OptDiaProject):
+        super().__init__(parent)
+        self.project = project
+        self.setWindowTitle("種別情報")
+        self.setFixedSize(720, 480)
+
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # 左側の垂直レイアウト (幅180px固定)
+        left_panel = QWidget()
+        left_panel.setFixedWidth(180)
+        left_panel.setStyleSheet("background-color: #f7f7f7; border-right: 1px solid #dddddd;")
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(10, 10, 10, 10)
+        left_layout.setSpacing(5)
+
+        left_layout.addWidget(QLabel("<b>種別の一覧</b>"))
+        
+        self.train_type_list_widget = QListWidget()
+        self.train_type_list_widget.setStyleSheet("font-size: 12px;")
+        self.train_type_list_widget.setItemDelegate(HtmlDelegate(self))
+        self.train_type_list_widget.setDragDropMode(QListWidget.InternalMove)
+        self.train_type_list_widget.model().rowsMoved.connect(self._on_train_types_reordered)
+        left_layout.addWidget(self.train_type_list_widget)
+        
+        self.add_train_type_button = QPushButton("種別の追加")
+        self.add_train_type_button.clicked.connect(self._on_add_train_type)
+        left_layout.addWidget(self.add_train_type_button)
+
+        main_layout.addWidget(left_panel)
+
+        # 右側の編集用フォームエリア
+        self.right_widget = QWidget()
+        right_layout = QVBoxLayout(self.right_widget)
+        self.right_widget.setEnabled(False) # 初期状態は無効
+        
+        right_layout.addWidget(QLabel("種別を追加してください"))
+        right_layout.addStretch()
+        main_layout.addWidget(self.right_widget, stretch=1)
+
+        # 初期リスト表示
+        self._populate_train_type_list()
+
+    def _on_train_types_reordered(self, parent, start, end, destination, row):
+        """並び替えられた列車種別リストの状態をプロジェクトデータに反映する"""
+        new_order = []
+        for i in range(self.train_type_list_widget.count()):
+            item = self.train_type_list_widget.item(i)
+            new_order.append(item.data(Qt.UserRole))
+        
+        self.project.train_types_order = new_order
+        if hasattr(self.parent(), "set_modified"):
+            self.parent().set_modified(True)
+
+    def _populate_train_type_list(self):
+        """列車種別の一覧をリストに表示する"""
+        self.train_type_list_widget.clear()
+        for tt_id in self.project.train_types_order:
+            tt = self.project.train_types[tt_id]
+            name = tt.get("train_type_name", "")
+            train_name = tt.get("train_name")
+            display_name = f"{name} {train_name}" if train_name else name
+
+            main_color = tt.get("main_color", "#333333")
+            bg_color = tt.get("background_color", "#ffffff")
+
+            # 文字色を反映したHTMLテキストを生成
+            html_text = f"<font color='{main_color}'>{display_name}</font>"
+            
+            item = QListWidgetItem(html_text)
+            item.setData(Qt.UserRole, tt_id)
+            item.setBackground(QColor(bg_color))
+            self.train_type_list_widget.addItem(item)
+
+    def _on_add_train_type(self):
+        """「種別の追加」ダイアログを表示し、データを生成する"""
+        dialog = AddTrainTypeDialog(self)
+        if dialog.exec() == QDialog.Accepted:
+            # ランダムな10文字のIDを生成
+            chars = string.ascii_letters + string.digits
+            while True:
+                new_id = ''.join(random.choices(chars, k=10))
+                if new_id not in self.project.train_types:
+                    break
+
+            nickname = dialog.nickname_edit.text().strip()
+            new_type = {
+                "train_type_id": new_id,
+                "train_type_name": dialog.name_edit.text().strip(),
+                "train_type_short_name": dialog.short_name_edit.text().strip(),
+                "train_name": nickname if nickname else None,
+                "is_in_service": True,
+                "main_color": "#333333",
+                "background_color": "#ffffff",
+                "line_weight": "normal",
+                "line_style": "solid"
+            }
+            
+            self.project.train_types[new_id] = new_type
+            self.project.train_types_order.append(new_id)
+            
+            self._populate_train_type_list()
+            if hasattr(self.parent(), "set_modified"):
+                self.parent().set_modified(True)
+
+
 # アプリケーション情報ダイアログ
 class AboutDialog(QDialog):
     def __init__(self, parent):
@@ -1451,6 +1612,7 @@ class MainWindow(QMainWindow):
         # 2つ目のボタン: 種別情報
         self.btn_types = QPushButton("種別情報")
         self.btn_types.setFixedHeight(50)
+        self.btn_types.clicked.connect(self._on_edit_train_types)
         self.btn_types.setStyleSheet(button_style)
         sidebar_layout.addWidget(self.btn_types)
 
@@ -1611,6 +1773,11 @@ class MainWindow(QMainWindow):
     def _on_edit_lines_stations(self):
         """路線・駅情報編集ダイアログを表示する"""
         dialog = LineStationEditorDialog(self, self.project)
+        dialog.exec()
+
+    def _on_edit_train_types(self):
+        """種別情報編集ダイアログを表示する"""
+        dialog = TrainTypeEditorDialog(self, self.project)
         dialog.exec()
 
 

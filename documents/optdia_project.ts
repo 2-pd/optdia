@@ -122,9 +122,11 @@ interface optdia_train_type {
     train_type_id : string; // 列車種別ID
     train_type_name : string; // 列車種別名
     train_type_short_name : string; // 列車種別の短縮名
-    train_name : string;// 列車愛称
+    train_name : string | null;// 列車愛称
+    is_in_service : boolean; // 営業列車の種別か否か
     main_color: string; // 列車種別の基本色(デフォルト値は #333333)
     background_color: string; // 時刻表での列車種別の背景色(デフォルト値は #ffffff)
+    line_weight : "thin" | "normal" | "bold"; // ダイヤグラムでの線の太さ(細、標準、太)
     line_style : "solid" | "dashed" | "dotted"; // ダイヤグラムでの線スタイル(実線、破線、点線)
 }
 
