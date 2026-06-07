@@ -511,8 +511,9 @@ class LineStationEditorDialog(QDialog):
 
         # 左側の垂直レイアウト (幅180px固定)
         station_left_panel = QWidget()
+        station_left_panel.setObjectName("station_left_panel")
         station_left_panel.setFixedWidth(180)
-        station_left_panel.setStyleSheet("background-color: #f7f7f7; border-right: 1px solid #dddddd;")
+        station_left_panel.setStyleSheet("#station_left_panel { background-color: #f7f7f7; border-right: 1px solid #dddddd; }")
         station_left_layout = QVBoxLayout(station_left_panel)
         station_left_layout.setContentsMargins(10, 10, 10, 10)
         station_left_layout.setSpacing(5)
@@ -1455,8 +1456,9 @@ class TrainTypeEditorDialog(QDialog):
 
         # 左側の垂直レイアウト (幅180px固定)
         left_panel = QWidget()
+        left_panel.setObjectName("train_type_left_panel")
         left_panel.setFixedWidth(180)
-        left_panel.setStyleSheet("background-color: #f7f7f7; border-right: 1px solid #dddddd;")
+        left_panel.setStyleSheet("#train_type_left_panel { background-color: #f7f7f7; border-right: 1px solid #dddddd; }")
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(10, 10, 10, 10)
         left_layout.setSpacing(5)
@@ -1913,8 +1915,9 @@ class MainWindow(QMainWindow):
 
         # 左側のサイドバーウィジェット (幅240px固定)
         sidebar = QWidget()
+        sidebar.setObjectName("sidebar")
         sidebar.setFixedWidth(240)
-        sidebar.setStyleSheet("background-color: #f7f7f7; border-right: 1px solid #dddddd;")
+        sidebar.setStyleSheet("#sidebar { background-color: #f7f7f7; border-right: 1px solid #dddddd; }")
         
         sidebar_layout = QVBoxLayout(sidebar)
         sidebar_layout.setContentsMargins(0, 0, 0, 0)
@@ -1949,8 +1952,49 @@ class MainWindow(QMainWindow):
         self.btn_types.setStyleSheet(button_style)
         sidebar_layout.addWidget(self.btn_types)
 
-        # 下部に伸縮スペースを入れてボタンを上部に寄せる
-        sidebar_layout.addStretch()
+        # 運行系統セクション
+        route_section = QWidget()
+        route_layout = QVBoxLayout(route_section)
+        route_layout.setContentsMargins(10, 0, 10, 5)
+        route_layout.addSpacing(10)
+
+        route_header_layout = QHBoxLayout()
+        lbl_route = QLabel("運行系統")
+        lbl_route.setStyleSheet("font-size: 14px; border: none;")
+        route_header_layout.addWidget(lbl_route)
+        self.btn_edit_routes = QPushButton("編集")
+        self.btn_edit_routes.setFixedWidth(60)
+        self.btn_edit_routes.setStyleSheet("QPushButton { border: none; text-decoration: underline; background-color: transparent; }")
+        route_header_layout.addWidget(self.btn_edit_routes)
+        route_layout.addLayout(route_header_layout)
+
+        self.route_list_widget = QListWidget()
+        route_layout.addWidget(self.route_list_widget)
+
+        # サイドバーの残りスペースを2等分するため、stretch=1 を指定
+        sidebar_layout.addWidget(route_section, 1)
+
+        # ダイヤセクション
+        diagram_section = QWidget()
+        diagram_layout = QVBoxLayout(diagram_section)
+        diagram_layout.setContentsMargins(10, 0, 10, 10)
+        diagram_layout.addSpacing(10)
+
+        diagram_header_layout = QHBoxLayout()
+        lbl_diagram = QLabel("ダイヤ")
+        lbl_diagram.setStyleSheet("font-size: 14px; border: none;")
+        diagram_header_layout.addWidget(lbl_diagram)
+        self.btn_edit_diagrams = QPushButton("編集")
+        self.btn_edit_diagrams.setFixedWidth(60)
+        self.btn_edit_diagrams.setStyleSheet("QPushButton { border: none; text-decoration: underline; background-color: transparent; }")
+        diagram_header_layout.addWidget(self.btn_edit_diagrams)
+        diagram_layout.addLayout(diagram_header_layout)
+
+        self.diagram_list_widget = QListWidget()
+        diagram_layout.addWidget(self.diagram_list_widget)
+
+        # サイドバーの残りスペースを2等分するため、stretch=1 を指定
+        sidebar_layout.addWidget(diagram_section, 1)
 
         # レイアウトにサイドバーを追加
         main_layout.addWidget(sidebar)
