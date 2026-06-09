@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QTextEdit, QDialogButtonBox, QListWidget, QTabWidget,
     QListWidgetItem, QCheckBox, QColorDialog, QStackedWidget,
     QRadioButton, QComboBox, QGroupBox, QFormLayout, QSpinBox,
-    QStyledItemDelegate, QStyleOptionViewItem, QStyle
+    QStyledItemDelegate, QStyleOptionViewItem, QStyle, QScrollArea
 )
 import assets_rc
 from project import OptDiaProject, load_project
@@ -1840,6 +1840,96 @@ class TrainTypeEditorDialog(QDialog):
             self.tt_right_stack.setCurrentWidget(self.tt_placeholder_page)
 
 
+# 運行系統編集ダイアログ
+class RouteEditorDialog(QDialog):
+    def __init__(self, parent, project: OptDiaProject):
+        super().__init__(parent)
+        self.project = project
+        self.setWindowTitle("運行系統編集ウィンドウ")
+        self.setFixedSize(960, 640)
+
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # 左側のサイドバー (幅200px固定)
+        sidebar = QWidget()
+        sidebar.setObjectName("route_editor_sidebar")
+        sidebar.setFixedWidth(200)
+        sidebar.setStyleSheet("#route_editor_sidebar { background-color: #f7f7f7; border-right: 1px solid #dddddd; }")
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(10, 10, 10, 10)
+        sidebar_layout.setSpacing(5)
+
+        sidebar_layout.addWidget(QLabel("<b>運行系統一覧</b>"))
+
+        # 運行系統リスト
+        self.route_list_widget = QListWidget()
+        self.route_list_widget.setStyleSheet("font-size: 14px;")
+        sidebar_layout.addWidget(self.route_list_widget)
+
+        # 運行系統追加ボタン
+        self.add_route_button = QPushButton("運行系統の追加")
+        sidebar_layout.addWidget(self.add_route_button)
+
+        sidebar_layout.addSpacing(10)
+        desc_label = QLabel("運行系統や路線の区間はドラッグ操作で並び替え可能です")
+        desc_label.setWordWrap(True)
+        desc_label.setStyleSheet("color: #888888; font-size: 12px;")
+        sidebar_layout.addWidget(desc_label)
+
+        main_layout.addWidget(sidebar)
+
+        # 右側のスタックドウィジェット
+        self.right_stack = QStackedWidget()
+        main_layout.addWidget(self.right_stack)
+
+        # 1. プレースホルダーページ (データなし)
+        self.placeholder_page = QWidget()
+        placeholder_layout = QVBoxLayout(self.placeholder_page)
+        placeholder_label = QLabel("運行系統を追加してください")
+        placeholder_label.setAlignment(Qt.AlignCenter)
+        placeholder_label.setStyleSheet("color: #888888; font-size: 18px;")
+        placeholder_layout.addWidget(placeholder_label)
+        self.right_stack.addWidget(self.placeholder_page)
+
+        # 2. 運行系統編集フォームページ
+        self.edit_form_page = QWidget()
+        edit_form_layout = QHBoxLayout(self.edit_form_page)
+        edit_form_layout.setContentsMargins(0, 0, 0, 0)
+        edit_form_layout.setSpacing(0)
+
+        # メイン編集エリア (左側、将来の拡張用)
+        self.form_main_area = QWidget()
+        edit_form_layout.addWidget(self.form_main_area, stretch=1)
+
+        # スクロール可能領域 (右側 180px)
+        self.right_scroll_area = QScrollArea()
+        self.right_scroll_area.setFixedWidth(180)
+        self.right_scroll_area.setWidgetResizable(True)
+        self.right_scroll_area.setStyleSheet("QScrollArea { border: none; border-left: 1px solid #dddddd; }")
+        
+        scroll_content = QWidget()
+        self.right_scroll_area.setWidget(scroll_content)
+        edit_form_layout.addWidget(self.right_scroll_area)
+
+        self.right_stack.addWidget(self.edit_form_page)
+
+        # 初期リスト表示と表示切り替え
+        self._populate_route_list()
+
+    def _populate_route_list(self):
+        self.route_list_widget.clear()
+        for rid in self.project.routes_order:
+            route = self.project.routes[rid]
+            self.route_list_widget.addItem(route.get("route_name", rid))
+        
+        if self.route_list_widget.count() > 0:
+            self.right_stack.setCurrentWidget(self.edit_form_page)
+        else:
+            self.right_stack.setCurrentWidget(self.placeholder_page)
+
+
 # アプリケーション情報ダイアログ
 class AboutDialog(QDialog):
     def __init__(self, parent):
@@ -1965,6 +2055,7 @@ class MainWindow(QMainWindow):
         self.btn_edit_routes = QPushButton("編集")
         self.btn_edit_routes.setFixedWidth(60)
         self.btn_edit_routes.setStyleSheet("QPushButton { border: none; text-decoration: underline; background-color: transparent; }")
+        self.btn_edit_routes.clicked.connect(self._on_edit_routes)
         route_header_layout.addWidget(self.btn_edit_routes)
         route_layout.addLayout(route_header_layout)
 
@@ -2155,6 +2246,11 @@ class MainWindow(QMainWindow):
     def _on_edit_train_types(self):
         """種別情報編集ダイアログを表示する"""
         dialog = TrainTypeEditorDialog(self, self.project)
+        dialog.exec()
+
+    def _on_edit_routes(self):
+        """運行系統編集ウィンドウを表示する"""
+        dialog = RouteEditorDialog(self, self.project)
         dialog.exec()
 
 
