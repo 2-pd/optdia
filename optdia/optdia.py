@@ -1903,6 +1903,112 @@ class AddRouteDialog(QDialog):
         self.accept()
 
 
+# 路線と区間の選択ダイアログ
+class SelectSegmentDialog(QDialog):
+    def __init__(self, parent, project: OptDiaProject, is_add=True, 
+                 initial_line=None, initial_start=None, initial_end=None):
+        super().__init__(parent)
+        self.project = project
+        self.setWindowTitle("路線と区間の選択")
+        self.setFixedSize(500, 320)
+
+        layout = QVBoxLayout(self)
+        form_layout = QFormLayout()
+
+        # 路線選択
+        self.line_combo = QComboBox()
+        for lid in self.project.lines_order:
+            line = self.project.lines[lid]
+            if len(line.get("station_list", [])) >= 2:
+                self.line_combo.addItem(line.get("line_name", lid), lid)
+        
+        form_layout.addRow("路線:", self.line_combo)
+
+        # 区間選択 (始点 〜 終点)
+        station_layout = QHBoxLayout()
+        self.start_combo = QComboBox()
+        self.end_combo = QComboBox()
+        station_layout.addWidget(self.start_combo)
+        station_layout.addWidget(QLabel("〜"))
+        station_layout.addWidget(self.end_combo)
+        form_layout.addRow("区間:", station_layout)
+
+        layout.addLayout(form_layout)
+
+        # 起点と終点の反転
+        self.invert_btn = QPushButton("起点と終点の反転")
+        self.invert_btn.setStyleSheet("QPushButton { border: none; text-decoration: underline; background-color: transparent; }")
+        self.invert_btn.setCursor(Qt.PointingHandCursor)
+        self.invert_btn.clicked.connect(self._invert_stations)
+        layout.addWidget(self.invert_btn)
+
+        # 説明文
+        desc_label = QLabel("区間を逆向きに設定することで、上り列車が別路線に下り列車として直通するような運行系統を設定できます")
+        desc_label.setWordWrap(True)
+        desc_label.setStyleSheet("color: #888888; font-size: 12px;")
+        layout.addWidget(desc_label)
+
+        layout.addStretch()
+
+        # ボタンエリア
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        self.ok_button = QPushButton("追加" if is_add else "決定")
+        self.cancel_button = QPushButton("キャンセル")
+        button_layout.addWidget(self.ok_button)
+        button_layout.addWidget(self.cancel_button)
+        layout.addLayout(button_layout)
+
+        self.ok_button.clicked.connect(self.accept)
+        self.cancel_button.clicked.connect(self.reject)
+
+        self.line_combo.currentIndexChanged.connect(self._on_line_changed)
+
+        # 初期値の設定
+        if initial_line:
+            idx = self.line_combo.findData(initial_line)
+            if idx >= 0:
+                self.line_combo.setCurrentIndex(idx)
+        
+        self._on_line_changed()
+
+        if initial_start:
+            idx = self.start_combo.findData(initial_start)
+            if idx >= 0: self.start_combo.setCurrentIndex(idx)
+        if initial_end:
+            idx = self.end_combo.findData(initial_end)
+            if idx >= 0: self.end_combo.setCurrentIndex(idx)
+
+    def _on_line_changed(self):
+        self.start_combo.clear()
+        self.end_combo.clear()
+        line_id = self.line_combo.currentData()
+        if not line_id: return
+        
+        line_data = self.project.lines.get(line_id)
+        for s_item in line_data.get("station_list", []):
+            sid = s_item["station_id"]
+            s_name = self.project.stations.get(sid, {}).get("station_name", sid)
+            self.start_combo.addItem(s_name, sid)
+            self.end_combo.addItem(s_name, sid)
+        
+        if self.start_combo.count() >= 2:
+            self.end_combo.setCurrentIndex(self.end_combo.count() - 1)
+
+    def _invert_stations(self):
+        s_idx = self.start_combo.currentIndex()
+        e_idx = self.end_combo.currentIndex()
+        self.start_combo.setCurrentIndex(e_idx)
+        self.end_combo.setCurrentIndex(s_idx)
+
+    def get_data(self):
+        return {
+            "line_id": self.line_combo.currentData(),
+            "start_station": self.start_combo.currentData(),
+            "end_station": self.end_combo.currentData()
+        }
+
+
 # 運行系統編集ダイアログ
 class RouteEditorDialog(QDialog):
     def __init__(self, parent, project: OptDiaProject):
@@ -1999,6 +2105,7 @@ class RouteEditorDialog(QDialog):
 
         # 区間追加ボタン
         self.add_segment_button = QPushButton("路線の区間を追加")
+        self.add_segment_button.clicked.connect(self._on_add_segment)
         self.form_main_layout.addWidget(self.add_segment_button)
 
         edit_form_layout.addWidget(self.form_main_area, stretch=1)
@@ -2075,7 +2182,7 @@ class RouteEditorDialog(QDialog):
         self.segment_list_widget.clear()
         segments = route_data.get("line_segments", [])
         
-        for seg in segments:
+        for i, seg in enumerate(segments):
             item_widget = QWidget()
             item_layout = QHBoxLayout(item_widget)
             item_layout.setContentsMargins(5, 2, 5, 2)
@@ -2086,8 +2193,8 @@ class RouteEditorDialog(QDialog):
             item_layout.addWidget(QLabel(line_name), stretch=2)
             
             # 区間 (始点駅-終点駅)
-            start_sid = seg.get("start_station_id")
-            end_sid = seg.get("end_station_id")
+            start_sid = seg.get("start_station")
+            end_sid = seg.get("end_station")
             start_name = self.project.stations.get(start_sid, {}).get("station_name", start_sid)
             end_name = self.project.stations.get(end_sid, {}).get("station_name", end_sid)
             item_layout.addWidget(QLabel(f"{start_name} - {end_name}"), stretch=3)
@@ -2096,8 +2203,10 @@ class RouteEditorDialog(QDialog):
             btn_layout = QHBoxLayout()
             btn_layout.setSpacing(2)
             btn_edit = QPushButton("編集")
+            btn_edit.clicked.connect(lambda _, s=seg, idx=i: self._on_edit_segment(s, idx))
             btn_split = QPushButton("分割")
             btn_delete = QPushButton("削除")
+            btn_delete.clicked.connect(lambda _, idx=i: self._on_delete_segment(idx))
             btn_layout.addWidget(btn_edit)
             btn_layout.addWidget(btn_split)
             btn_layout.addWidget(btn_delete)
@@ -2134,6 +2243,54 @@ class RouteEditorDialog(QDialog):
                     break
 
             # 変更フラグを立てる (MainWindow)
+            if hasattr(self.parent(), "set_modified"):
+                self.parent().set_modified(True)
+
+    def _on_add_segment(self):
+        """路線の区間追加ダイアログを表示し、データを追加する"""
+        valid_line_ids = [lid for lid in self.project.lines_order if len(self.project.lines[lid].get("station_list", [])) >= 2]
+        if not valid_line_ids:
+            QMessageBox.warning(self, "情報", "追加可能な路線がありません")
+            return
+
+        dialog = SelectSegmentDialog(self, self.project, is_add=True)
+        if dialog.exec() == QDialog.Accepted:
+            selected = self.route_list_widget.selectedItems()
+            if not selected: return
+            route_id = selected[0].data(Qt.UserRole)
+            route_data = self.project.routes.get(route_id)
+            
+            route_data["line_segments"].append(dialog.get_data())
+            self._populate_segment_list(route_data)
+            if hasattr(self.parent(), "set_modified"):
+                self.parent().set_modified(True)
+
+    def _on_edit_segment(self, segment_data, index):
+        """路線の区間編集ダイアログを表示し、データを更新する"""
+        dialog = SelectSegmentDialog(self, self.project, is_add=False, 
+                                     initial_line=segment_data.get("line_id"),
+                                     initial_start=segment_data.get("start_station"),
+                                     initial_end=segment_data.get("end_station"))
+        if dialog.exec() == QDialog.Accepted:
+            selected = self.route_list_widget.selectedItems()
+            if not selected: return
+            route_id = selected[0].data(Qt.UserRole)
+            route_data = self.project.routes.get(route_id)
+            
+            route_data["line_segments"][index] = dialog.get_data()
+            self._populate_segment_list(route_data)
+            if hasattr(self.parent(), "set_modified"):
+                self.parent().set_modified(True)
+
+    def _on_delete_segment(self, index):
+        """選択された区間を削除する"""
+        selected = self.route_list_widget.selectedItems()
+        if not selected: return
+        route_id = selected[0].data(Qt.UserRole)
+        route_data = self.project.routes.get(route_id)
+        if route_data and 0 <= index < len(route_data["line_segments"]):
+            route_data["line_segments"].pop(index)
+            self._populate_segment_list(route_data)
             if hasattr(self.parent(), "set_modified"):
                 self.parent().set_modified(True)
 
