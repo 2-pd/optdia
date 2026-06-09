@@ -15,7 +15,8 @@ from PySide6.QtWidgets import (
     QLineEdit, QTextEdit, QDialogButtonBox, QListWidget, QTabWidget,
     QListWidgetItem, QCheckBox, QColorDialog, QStackedWidget,
     QRadioButton, QComboBox, QGroupBox, QFormLayout, QSpinBox,
-    QStyledItemDelegate, QStyleOptionViewItem, QStyle, QScrollArea
+    QStyledItemDelegate, QStyleOptionViewItem, QStyle, QScrollArea,
+    QSizePolicy
 )
 import assets_rc
 from project import OptDiaProject, load_project
@@ -988,7 +989,6 @@ class LineStationEditorDialog(QDialog):
                 "station_list": []
             }
             self.project.lines_order.append(line_id)
-            self.project.lines[line_id] = self.project.lines[line_id] # Ensure it's added to the dict
 
             # リスト表示を更新
             self._populate_line_list()
@@ -1910,13 +1910,14 @@ class SelectSegmentDialog(QDialog):
         super().__init__(parent)
         self.project = project
         self.setWindowTitle("路線と区間の選択")
-        self.setFixedSize(500, 320)
+        self.setFixedSize(480, 240)
 
         layout = QVBoxLayout(self)
         form_layout = QFormLayout()
 
         # 路線選択
         self.line_combo = QComboBox()
+        self.line_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         for lid in self.project.lines_order:
             line = self.project.lines[lid]
             if len(line.get("station_list", [])) >= 2:
@@ -1926,21 +1927,28 @@ class SelectSegmentDialog(QDialog):
 
         # 区間選択 (始点 〜 終点)
         station_layout = QHBoxLayout()
+        station_layout.setContentsMargins(0, 0, 0, 0)
         self.start_combo = QComboBox()
         self.end_combo = QComboBox()
-        station_layout.addWidget(self.start_combo)
+        station_layout.addWidget(self.start_combo, 1)
         station_layout.addWidget(QLabel("〜"))
-        station_layout.addWidget(self.end_combo)
+        station_layout.addWidget(self.end_combo, 1)
         form_layout.addRow("区間:", station_layout)
-
-        layout.addLayout(form_layout)
 
         # 起点と終点の反転
         self.invert_btn = QPushButton("起点と終点の反転")
         self.invert_btn.setStyleSheet("QPushButton { border: none; text-decoration: underline; background-color: transparent; }")
         self.invert_btn.setCursor(Qt.PointingHandCursor)
         self.invert_btn.clicked.connect(self._invert_stations)
-        layout.addWidget(self.invert_btn)
+
+        invert_container = QHBoxLayout()
+        invert_container.setContentsMargins(0, 10, 0, 10)
+        invert_container.addStretch()
+        invert_container.addWidget(self.invert_btn)
+        invert_container.addStretch()
+        form_layout.addRow("", invert_container)
+
+        layout.addLayout(form_layout)
 
         # 説明文
         desc_label = QLabel("区間を逆向きに設定することで、上り列車が別路線に下り列車として直通するような運行系統を設定できます")
@@ -1959,7 +1967,7 @@ class SelectSegmentDialog(QDialog):
         button_layout.addWidget(self.cancel_button)
         layout.addLayout(button_layout)
 
-        self.ok_button.clicked.connect(self.accept)
+        self.ok_button.clicked.connect(self._on_ok_clicked)
         self.cancel_button.clicked.connect(self.reject)
 
         self.line_combo.currentIndexChanged.connect(self._on_line_changed)
@@ -2007,6 +2015,14 @@ class SelectSegmentDialog(QDialog):
             "start_station": self.start_combo.currentData(),
             "end_station": self.end_combo.currentData()
         }
+
+    def _on_ok_clicked(self):
+        """OK/追加ボタンが押された際のバリデーションと処理"""
+        if self.start_combo.currentData() == self.end_combo.currentData():
+            QMessageBox.warning(self, "エラー", "区間の起点と終点に同じ駅を設定することはできません。")
+            return
+        
+        self.accept()
 
 
 # 区間の分割ダイアログ
@@ -2149,14 +2165,42 @@ class RouteEditorDialog(QDialog):
 
         # カラムヘッダー
         seg_header_layout = QHBoxLayout()
-        seg_header_layout.addWidget(QLabel("路線名"), stretch=2)
-        seg_header_layout.addWidget(QLabel("区間"), stretch=3)
-        seg_header_layout.addWidget(QLabel("操作"), stretch=2)
+        # 余白を削除
+        seg_header_layout.setContentsMargins(0, 0, 0, 0)
+        # 色バー用のスペース（アラインメント維持用）
+        header_spacer = QWidget()
+        header_spacer.setFixedWidth(10)
+        seg_header_layout.addWidget(header_spacer)
+        line_header = QLabel("路線名")
+        line_header.setFixedWidth(140)
+        line_header.setAlignment(Qt.AlignCenter)
+        seg_header_layout.addWidget(line_header)
+        segment_header = QLabel("区間")
+        segment_header.setAlignment(Qt.AlignCenter)
+        seg_header_layout.addWidget(segment_header, stretch=1)
+        operation_header = QLabel("操作")
+        operation_header.setFixedWidth(154) # ボタン3つ(50*3) + 間隔(2*2)
+        operation_header.setAlignment(Qt.AlignCenter)
+        seg_header_layout.addWidget(operation_header)
         self.form_main_layout.addLayout(seg_header_layout)
+
+        # ヘッダー下部の境界線
+        header_border = QWidget()
+        header_border.setFixedHeight(1)
+        header_border.setStyleSheet("background-color: #cccccc;")
+        self.form_main_layout.addWidget(header_border)
 
         # 部分区間リスト
         self.segment_list_widget = QListWidget()
         self.segment_list_widget.setDragDropMode(QListWidget.InternalMove)
+        # 並び替え操作を維持しつつ、選択ハイライトを無効化し、ホバー時のみ背景色を表示する
+        self.segment_list_widget.setFocusPolicy(Qt.NoFocus)
+        self.segment_list_widget.setStyleSheet(
+            "QListWidget { border: none; background-color: transparent; }"
+            "QListWidget::item:hover { background-color: #dddddd; }"
+            "QListWidget::item:selected { background-color: transparent; }"
+            "QListWidget::item:selected:hover { background-color: #dddddd; }"
+        )
         self.segment_list_widget.model().rowsMoved.connect(self._on_segments_reordered)
         self.form_main_layout.addWidget(self.segment_list_widget)
 
@@ -2167,15 +2211,30 @@ class RouteEditorDialog(QDialog):
 
         edit_form_layout.addWidget(self.form_main_area, stretch=1)
 
-        # スクロール可能領域 (右側 180px)
-        self.right_scroll_area = QScrollArea()
-        self.right_scroll_area.setFixedWidth(180)
-        self.right_scroll_area.setWidgetResizable(True)
-        self.right_scroll_area.setStyleSheet("QScrollArea { border: none; border-left: 1px solid #dddddd; }")
+        # 駅順序プレビュー領域 (右側 220px)
+        self.station_preview_area = QScrollArea()
+        self.station_preview_area.setFixedWidth(220)
+        self.station_preview_area.setWidgetResizable(True)
+        self.station_preview_area.setStyleSheet("QScrollArea { border: none; border-left: 1px solid #dddddd; }")
         
-        scroll_content = QWidget()
-        self.right_scroll_area.setWidget(scroll_content)
-        edit_form_layout.addWidget(self.right_scroll_area)
+        self.station_preview_content = QWidget()
+        self.station_preview_layout = QVBoxLayout(self.station_preview_content)
+        self.station_preview_layout.setContentsMargins(10, 10, 10, 10)
+        self.station_preview_layout.setSpacing(0)
+
+        # 駅順序プレビューの見出し
+        lbl_preview = QLabel("駅順序プレビュー")
+        lbl_preview.setStyleSheet("font-size: 14px; border: none;")
+        self.station_preview_layout.addWidget(lbl_preview)
+        
+        self.direction_label = QLabel("下り列車の通過順で表示中")
+        self.direction_label.setStyleSheet("font-size: 12px; color: #888888; padding-top: 10px; padding-bottom: 20px;")
+        self.station_preview_layout.addWidget(self.direction_label)
+
+        self.station_preview_layout.addStretch() # 内容を上部に寄せる
+
+        self.station_preview_area.setWidget(self.station_preview_content)
+        edit_form_layout.addWidget(self.station_preview_area)
 
         self.right_stack.addWidget(self.edit_form_page)
 
@@ -2228,6 +2287,7 @@ class RouteEditorDialog(QDialog):
         self.route_name_edit.blockSignals(False)
 
         self._populate_segment_list(route_data)
+        self._populate_station_preview(route_data)
 
     def _on_route_name_changed(self, text: str):
         """名称が変更されたときにプロジェクトデータとサイドバーを更新する"""
@@ -2245,51 +2305,169 @@ class RouteEditorDialog(QDialog):
         if hasattr(self.parent(), "set_modified"):
             self.parent().set_modified(True)
 
+    def _get_stations_in_segment(self, line_id, start_station_id, end_station_id):
+        """指定された路線の区間に含まれる駅のIDリストを順序通りに返す"""
+        line_data = self.project.lines.get(line_id)
+        if not line_data:
+            return []
+
+        line_station_ids = [s["station_id"] for s in line_data.get("station_list", [])]
+
+        try:
+            idx_start = line_station_ids.index(start_station_id)
+            idx_end = line_station_ids.index(end_station_id)
+        except ValueError:
+            return [] # 路線で駅が見つからない場合
+
+        stations_in_segment = []
+        if idx_start <= idx_end:
+            # 順向き
+            for i in range(idx_start, idx_end + 1):
+                stations_in_segment.append(line_station_ids[i])
+        else:
+            # 逆向き
+            for i in range(idx_start, idx_end - 1, -1): # range(start, stop, step) -> stop is exclusive
+                stations_in_segment.append(line_station_ids[i])
+        
+        return stations_in_segment
+
+    def _populate_station_preview(self, route_data: dict):
+        """駅順序プレビューエリアに駅のリストを表示する"""
+        # 既存の動的に追加された駅アイテムとストレッチアイテムを削除
+        # 見出しとdirection_labelは残すため、インデックス2から逆順に削除
+        for i in reversed(range(2, self.station_preview_layout.count())):
+            item = self.station_preview_layout.itemAt(i)
+            if item.widget():
+                item.widget().deleteLater()
+            self.station_preview_layout.removeItem(item)
+
+        segments = route_data.get("line_segments", [])
+        
+        for seg in segments:
+            line_id = seg.get("line_id")
+            # line_colorが取得できない場合はデフォルト色を設定
+            line_color = self.project.lines.get(line_id, {}).get("line_color", "#333333")
+            start_sid = seg.get("start_station")
+            end_sid = seg.get("end_station")
+
+            stations_in_this_segment = self._get_stations_in_segment(line_id, start_sid, end_sid)
+            
+            line_color = self.project.lines.get(line_id, {}).get("line_color", "#333333")
+            # 駅番号取得用のリストを取得
+            line_station_list = self.project.lines.get(line_id, {}).get("station_list", [])
+
+            for i, sid in enumerate(stations_in_this_segment):
+                station_name = self.project.stations.get(sid, {}).get("station_name", sid)
+
+                # 駅番号を取得して駅名の前に付加
+                ls_item = next((s for s in line_station_list if s.get("station_id") == sid), None)
+                s_num = ls_item.get("station_number") if ls_item else None
+                display_name = f"[{s_num}] {station_name}" if s_num else station_name
+
+                if sid == start_sid and i == 0:
+                    display_name += " <span style='font-size: 12px; color: gray; font-weight: normal;'>(発)</span>"
+                elif sid == end_sid and i == len(stations_in_this_segment) - 1:
+                    display_name += " <span style='font-size: 12px; color: gray; font-weight: normal;'>(着)</span>"
+                
+                station_line_widget = QWidget()
+                station_line_widget.setFixedHeight(40) # 行の高さを40pxに設定
+                station_line_widget.setProperty("is_preview_station_item", True) # 削除対象を識別
+                station_line_layout = QHBoxLayout(station_line_widget) # 5pxのスペースを設ける
+                station_line_layout.setContentsMargins(0, 0, 0, 0)
+                station_line_layout.setSpacing(5)
+
+                color_bar = QLabel()
+                color_bar.setFixedWidth(5)
+                color_bar.setStyleSheet(f"background-color: {line_color};")
+                station_line_layout.addWidget(color_bar)
+
+                station_label = QLabel(display_name)
+                
+                # 駅の表示スタイルを設定
+                station_data = self.project.stations.get(sid, {})
+                if station_data.get("is_signal_station", False):
+                    # 信号場は灰色
+                    station_label.setStyleSheet("color: gray;")
+                elif station_data.get("is_major_station", False):
+                    # 主要駅は太字
+                    font = station_label.font()
+                    font.setBold(True)
+                    station_label.setFont(font)
+                else:
+                    # デフォルトのスタイルに戻す
+                    station_label.setStyleSheet("")
+                    station_label.setFont(QFont()) # 太字を解除
+                
+                station_line_layout.addWidget(station_label)
+                station_line_layout.addStretch()
+
+                self.station_preview_layout.addWidget(station_line_widget)
+        self.station_preview_layout.addStretch() # 最後にストレッチを追加
+
+        if not segments:
+            self.direction_label.setText("表示する駅がありません\n路線の区間を追加してください")
+        else:
+            self.direction_label.setText("下り列車の通過順で表示中")
     def _populate_segment_list(self, route_data: dict):
         """選択された系統に含まれる路線の部分区間リストを表示する"""
-        # 再描画中のシグナルによる再帰を防ぐ
-        self.segment_list_widget.model().blockSignals(True)
         self.segment_list_widget.clear()
-        segments = route_data.get("line_segments", [])
+        segments = route_data.get("line_segments") or []
         
         for i, seg in enumerate(segments):
             item_widget = QWidget()
-            item_layout = QHBoxLayout(item_widget)
-            item_layout.setContentsMargins(5, 2, 5, 2)
+            item_layout = QHBoxLayout(item_widget) # 上下に10pxの余白を設ける
+            item_layout.setContentsMargins(0, 10, 0, 10)
             
             # 路線名
             line_id = seg.get("line_id")
+            line_color = self.project.lines.get(line_id, {}).get("line_color", "#333333")
             line_name = self.project.lines.get(line_id, {}).get("line_name", line_id)
-            item_layout.addWidget(QLabel(line_name), stretch=2)
+
+            # 色バー
+            color_bar = QLabel()
+            color_bar.setFixedWidth(10)
+            color_bar.setStyleSheet(f"background-color: {line_color};")
+            item_layout.addWidget(color_bar)
+
+            line_label = QLabel(line_name)
+            line_label.setFixedWidth(140)
+            line_label.setAlignment(Qt.AlignCenter)
+            item_layout.addWidget(line_label)
             
             # 区間 (始点駅-終点駅)
             start_sid = seg.get("start_station")
             end_sid = seg.get("end_station")
             start_name = self.project.stations.get(start_sid, {}).get("station_name", start_sid)
             end_name = self.project.stations.get(end_sid, {}).get("station_name", end_sid)
-            item_layout.addWidget(QLabel(f"{start_name} - {end_name}"), stretch=3)
+            segment_label = QLabel(f"{start_name} - {end_name}")
+            segment_label.setAlignment(Qt.AlignCenter)
+            item_layout.addWidget(segment_label, stretch=1)
             
             # 操作ボタン
             btn_layout = QHBoxLayout()
+            btn_layout.setContentsMargins(0, 0, 0, 0)
             btn_layout.setSpacing(2)
             btn_edit = QPushButton("編集")
+            btn_edit.setFixedSize(50, 30)
             btn_edit.clicked.connect(lambda _, s=seg, idx=i: self._on_edit_segment(s, idx))
             btn_split = QPushButton("分割")
+            btn_split.setFixedSize(50, 30)
             btn_split.clicked.connect(lambda _, s=seg, idx=i: self._on_split_segment(s, idx))
             btn_delete = QPushButton("削除")
+            btn_delete.setFixedSize(50, 30)
             btn_delete.clicked.connect(lambda _, idx=i: self._on_delete_segment(idx))
             btn_layout.addWidget(btn_edit)
             btn_layout.addWidget(btn_split)
             btn_layout.addWidget(btn_delete)
-            item_layout.addLayout(btn_layout, stretch=2)
+            item_layout.addLayout(btn_layout, stretch=0)
             
-            list_item = QListWidgetItem(self.segment_list_widget)
+            list_item = QListWidgetItem()
             # ドラッグ＆ドロップ後にデータを復元するため、セグメントの辞書データを保持
             list_item.setData(Qt.UserRole, seg)
             list_item.setSizeHint(item_widget.sizeHint())
             self.segment_list_widget.addItem(list_item)
             self.segment_list_widget.setItemWidget(list_item, item_widget)
-        self.segment_list_widget.model().blockSignals(False)
+        self.segment_list_widget.update()
 
     def _on_segments_reordered(self, parent, start, end, destination, row):
         """路線の区間の並び替えをプロジェクトデータに反映する"""
@@ -2310,6 +2488,7 @@ class RouteEditorDialog(QDialog):
         
         # 操作ボタンのクロージャが参照するインデックスを正しく更新するためにリストを再描画
         self._populate_segment_list(route_data)
+        self._populate_station_preview(route_data) # プレビューの更新
 
         if hasattr(self.parent(), "set_modified"):
             self.parent().set_modified(True)
@@ -2359,6 +2538,7 @@ class RouteEditorDialog(QDialog):
             
             route_data["line_segments"].append(dialog.get_data())
             self._populate_segment_list(route_data)
+            self._populate_station_preview(route_data) # プレビューの更新
             if hasattr(self.parent(), "set_modified"):
                 self.parent().set_modified(True)
 
@@ -2376,6 +2556,7 @@ class RouteEditorDialog(QDialog):
             
             route_data["line_segments"][index] = dialog.get_data()
             self._populate_segment_list(route_data)
+            self._populate_station_preview(route_data) # プレビューの更新
             if hasattr(self.parent(), "set_modified"):
                 self.parent().set_modified(True)
 
@@ -2414,6 +2595,7 @@ class RouteEditorDialog(QDialog):
             route_data["line_segments"].insert(index + 1, {"line_id": line_id, "start_station": split_sid, "end_station": end_sid})
             
             self._populate_segment_list(route_data)
+            self._populate_station_preview(route_data) # プレビューの更新
             if hasattr(self.parent(), "set_modified"):
                 self.parent().set_modified(True)
 
@@ -2426,6 +2608,7 @@ class RouteEditorDialog(QDialog):
         if route_data and 0 <= index < len(route_data["line_segments"]):
             route_data["line_segments"].pop(index)
             self._populate_segment_list(route_data)
+            self._populate_station_preview(route_data) # プレビューの更新
             if hasattr(self.parent(), "set_modified"):
                 self.parent().set_modified(True)
 
