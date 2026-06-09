@@ -1908,7 +1908,7 @@ class RouteEditorDialog(QDialog):
     def __init__(self, parent, project: OptDiaProject):
         super().__init__(parent)
         self.project = project
-        self.setWindowTitle("運行系統編集ウィンドウ")
+        self.setWindowTitle("運行系統情報")
         self.setFixedSize(960, 640)
 
         main_layout = QHBoxLayout(self)
@@ -1929,6 +1929,7 @@ class RouteEditorDialog(QDialog):
         # 運行系統リスト
         self.route_list_widget = QListWidget()
         self.route_list_widget.setStyleSheet("font-size: 14px;")
+        self.route_list_widget.itemSelectionChanged.connect(self._on_route_selected)
         sidebar_layout.addWidget(self.route_list_widget)
 
         # 運行系統追加ボタン
@@ -1963,8 +1964,43 @@ class RouteEditorDialog(QDialog):
         edit_form_layout.setContentsMargins(0, 0, 0, 0)
         edit_form_layout.setSpacing(0)
 
-        # メイン編集エリア (左側、将来の拡張用)
+        # メイン編集エリア (左側)
         self.form_main_area = QWidget()
+        self.form_main_layout = QVBoxLayout(self.form_main_area)
+        self.form_main_layout.setContentsMargins(20, 20, 20, 20)
+        self.form_main_layout.setSpacing(10)
+
+        # 運行系統基本情報 (IDと名称)
+        route_info_form = QFormLayout()
+        self.route_id_edit = QLineEdit()
+        self.route_id_edit.setReadOnly(True)
+        self.route_id_edit.setStyleSheet("background-color: #eeeeee; color: #888888;")
+        route_info_form.addRow("運行系統ID(変更不可):", self.route_id_edit)
+
+        self.route_name_edit = QLineEdit()
+        self.route_name_edit.textChanged.connect(self._on_route_name_changed)
+        route_info_form.addRow("運行系統名:", self.route_name_edit)
+        self.form_main_layout.addLayout(route_info_form)
+
+        # 含まれる路線とその区間
+        self.form_main_layout.addSpacing(10)
+        self.form_main_layout.addWidget(QLabel("<b>含まれる路線とその区間</b>"))
+
+        # カラムヘッダー
+        seg_header_layout = QHBoxLayout()
+        seg_header_layout.addWidget(QLabel("路線名"), stretch=2)
+        seg_header_layout.addWidget(QLabel("区間"), stretch=3)
+        seg_header_layout.addWidget(QLabel("操作"), stretch=2)
+        self.form_main_layout.addLayout(seg_header_layout)
+
+        # 部分区間リスト
+        self.segment_list_widget = QListWidget()
+        self.form_main_layout.addWidget(self.segment_list_widget)
+
+        # 区間追加ボタン
+        self.add_segment_button = QPushButton("路線の区間を追加")
+        self.form_main_layout.addWidget(self.add_segment_button)
+
         edit_form_layout.addWidget(self.form_main_area, stretch=1)
 
         # スクロール可能領域 (右側 180px)
@@ -1986,12 +2022,91 @@ class RouteEditorDialog(QDialog):
         self.route_list_widget.clear()
         for rid in self.project.routes_order:
             route = self.project.routes[rid]
-            self.route_list_widget.addItem(route.get("route_name", rid))
+            item = QListWidgetItem(route.get("route_name", rid))
+            item.setData(Qt.UserRole, rid)
+            self.route_list_widget.addItem(item)
         
         if self.route_list_widget.count() > 0:
             self.right_stack.setCurrentWidget(self.edit_form_page)
+            self.route_list_widget.setCurrentRow(0) # 最初の運行系統を自動選択
         else:
             self.right_stack.setCurrentWidget(self.placeholder_page)
+
+    def _on_route_selected(self):
+        """運行系統の選択が変更されたときの処理"""
+        selected = self.route_list_widget.selectedItems()
+        if not selected:
+            self.route_id_edit.clear()
+            self.route_name_edit.clear()
+            self.segment_list_widget.clear()
+            return
+
+        route_id = selected[0].data(Qt.UserRole)
+        route_data = self.project.routes.get(route_id)
+        if not route_data:
+            return
+
+        # シグナルをブロックして更新
+        self.route_name_edit.blockSignals(True)
+        self.route_id_edit.setText(route_id)
+        self.route_name_edit.setText(route_data.get("route_name", ""))
+        self.route_name_edit.blockSignals(False)
+
+        self._populate_segment_list(route_data)
+
+    def _on_route_name_changed(self, text: str):
+        """名称が変更されたときにプロジェクトデータとサイドバーを更新する"""
+        route_id = self.route_id_edit.text()
+        if not route_id or route_id not in self.project.routes:
+            return
+        
+        self.project.routes[route_id]["route_name"] = text
+        
+        # サイドバーのテキストを更新
+        selected = self.route_list_widget.selectedItems()
+        if selected and selected[0].data(Qt.UserRole) == route_id:
+            selected[0].setText(text)
+
+        if hasattr(self.parent(), "set_modified"):
+            self.parent().set_modified(True)
+
+    def _populate_segment_list(self, route_data: dict):
+        """選択された系統に含まれる路線の部分区間リストを表示する"""
+        self.segment_list_widget.clear()
+        segments = route_data.get("line_segments", [])
+        
+        for seg in segments:
+            item_widget = QWidget()
+            item_layout = QHBoxLayout(item_widget)
+            item_layout.setContentsMargins(5, 2, 5, 2)
+            
+            # 路線名
+            line_id = seg.get("line_id")
+            line_name = self.project.lines.get(line_id, {}).get("line_name", line_id)
+            item_layout.addWidget(QLabel(line_name), stretch=2)
+            
+            # 区間 (始点駅-終点駅)
+            start_sid = seg.get("start_station_id")
+            end_sid = seg.get("end_station_id")
+            start_name = self.project.stations.get(start_sid, {}).get("station_name", start_sid)
+            end_name = self.project.stations.get(end_sid, {}).get("station_name", end_sid)
+            item_layout.addWidget(QLabel(f"{start_name} - {end_name}"), stretch=3)
+            
+            # 操作ボタン
+            btn_layout = QHBoxLayout()
+            btn_layout.setSpacing(2)
+            btn_edit = QPushButton("編集")
+            btn_split = QPushButton("分割")
+            btn_delete = QPushButton("削除")
+            btn_layout.addWidget(btn_edit)
+            btn_layout.addWidget(btn_split)
+            btn_layout.addWidget(btn_delete)
+            item_layout.addLayout(btn_layout, stretch=2)
+            
+            list_item = QListWidgetItem(self.segment_list_widget)
+            list_item.setSizeHint(item_widget.sizeHint())
+            self.segment_list_widget.addItem(list_item)
+            self.segment_list_widget.setItemWidget(list_item, item_widget)
 
     def _on_add_route(self):
         """運行系統の追加ダイアログを表示し、データを追加する"""
