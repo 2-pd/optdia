@@ -2009,6 +2009,59 @@ class SelectSegmentDialog(QDialog):
         }
 
 
+# 区間の分割ダイアログ
+class SplitSegmentDialog(QDialog):
+    def __init__(self, parent, project: OptDiaProject, line_id: str, start_sid: str, end_sid: str):
+        super().__init__(parent)
+        self.project = project
+        self.setWindowTitle("区間の分割")
+        self.setFixedSize(400, 150)
+
+        layout = QVBoxLayout(self)
+        form_layout = QFormLayout()
+
+        self.station_combo = QComboBox()
+
+        # 中間駅のリストアップ
+        line_data = self.project.lines.get(line_id, {})
+        station_ids = [s["station_id"] for s in line_data.get("station_list", [])]
+
+        try:
+            idx_start = station_ids.index(start_sid)
+            idx_end = station_ids.index(end_sid)
+        except ValueError:
+            self.reject()
+            return
+
+        # 順方向か逆方向かでスライスを調整して中間駅を抽出
+        if idx_start < idx_end:
+            intermediate_ids = station_ids[idx_start + 1 : idx_end]
+        else:
+            intermediate_ids = station_ids[idx_start - 1 : idx_end : -1]
+
+        for sid in intermediate_ids:
+            s_name = self.project.stations.get(sid, {}).get("station_name", sid)
+            self.station_combo.addItem(s_name, sid)
+
+        form_layout.addRow("分割点とする駅:", self.station_combo)
+        layout.addLayout(form_layout)
+        layout.addStretch()
+
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        self.split_button = QPushButton("分割")
+        self.cancel_button = QPushButton("キャンセル")
+        button_layout.addWidget(self.split_button)
+        button_layout.addWidget(self.cancel_button)
+        layout.addLayout(button_layout)
+
+        self.split_button.clicked.connect(self.accept)
+        self.cancel_button.clicked.connect(self.reject)
+
+    def get_selected_station_id(self):
+        return self.station_combo.currentData()
+
+
 # 運行系統編集ダイアログ
 class RouteEditorDialog(QDialog):
     def __init__(self, parent, project: OptDiaProject):
@@ -2035,6 +2088,8 @@ class RouteEditorDialog(QDialog):
         # 運行系統リスト
         self.route_list_widget = QListWidget()
         self.route_list_widget.setStyleSheet("font-size: 14px;")
+        self.route_list_widget.setDragDropMode(QListWidget.InternalMove)
+        self.route_list_widget.model().rowsMoved.connect(self._on_routes_reordered)
         self.route_list_widget.itemSelectionChanged.connect(self._on_route_selected)
         sidebar_layout.addWidget(self.route_list_widget)
 
@@ -2101,6 +2156,8 @@ class RouteEditorDialog(QDialog):
 
         # 部分区間リスト
         self.segment_list_widget = QListWidget()
+        self.segment_list_widget.setDragDropMode(QListWidget.InternalMove)
+        self.segment_list_widget.model().rowsMoved.connect(self._on_segments_reordered)
         self.form_main_layout.addWidget(self.segment_list_widget)
 
         # 区間追加ボタン
@@ -2138,6 +2195,17 @@ class RouteEditorDialog(QDialog):
             self.route_list_widget.setCurrentRow(0) # 最初の運行系統を自動選択
         else:
             self.right_stack.setCurrentWidget(self.placeholder_page)
+
+    def _on_routes_reordered(self, parent, start, end, destination, row):
+        """運行系統の並び替えをプロジェクトデータに反映する"""
+        new_order = []
+        for i in range(self.route_list_widget.count()):
+            item = self.route_list_widget.item(i)
+            new_order.append(item.data(Qt.UserRole))
+        
+        self.project.routes_order = new_order
+        if hasattr(self.parent(), "set_modified"):
+            self.parent().set_modified(True)
 
     def _on_route_selected(self):
         """運行系統の選択が変更されたときの処理"""
@@ -2179,6 +2247,8 @@ class RouteEditorDialog(QDialog):
 
     def _populate_segment_list(self, route_data: dict):
         """選択された系統に含まれる路線の部分区間リストを表示する"""
+        # 再描画中のシグナルによる再帰を防ぐ
+        self.segment_list_widget.model().blockSignals(True)
         self.segment_list_widget.clear()
         segments = route_data.get("line_segments", [])
         
@@ -2205,6 +2275,7 @@ class RouteEditorDialog(QDialog):
             btn_edit = QPushButton("編集")
             btn_edit.clicked.connect(lambda _, s=seg, idx=i: self._on_edit_segment(s, idx))
             btn_split = QPushButton("分割")
+            btn_split.clicked.connect(lambda _, s=seg, idx=i: self._on_split_segment(s, idx))
             btn_delete = QPushButton("削除")
             btn_delete.clicked.connect(lambda _, idx=i: self._on_delete_segment(idx))
             btn_layout.addWidget(btn_edit)
@@ -2213,9 +2284,35 @@ class RouteEditorDialog(QDialog):
             item_layout.addLayout(btn_layout, stretch=2)
             
             list_item = QListWidgetItem(self.segment_list_widget)
+            # ドラッグ＆ドロップ後にデータを復元するため、セグメントの辞書データを保持
+            list_item.setData(Qt.UserRole, seg)
             list_item.setSizeHint(item_widget.sizeHint())
             self.segment_list_widget.addItem(list_item)
             self.segment_list_widget.setItemWidget(list_item, item_widget)
+        self.segment_list_widget.model().blockSignals(False)
+
+    def _on_segments_reordered(self, parent, start, end, destination, row):
+        """路線の区間の並び替えをプロジェクトデータに反映する"""
+        selected = self.route_list_widget.selectedItems()
+        if not selected:
+            return
+        route_id = selected[0].data(Qt.UserRole)
+        route_data = self.project.routes.get(route_id)
+        if not route_data:
+            return
+
+        new_segments = []
+        for i in range(self.segment_list_widget.count()):
+            item = self.segment_list_widget.item(i)
+            new_segments.append(item.data(Qt.UserRole))
+        
+        route_data["line_segments"] = new_segments
+        
+        # 操作ボタンのクロージャが参照するインデックスを正しく更新するためにリストを再描画
+        self._populate_segment_list(route_data)
+
+        if hasattr(self.parent(), "set_modified"):
+            self.parent().set_modified(True)
 
     def _on_add_route(self):
         """運行系統の追加ダイアログを表示し、データを追加する"""
@@ -2278,6 +2375,44 @@ class RouteEditorDialog(QDialog):
             route_data = self.project.routes.get(route_id)
             
             route_data["line_segments"][index] = dialog.get_data()
+            self._populate_segment_list(route_data)
+            if hasattr(self.parent(), "set_modified"):
+                self.parent().set_modified(True)
+
+    def _on_split_segment(self, segment_data, index):
+        """路線の区間を分割するダイアログを表示し、データを更新する"""
+        line_id = segment_data.get("line_id")
+        start_sid = segment_data.get("start_station")
+        end_sid = segment_data.get("end_station")
+        
+        line_data = self.project.lines.get(line_id, {})
+        station_ids = [s["station_id"] for s in line_data.get("station_list", [])]
+        
+        try:
+            idx_start = station_ids.index(start_sid)
+            idx_end = station_ids.index(end_sid)
+        except ValueError:
+            return
+
+        # 駅数が3駅未満（隣接駅など）の場合は分割不可
+        if abs(idx_start - idx_end) < 2:
+            QMessageBox.information(self, "情報", "この区間はこれ以上分割できません")
+            return
+            
+        dialog = SplitSegmentDialog(self, self.project, line_id, start_sid, end_sid)
+        if dialog.exec() == QDialog.Accepted:
+            split_sid = dialog.get_selected_station_id()
+            
+            selected = self.route_list_widget.selectedItems()
+            if not selected: return
+            route_id = selected[0].data(Qt.UserRole)
+            route_data = self.project.routes.get(route_id)
+            
+            # 分割処理：元の要素を削除し、新しい2つの区間を挿入
+            route_data["line_segments"].pop(index)
+            route_data["line_segments"].insert(index, {"line_id": line_id, "start_station": start_sid, "end_station": split_sid})
+            route_data["line_segments"].insert(index + 1, {"line_id": line_id, "start_station": split_sid, "end_station": end_sid})
+            
             self._populate_segment_list(route_data)
             if hasattr(self.parent(), "set_modified"):
                 self.parent().set_modified(True)
@@ -2425,6 +2560,8 @@ class MainWindow(QMainWindow):
         route_layout.addLayout(route_header_layout)
 
         self.route_list_widget = QListWidget()
+        self.route_list_widget.setDragDropMode(QListWidget.InternalMove)
+        self.route_list_widget.model().rowsMoved.connect(self._on_routes_reordered)
         route_layout.addWidget(self.route_list_widget)
 
         # サイドバーの残りスペースを2等分するため、stretch=1 を指定
@@ -2617,6 +2754,16 @@ class MainWindow(QMainWindow):
         """運行系統編集ウィンドウを表示する"""
         dialog = RouteEditorDialog(self, self.project)
         dialog.exec()
+
+    def _on_routes_reordered(self, parent, start, end, destination, row):
+        """サイドバーでの運行系統の並び替えをプロジェクトデータに反映する"""
+        new_order = []
+        for i in range(self.route_list_widget.count()):
+            item = self.route_list_widget.item(i)
+            new_order.append(item.data(Qt.UserRole))
+        
+        self.project.routes_order = new_order
+        self.set_modified(True)
 
 
 # アプリ起動処理
