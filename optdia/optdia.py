@@ -1840,6 +1840,69 @@ class TrainTypeEditorDialog(QDialog):
             self.tt_right_stack.setCurrentWidget(self.tt_placeholder_page)
 
 
+# 運行系統の追加ダイアログ
+class AddRouteDialog(QDialog):
+    def __init__(self, parent, project: OptDiaProject):
+        super().__init__(parent)
+        self.project = project
+        self.setWindowTitle("運行系統の追加")
+        self.setFixedSize(400, 240)
+
+        layout = QVBoxLayout(self)
+
+        # 運行系統ID
+        layout.addWidget(QLabel("運行系統ID:"))
+        self.id_edit = QLineEdit()
+        self.id_edit.setPlaceholderText("例) midosuji_namboku")
+        self.id_edit.textChanged.connect(self._clear_id_error)
+        layout.addWidget(self.id_edit)
+
+        # 警告表示スペース
+        self.warning_label = QLabel("")
+        self.warning_label.setStyleSheet("color: red; padding-left: 5px;")
+        layout.addWidget(self.warning_label)
+
+        # 運行系統名
+        layout.addWidget(QLabel("運行系統名:"))
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("例) 御堂筋線・南北線系統")
+        layout.addWidget(self.name_edit)
+
+        layout.addStretch()
+
+        # ボタンエリア
+        button_layout = QHBoxLayout()
+        self.add_button = QPushButton("追加")
+        self.cancel_button = QPushButton("キャンセル")
+        button_layout.addStretch()
+        button_layout.addWidget(self.add_button)
+        button_layout.addWidget(self.cancel_button)
+        layout.addLayout(button_layout)
+
+        self.add_button.clicked.connect(self._on_add_clicked)
+        self.cancel_button.clicked.connect(self.reject)
+
+    def _clear_id_error(self):
+        self.id_edit.setStyleSheet("")
+        self.warning_label.setText("")
+
+    def _on_add_clicked(self):
+        route_id = self.id_edit.text().strip()
+        if not route_id:
+            self.warning_label.setText("IDを指定してください")
+            self.id_edit.setStyleSheet("background-color: #ffeeee;")
+            return
+        if not re.match(r"^[a-zA-Z0-9_]+$", route_id):
+            self.warning_label.setText("IDには半角英数字とアンダーバーのみが使用可能です")
+            self.id_edit.setStyleSheet("background-color: #ffeeee;")
+            return
+        if route_id in self.project.routes:
+            self.warning_label.setText("既に使用されているIDです")
+            self.id_edit.setStyleSheet("background-color: #ffeeee;")
+            return
+        self.accept()
+
+
 # 運行系統編集ダイアログ
 class RouteEditorDialog(QDialog):
     def __init__(self, parent, project: OptDiaProject):
@@ -1870,6 +1933,7 @@ class RouteEditorDialog(QDialog):
 
         # 運行系統追加ボタン
         self.add_route_button = QPushButton("運行系統の追加")
+        self.add_route_button.clicked.connect(self._on_add_route)
         sidebar_layout.addWidget(self.add_route_button)
 
         sidebar_layout.addSpacing(10)
@@ -1928,6 +1992,35 @@ class RouteEditorDialog(QDialog):
             self.right_stack.setCurrentWidget(self.edit_form_page)
         else:
             self.right_stack.setCurrentWidget(self.placeholder_page)
+
+    def _on_add_route(self):
+        """運行系統の追加ダイアログを表示し、データを追加する"""
+        dialog = AddRouteDialog(self, self.project)
+        if dialog.exec() == QDialog.Accepted:
+            route_id = dialog.id_edit.text().strip()
+            route_name = dialog.name_edit.text().strip()
+
+            # プロジェクトデータに新規運行系統を追加
+            self.project.routes[route_id] = {
+                "route_id": route_id,
+                "route_name": route_name,
+                "line_segments" : [],
+                "trains_by_diagram": {}
+            }
+            self.project.routes_order.append(route_id)
+
+            # リスト表示を更新
+            self._populate_route_list()
+
+            # 新しく追加された項目を選択状態にする
+            for i in range(self.route_list_widget.count()):
+                if self.route_list_widget.item(i).text() == route_name:
+                    self.route_list_widget.setCurrentRow(i)
+                    break
+
+            # 変更フラグを立てる (MainWindow)
+            if hasattr(self.parent(), "set_modified"):
+                self.parent().set_modified(True)
 
 
 # アプリケーション情報ダイアログ
