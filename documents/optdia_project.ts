@@ -135,7 +135,7 @@ interface optdia_train_type {
 interface optdia_diagram {
     diagram_id : string; // 運転ダイヤID
     diagram_name : string; // 運転ダイヤ名
-    main_color : string; // 運転ダイヤの基本色(デフォルト値は #cccccc)
+    background_color : string; // 駅時刻表等での運転ダイヤの背景色(デフォルト値は #cccccc)
 }
 
 

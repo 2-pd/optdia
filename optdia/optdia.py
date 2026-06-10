@@ -2617,6 +2617,80 @@ class RouteEditorDialog(QDialog):
                 self.parent().set_modified(True)
 
 
+# 運転ダイヤ情報編集ダイアログ
+class DiagramEditorDialog(QDialog):
+    def __init__(self, parent, project: OptDiaProject, initial_diagram_id=None):
+        super().__init__(parent)
+        self.project = project
+        self.setWindowTitle("運転ダイヤ情報")
+        self.setFixedSize(640, 480)
+        self.initial_diagram_id = initial_diagram_id
+
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # 左側のサイドバー (幅220px固定)
+        sidebar = QWidget()
+        sidebar.setObjectName("diagram_editor_sidebar")
+        sidebar.setFixedWidth(220)
+        sidebar.setStyleSheet("#diagram_editor_sidebar { background-color: #f7f7f7; border-right: 1px solid #dddddd; }")
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(10, 10, 10, 10)
+        sidebar_layout.setSpacing(5)
+
+        sidebar_layout.addWidget(QLabel("<b>ダイヤの一覧</b>"))
+
+        # ダイヤリスト
+        self.diagram_list_widget = QListWidget()
+        self.diagram_list_widget.setDragDropMode(QListWidget.InternalMove)
+        self.diagram_list_widget.model().rowsMoved.connect(self._on_diagrams_reordered)
+        sidebar_layout.addWidget(self.diagram_list_widget)
+
+        # ダイヤ追加ボタン
+        self.add_diagram_button = QPushButton("ダイヤの追加")
+        # 動作はまだ設定しない
+        sidebar_layout.addWidget(self.add_diagram_button)
+
+        main_layout.addWidget(sidebar)
+
+        # 右側のスペース (まだ実装しない)
+        self.right_area = QWidget()
+        main_layout.addWidget(self.right_area, stretch=1)
+
+        self._populate_diagram_list()
+
+    def _populate_diagram_list(self):
+        """プロジェクトに登録されている運転ダイヤをリストに表示する"""
+        self.diagram_list_widget.clear()
+        initial_row = 0
+        for i, did in enumerate(self.project.diagrams_order):
+            diag = self.project.diagrams[did]
+            item = QListWidgetItem(diag.get("diagram_name", did))
+            item.setData(Qt.UserRole, did)
+            bg_color = diag.get("background_color", "#ffffff")
+            item.setBackground(QColor(bg_color))
+            self.diagram_list_widget.addItem(item)
+            if did == self.initial_diagram_id:
+                initial_row = i
+        
+        if self.diagram_list_widget.count() > 0:
+            self.diagram_list_widget.setCurrentRow(initial_row)
+
+
+    def _on_diagrams_reordered(self, parent, start, end, destination, row):
+        """並び替えられたダイヤリストの状態をプロジェクトデータに反映する"""
+        new_order = []
+        for i in range(self.diagram_list_widget.count()):
+            item = self.diagram_list_widget.item(i)
+            new_order.append(item.data(Qt.UserRole))
+        
+        self.project.diagrams_order = new_order
+        # 親ウィンドウのmodifiedフラグを立てる
+        if hasattr(self.parent(), "set_modified"):
+            self.parent().set_modified(True)
+
+
 # アプリケーション情報ダイアログ
 class AboutDialog(QDialog):
     def __init__(self, parent):
@@ -2768,10 +2842,13 @@ class MainWindow(QMainWindow):
         self.btn_edit_diagrams = QPushButton("編集")
         self.btn_edit_diagrams.setFixedWidth(60)
         self.btn_edit_diagrams.setStyleSheet("QPushButton { border: none; text-decoration: underline; background-color: transparent; }")
+        self.btn_edit_diagrams.clicked.connect(self._on_edit_diagrams)
         diagram_header_layout.addWidget(self.btn_edit_diagrams)
         diagram_layout.addLayout(diagram_header_layout)
 
         self.diagram_list_widget = QListWidget()
+        self.diagram_list_widget.setDragDropMode(QListWidget.InternalMove)
+        self.diagram_list_widget.model().rowsMoved.connect(self._on_diagrams_reordered)
         self.diagram_list_widget.setStyleSheet("font-size: 14px;")
         diagram_layout.addWidget(self.diagram_list_widget)
 
@@ -2787,6 +2864,7 @@ class MainWindow(QMainWindow):
 
         # 初期リストの構築
         self._populate_route_list()
+        self._populate_diagram_list()
 
     def _populate_route_list(self):
         """プロジェクトに登録されている運行系統をサイドバーのリストに表示する"""
@@ -2796,6 +2874,15 @@ class MainWindow(QMainWindow):
             item = QListWidgetItem(route.get("route_name", rid))
             item.setData(Qt.UserRole, rid)
             self.route_list_widget.addItem(item)
+
+    def _populate_diagram_list(self):
+        """プロジェクトに登録されている運転ダイヤをサイドバーのリストに表示する"""
+        self.diagram_list_widget.clear()
+        for did in self.project.diagrams_order:
+            diag = self.project.diagrams[did]
+            item = QListWidgetItem(diag.get("diagram_name", did))
+            item.setData(Qt.UserRole, did)
+            self.diagram_list_widget.addItem(item)
 
     def closeEvent(self, event):
         """閉じるイベントを捕捉し、未保存の変更がある場合に確認する"""
@@ -2900,6 +2987,7 @@ class MainWindow(QMainWindow):
                 self.set_modified(False)
                 self._update_window_title()
                 self._populate_route_list()
+                self._populate_diagram_list()
             except Exception:
                 QMessageBox.critical(self, "エラー", "このファイルは破損しています")
         else:
@@ -2964,6 +3052,26 @@ class MainWindow(QMainWindow):
         dialog = RouteEditorDialog(self, self.project, initial_route_id)
         dialog.exec()
         self._populate_route_list()
+
+    def _on_edit_diagrams(self):
+        """運転ダイヤ情報編集ウィンドウを表示する"""
+        selected_items = self.diagram_list_widget.selectedItems()
+        initial_diagram_id = selected_items[0].data(Qt.UserRole) if selected_items else None
+
+        dialog = DiagramEditorDialog(self, self.project, initial_diagram_id)
+        dialog.exec()
+        self._populate_diagram_list()
+
+    def _on_diagrams_reordered(self, parent, start, end, destination, row):
+        """サイドバーでの運転ダイヤの並び替えをプロジェクトデータに反映する"""
+        new_order = []
+        for i in range(self.diagram_list_widget.count()):
+            item = self.diagram_list_widget.item(i)
+            new_order.append(item.data(Qt.UserRole))
+        
+        self.project.diagrams_order = new_order
+        self.set_modified(True)
+
 
     def _on_routes_reordered(self, parent, start, end, destination, row):
         """サイドバーでの運行系統の並び替えをプロジェクトデータに反映する"""
