@@ -2617,6 +2617,76 @@ class RouteEditorDialog(QDialog):
                 self.parent().set_modified(True)
 
 
+# 運転ダイヤの追加ダイアログ
+class AddDiagramDialog(QDialog):
+    def __init__(self, parent, project: OptDiaProject):
+        super().__init__(parent)
+        self.project = project
+        self.setWindowTitle("運転ダイヤの追加")
+        self.setFixedSize(400, 240)
+
+        layout = QVBoxLayout(self)
+
+        # ダイヤID
+        layout.addWidget(QLabel("ダイヤID:"))
+        self.id_edit = QLineEdit()
+        self.id_edit.setPlaceholderText("例) weekday")
+        self.id_edit.textChanged.connect(self._clear_id_error)
+        layout.addWidget(self.id_edit)
+
+        # 警告表示スペース
+        self.warning_label = QLabel("")
+        self.warning_label.setStyleSheet("color: red; padding-left: 5px;")
+        layout.addWidget(self.warning_label)
+
+        # ダイヤ名
+        layout.addWidget(QLabel("ダイヤ名:"))
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("例) 平日ダイヤ")
+        layout.addWidget(self.name_edit)
+
+        layout.addStretch()
+
+        # ボタンエリア (追加 / キャンセル)
+        button_layout = QHBoxLayout()
+        self.add_button = QPushButton("追加")
+        self.cancel_button = QPushButton("キャンセル")
+
+        button_layout.addStretch()
+        button_layout.addWidget(self.add_button)
+        button_layout.addWidget(self.cancel_button)
+        layout.addLayout(button_layout)
+
+        self.add_button.clicked.connect(self._on_add_clicked)
+        self.cancel_button.clicked.connect(self.reject)
+
+    def _clear_id_error(self):
+        """ID入力欄のエラー表示状態をクリアする"""
+        self.id_edit.setStyleSheet("")
+        self.warning_label.setText("")
+
+    def _on_add_clicked(self):
+        """入力内容を検証し、問題なければ accept する"""
+        diagram_id = self.id_edit.text().strip()
+
+        self.id_edit.setStyleSheet("")
+
+        if not diagram_id:
+            self.warning_label.setText("IDを指定してください")
+            self.id_edit.setStyleSheet("background-color: #ffeeee;")
+            return
+        if not re.match(r"^[a-zA-Z0-9_]+$", diagram_id):
+            self.warning_label.setText("IDには半角英数字とアンダーバーのみが使用可能です")
+            self.id_edit.setStyleSheet("background-color: #ffeeee;")
+            return
+        if diagram_id in self.project.diagrams:
+            self.warning_label.setText("既に使用されているIDです")
+            self.id_edit.setStyleSheet("background-color: #ffeeee;")
+            return
+
+        self.accept()
+
+
 # 運転ダイヤ情報編集ダイアログ
 class DiagramEditorDialog(QDialog):
     def __init__(self, parent, project: OptDiaProject, initial_diagram_id=None):
@@ -2649,7 +2719,7 @@ class DiagramEditorDialog(QDialog):
 
         # ダイヤ追加ボタン
         self.add_diagram_button = QPushButton("ダイヤの追加")
-        # 動作はまだ設定しない
+        self.add_diagram_button.clicked.connect(self._on_add_diagram)
         sidebar_layout.addWidget(self.add_diagram_button)
 
         main_layout.addWidget(sidebar)
@@ -2668,7 +2738,7 @@ class DiagramEditorDialog(QDialog):
             diag = self.project.diagrams[did]
             item = QListWidgetItem(diag.get("diagram_name", did))
             item.setData(Qt.UserRole, did)
-            bg_color = diag.get("background_color", "#ffffff")
+            bg_color = diag.get("background_color", "#cccccc")
             item.setBackground(QColor(bg_color))
             self.diagram_list_widget.addItem(item)
             if did == self.initial_diagram_id:
@@ -2676,7 +2746,6 @@ class DiagramEditorDialog(QDialog):
         
         if self.diagram_list_widget.count() > 0:
             self.diagram_list_widget.setCurrentRow(initial_row)
-
 
     def _on_diagrams_reordered(self, parent, start, end, destination, row):
         """並び替えられたダイヤリストの状態をプロジェクトデータに反映する"""
@@ -2689,6 +2758,34 @@ class DiagramEditorDialog(QDialog):
         # 親ウィンドウのmodifiedフラグを立てる
         if hasattr(self.parent(), "set_modified"):
             self.parent().set_modified(True)
+
+    def _on_add_diagram(self):
+        """ダイヤの追加ダイアログを表示し、データを追加する"""
+        dialog = AddDiagramDialog(self, self.project)
+        if dialog.exec() == QDialog.Accepted:
+            diagram_id = dialog.id_edit.text().strip()
+            diagram_name = dialog.name_edit.text().strip()
+
+            # プロジェクトデータに新規運転ダイヤを追加
+            self.project.diagrams[diagram_id] = {
+                "diagram_id": diagram_id,
+                "diagram_name": diagram_name,
+                "background_color": "#cccccc" # デフォルトの背景色
+            }
+            self.project.diagrams_order.append(diagram_id)
+
+            # リスト表示を更新
+            self._populate_diagram_list()
+
+            # 新しく追加された項目を選択状態にする
+            for i in range(self.diagram_list_widget.count()):
+                if self.diagram_list_widget.item(i).data(Qt.UserRole) == diagram_id:
+                    self.diagram_list_widget.setCurrentRow(i)
+                    break
+
+            # 変更フラグを立てる (MainWindow)
+            if hasattr(self.parent(), "set_modified"):
+                self.parent().set_modified(True)
 
 
 # アプリケーション情報ダイアログ
