@@ -2080,9 +2080,10 @@ class SplitSegmentDialog(QDialog):
 
 # 運行系統編集ダイアログ
 class RouteEditorDialog(QDialog):
-    def __init__(self, parent, project: OptDiaProject):
+    def __init__(self, parent, project: OptDiaProject, initial_route_id=None):
         super().__init__(parent)
         self.project = project
+        self.initial_route_id = initial_route_id
         self.setWindowTitle("運行系統情報")
         self.setFixedSize(960, 640)
 
@@ -2243,15 +2244,18 @@ class RouteEditorDialog(QDialog):
 
     def _populate_route_list(self):
         self.route_list_widget.clear()
-        for rid in self.project.routes_order:
+        initial_row = 0
+        for i, rid in enumerate(self.project.routes_order):
             route = self.project.routes[rid]
             item = QListWidgetItem(route.get("route_name", rid))
             item.setData(Qt.UserRole, rid)
             self.route_list_widget.addItem(item)
+            if rid == self.initial_route_id:
+                initial_row = i
         
         if self.route_list_widget.count() > 0:
             self.right_stack.setCurrentWidget(self.edit_form_page)
-            self.route_list_widget.setCurrentRow(0) # 最初の運行系統を自動選択
+            self.route_list_widget.setCurrentRow(initial_row)
         else:
             self.right_stack.setCurrentWidget(self.placeholder_page)
 
@@ -2743,6 +2747,7 @@ class MainWindow(QMainWindow):
         route_layout.addLayout(route_header_layout)
 
         self.route_list_widget = QListWidget()
+        self.route_list_widget.setStyleSheet("font-size: 14px;")
         self.route_list_widget.setDragDropMode(QListWidget.InternalMove)
         self.route_list_widget.model().rowsMoved.connect(self._on_routes_reordered)
         route_layout.addWidget(self.route_list_widget)
@@ -2767,6 +2772,7 @@ class MainWindow(QMainWindow):
         diagram_layout.addLayout(diagram_header_layout)
 
         self.diagram_list_widget = QListWidget()
+        self.diagram_list_widget.setStyleSheet("font-size: 14px;")
         diagram_layout.addWidget(self.diagram_list_widget)
 
         # サイドバーの残りスペースを2等分するため、stretch=1 を指定
@@ -2778,6 +2784,18 @@ class MainWindow(QMainWindow):
         # 右側のコンテンツ表示エリア (将来の拡張用)
         self.content_container = QWidget()
         main_layout.addWidget(self.content_container, stretch=1)
+
+        # 初期リストの構築
+        self._populate_route_list()
+
+    def _populate_route_list(self):
+        """プロジェクトに登録されている運行系統をサイドバーのリストに表示する"""
+        self.route_list_widget.clear()
+        for rid in self.project.routes_order:
+            route = self.project.routes[rid]
+            item = QListWidgetItem(route.get("route_name", rid))
+            item.setData(Qt.UserRole, rid)
+            self.route_list_widget.addItem(item)
 
     def closeEvent(self, event):
         """閉じるイベントを捕捉し、未保存の変更がある場合に確認する"""
@@ -2876,10 +2894,14 @@ class MainWindow(QMainWindow):
 
         # 現在のプロジェクトが「編集されていない新規状態」であれば、現在のプロセスでロードする
         if self.filepath is None and not self.is_modified:
-            self.project = load_project(filepath)
-            self.filepath = filepath
-            self.set_modified(False)
-            self._update_window_title()
+            try:
+                self.project = load_project(filepath)
+                self.filepath = filepath
+                self.set_modified(False)
+                self._update_window_title()
+                self._populate_route_list()
+            except Exception:
+                QMessageBox.critical(self, "エラー", "このファイルは破損しています")
         else:
             # それ以外（既にファイルを開いているか、変更がある場合）は別プロセスで開く
             subprocess.Popen([sys.executable, sys.argv[0], filepath])
@@ -2911,6 +2933,7 @@ class MainWindow(QMainWindow):
             self.project.save_project(filepath)
             self.filepath = filepath
             self.set_modified(False)
+            self._update_window_title()
 
     def _on_project_properties(self):
         """プロジェクトのプロパティダイアログを表示する"""
@@ -2935,8 +2958,12 @@ class MainWindow(QMainWindow):
 
     def _on_edit_routes(self):
         """運行系統編集ウィンドウを表示する"""
-        dialog = RouteEditorDialog(self, self.project)
+        selected_items = self.route_list_widget.selectedItems()
+        initial_route_id = selected_items[0].data(Qt.UserRole) if selected_items else None
+
+        dialog = RouteEditorDialog(self, self.project, initial_route_id)
         dialog.exec()
+        self._populate_route_list()
 
     def _on_routes_reordered(self, parent, start, end, destination, row):
         """サイドバーでの運行系統の並び替えをプロジェクトデータに反映する"""
@@ -2960,7 +2987,12 @@ def main():
     # そうでない場合は新規プロジェクトを生成
     filepath = sys.argv[1] if len(sys.argv) > 1 else None
     if filepath:
-        project = load_project(filepath)
+        try:
+            project = load_project(filepath)
+        except Exception:
+            QMessageBox.critical(None, "エラー", "このファイルは破損しています")
+            project = OptDiaProject()
+            filepath = None
     else:
         project = OptDiaProject()
 
