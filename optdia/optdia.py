@@ -2210,6 +2210,13 @@ class RouteEditorDialog(QDialog):
         self.add_segment_button.clicked.connect(self._on_add_segment)
         self.form_main_layout.addWidget(self.add_segment_button)
 
+        # 運行系統削除ボタン
+        self.delete_route_button = QPushButton("この運行系統を削除")
+        self.delete_route_button.setFixedSize(120, 30)
+        self.delete_route_button.clicked.connect(self._on_delete_route)
+        self.delete_route_button.setStyleSheet("QPushButton { color: #cc3333; border: none; text-decoration: underline; background-color: transparent; }")
+        self.form_main_layout.addWidget(self.delete_route_button, alignment=Qt.AlignRight)
+
         edit_form_layout.addWidget(self.form_main_area, stretch=1)
 
         # 駅順序プレビュー領域 (右側 220px)
@@ -2513,6 +2520,15 @@ class RouteEditorDialog(QDialog):
             }
             self.project.routes_order.append(route_id)
 
+            # 既存の運転ダイヤごとに列車データ枠を作成
+            for did in self.project.diagrams_order:
+                self.project.routes[route_id]["trains_by_diagram"][did] = {
+                    "inbound_trains": {},
+                    "inbound_trains_order": [],
+                    "outbound_trains": {},
+                    "outbound_trains_order": []
+                }
+
             # リスト表示を更新
             self._populate_route_list()
 
@@ -2543,6 +2559,35 @@ class RouteEditorDialog(QDialog):
             route_data["line_segments"].append(dialog.get_data())
             self._populate_segment_list(route_data)
             self._populate_station_preview(route_data) # プレビューの更新
+            if hasattr(self.parent(), "set_modified"):
+                self.parent().set_modified(True)
+
+    def _on_delete_route(self):
+        """選択中の運行系統を削除する"""
+        selected_items = self.route_list_widget.selectedItems()
+        if not selected_items:
+            return
+        
+        route_id = selected_items[0].data(Qt.UserRole)
+        route_name = self.project.routes.get(route_id, {}).get("route_name", route_id)
+
+        reply = QMessageBox.question(
+            self,
+            "運行系統の削除",
+            f"「{route_name}」を削除しますか？\n"
+            "この運行系統を削除すると、この運行系統に登録されている列車も全て削除されます。\n"
+            "本当に運行系統を削除しますか？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            # プロジェクトデータから運行系統を削除
+            del self.project.routes[route_id]
+            self.project.routes_order.remove(route_id)
+
+            self._populate_route_list() # リストを再構築して表示を更新
+            
             if hasattr(self.parent(), "set_modified"):
                 self.parent().set_modified(True)
 
@@ -2776,6 +2821,7 @@ class DiagramEditorDialog(QDialog):
         # ダイヤ削除ボタン
         self.delete_diagram_button = QPushButton("このダイヤを削除")
         self.delete_diagram_button.setFixedSize(120, 30)
+        self.delete_diagram_button.clicked.connect(self._on_delete_diagram)
         self.delete_diagram_button.setStyleSheet("QPushButton { color: #cc3333; border: none; text-decoration: underline; background-color: transparent; }")
         edit_form_layout.addWidget(self.delete_diagram_button, alignment=Qt.AlignRight)
 
@@ -2904,6 +2950,17 @@ class DiagramEditorDialog(QDialog):
             }
             self.project.diagrams_order.append(diagram_id)
 
+            # 各運行系統に新しいダイヤ用の列車データ枠を作成
+            for route in self.project.routes.values():
+                if "trains_by_diagram" not in route:
+                    route["trains_by_diagram"] = {}
+                route["trains_by_diagram"][diagram_id] = {
+                    "inbound_trains": {},
+                    "inbound_trains_order": [],
+                    "outbound_trains": {},
+                    "outbound_trains_order": []
+                }
+
             # リスト表示を更新
             self._populate_diagram_list()
 
@@ -2915,6 +2972,40 @@ class DiagramEditorDialog(QDialog):
             self._on_diagram_selected() # 新規追加されたダイヤの編集フォームを表示
 
             # 変更フラグを立てる (MainWindow)
+            if hasattr(self.parent(), "set_modified"):
+                self.parent().set_modified(True)
+
+    def _on_delete_diagram(self):
+        """選択中の運転ダイヤを削除する"""
+        selected_items = self.diagram_list_widget.selectedItems()
+        if not selected_items:
+            return
+        
+        diagram_id = selected_items[0].data(Qt.UserRole)
+        diagram_name = self.project.diagrams.get(diagram_id, {}).get("diagram_name", diagram_id)
+
+        reply = QMessageBox.question(
+            self,
+            "運転ダイヤの削除",
+            f"「{diagram_name}」を削除しますか？\n"
+            "このダイヤを削除すると、このダイヤに登録されている列車も全て削除されます。\n"
+            "本当にダイヤを削除しますか？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            # プロジェクトデータからダイヤを削除
+            del self.project.diagrams[diagram_id]
+            self.project.diagrams_order.remove(diagram_id)
+
+            # 各運行系統からこのダイヤの列車情報を削除
+            for route_data in self.project.routes.values():
+                if "trains_by_diagram" in route_data and diagram_id in route_data["trains_by_diagram"]:
+                    del route_data["trains_by_diagram"][diagram_id]
+
+            self._populate_diagram_list() # リストを再構築して表示を更新
+            
             if hasattr(self.parent(), "set_modified"):
                 self.parent().set_modified(True)
 
