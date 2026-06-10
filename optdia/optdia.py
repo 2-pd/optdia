@@ -2715,6 +2715,7 @@ class DiagramEditorDialog(QDialog):
         self.diagram_list_widget = QListWidget()
         self.diagram_list_widget.setDragDropMode(QListWidget.InternalMove)
         self.diagram_list_widget.model().rowsMoved.connect(self._on_diagrams_reordered)
+        self.diagram_list_widget.itemSelectionChanged.connect(self._on_diagram_selected)
         sidebar_layout.addWidget(self.diagram_list_widget)
 
         # ダイヤ追加ボタン
@@ -2724,11 +2725,74 @@ class DiagramEditorDialog(QDialog):
 
         main_layout.addWidget(sidebar)
 
-        # 右側のスペース (まだ実装しない)
-        self.right_area = QWidget()
-        main_layout.addWidget(self.right_area, stretch=1)
+        # 右側のスタックドウィジェット
+        self.right_stack = QStackedWidget()
+        main_layout.addWidget(self.right_stack, stretch=1)
+
+        # 1. プレースホルダーページ (データなし)
+        self.placeholder_page = QWidget()
+        placeholder_layout = QVBoxLayout(self.placeholder_page)
+        placeholder_label = QLabel("ダイヤを追加してください")
+        placeholder_label.setAlignment(Qt.AlignCenter)
+        placeholder_label.setStyleSheet("color: #888888; font-size: 18px;")
+        placeholder_layout.addWidget(placeholder_label)
+        self.right_stack.addWidget(self.placeholder_page)
+
+        # 2. ダイヤ編集フォームページ
+        self.edit_form_page = QWidget()
+        edit_form_layout = QVBoxLayout(self.edit_form_page)
+        edit_form_layout.setContentsMargins(20, 20, 20, 20)
+        edit_form_layout.setSpacing(10)
+
+        # ダイヤID (変更不可)
+        edit_form_layout.addWidget(QLabel("ダイヤID(変更不可):"))
+        self.diagram_id_display = QLineEdit()
+        self.diagram_id_display.setReadOnly(True)
+        self.diagram_id_display.setStyleSheet("background-color: #eeeeee; color: #888888;")
+        edit_form_layout.addWidget(self.diagram_id_display)
+
+        # ダイヤ名
+        edit_form_layout.addWidget(QLabel("ダイヤ名:"))
+        self.diagram_name_edit = QLineEdit()
+        self.diagram_name_edit.textChanged.connect(self._on_diagram_name_changed)
+        edit_form_layout.addWidget(self.diagram_name_edit)
+
+        # 背景色
+        edit_form_layout.addSpacing(10)
+        edit_form_layout.addWidget(QLabel("背景色:"))
+        color_picker_layout = QHBoxLayout()
+        self.background_color_square = QLabel()
+        self.background_color_square.setFixedSize(20, 20)
+        self.background_color_square.setStyleSheet("border: 1px solid #cccccc;") # 枠線で視認性を向上
+        color_picker_layout.addWidget(self.background_color_square)
+        self.background_color_button = QPushButton("#cccccc") # 初期色コード
+        self.background_color_button.clicked.connect(self._on_pick_background_color)
+        color_picker_layout.addWidget(self.background_color_button)
+        color_picker_layout.addStretch()
+        edit_form_layout.addLayout(color_picker_layout)
+
+        edit_form_layout.addStretch() # 空白スペース
+
+        # ダイヤ削除ボタン
+        self.delete_diagram_button = QPushButton("このダイヤを削除")
+        self.delete_diagram_button.setFixedSize(120, 30)
+        self.delete_diagram_button.setStyleSheet("QPushButton { color: #cc3333; border: none; text-decoration: underline; background-color: transparent; }")
+        edit_form_layout.addWidget(self.delete_diagram_button, alignment=Qt.AlignRight)
+
+        self.right_stack.addWidget(self.edit_form_page)
 
         self._populate_diagram_list()
+
+    def _set_editing_enabled(self, enabled: bool):
+        """編集フォームの有効/無効を切り替える"""
+        if enabled:
+            self.right_stack.setCurrentWidget(self.edit_form_page)
+        else:
+            self.right_stack.setCurrentWidget(self.placeholder_page)
+
+        self.diagram_name_edit.setEnabled(enabled)
+        self.background_color_button.setEnabled(enabled)
+        self.delete_diagram_button.setEnabled(enabled)
 
     def _populate_diagram_list(self):
         """プロジェクトに登録されている運転ダイヤをリストに表示する"""
@@ -2746,6 +2810,9 @@ class DiagramEditorDialog(QDialog):
         
         if self.diagram_list_widget.count() > 0:
             self.diagram_list_widget.setCurrentRow(initial_row)
+            self._set_editing_enabled(True)
+        else:
+            self._set_editing_enabled(False)
 
     def _on_diagrams_reordered(self, parent, start, end, destination, row):
         """並び替えられたダイヤリストの状態をプロジェクトデータに反映する"""
@@ -2758,6 +2825,69 @@ class DiagramEditorDialog(QDialog):
         # 親ウィンドウのmodifiedフラグを立てる
         if hasattr(self.parent(), "set_modified"):
             self.parent().set_modified(True)
+
+    def _on_diagram_selected(self):
+        """ダイヤリストの選択が変更されたときの処理"""
+        selected_items = self.diagram_list_widget.selectedItems()
+        if not selected_items:
+            self._set_editing_enabled(False)
+            self.diagram_id_display.clear()
+            self.diagram_name_edit.clear()
+            self.background_color_button.setText("#cccccc")
+            self.background_color_square.setPixmap(create_color_square_pixmap("#cccccc"))
+            return
+
+        diagram_id = selected_items[0].data(Qt.UserRole)
+        diagram_data = self.project.diagrams.get(diagram_id)
+        if not diagram_data:
+            self._set_editing_enabled(False)
+            return
+
+        self._set_editing_enabled(True)
+        
+        # シグナルをブロックして更新
+        self.diagram_name_edit.blockSignals(True)
+        self.diagram_id_display.setText(diagram_id)
+        self.diagram_name_edit.setText(diagram_data.get("diagram_name", ""))
+        
+        current_color = diagram_data.get("background_color", "#cccccc")
+        self.background_color_button.setText(current_color)
+        self.background_color_square.setPixmap(create_color_square_pixmap(current_color))
+        
+        self.diagram_name_edit.blockSignals(False)
+
+    def _on_diagram_name_changed(self, text: str):
+        """ダイヤ名が変更されたときにプロジェクトデータとリスト表示を更新する"""
+        selected_items = self.diagram_list_widget.selectedItems()
+        if not selected_items: return
+        diagram_id = selected_items[0].data(Qt.UserRole)
+        diagram_data = self.project.diagrams.get(diagram_id)
+        if not diagram_data: return
+        
+        diagram_data["diagram_name"] = text
+        selected_items[0].setText(text) # リストアイテムの表示も更新
+        
+        if hasattr(self.parent(), "set_modified"):
+            self.parent().set_modified(True)
+
+    def _on_pick_background_color(self):
+        """背景色選択ダイアログを表示し、選択された色をプロジェクトデータに反映する"""
+        selected_items = self.diagram_list_widget.selectedItems()
+        if not selected_items: return
+        diagram_id = selected_items[0].data(Qt.UserRole)
+        diagram_data = self.project.diagrams.get(diagram_id)
+        
+        initial_color = QColor(diagram_data.get("background_color", "#cccccc"))
+        color = QColorDialog.getColor(initial_color, self)
+        if color.isValid():
+            new_color_hex = color.name()
+            diagram_data["background_color"] = new_color_hex
+            self.background_color_button.setText(new_color_hex)
+            self.background_color_square.setPixmap(create_color_square_pixmap(new_color_hex))
+            selected_items[0].setBackground(QColor(new_color_hex)) # リストアイテムの背景色も更新
+
+            if hasattr(self.parent(), "set_modified"):
+                self.parent().set_modified(True)
 
     def _on_add_diagram(self):
         """ダイヤの追加ダイアログを表示し、データを追加する"""
@@ -2782,6 +2912,7 @@ class DiagramEditorDialog(QDialog):
                 if self.diagram_list_widget.item(i).data(Qt.UserRole) == diagram_id:
                     self.diagram_list_widget.setCurrentRow(i)
                     break
+            self._on_diagram_selected() # 新規追加されたダイヤの編集フォームを表示
 
             # 変更フラグを立てる (MainWindow)
             if hasattr(self.parent(), "set_modified"):
@@ -2946,6 +3077,7 @@ class MainWindow(QMainWindow):
         self.diagram_list_widget = QListWidget()
         self.diagram_list_widget.setDragDropMode(QListWidget.InternalMove)
         self.diagram_list_widget.model().rowsMoved.connect(self._on_diagrams_reordered)
+        self.diagram_list_widget.itemSelectionChanged.connect(self._on_diagram_selected_in_main_window)
         self.diagram_list_widget.setStyleSheet("font-size: 14px;")
         diagram_layout.addWidget(self.diagram_list_widget)
 
@@ -3158,6 +3290,10 @@ class MainWindow(QMainWindow):
         dialog = DiagramEditorDialog(self, self.project, initial_diagram_id)
         dialog.exec()
         self._populate_diagram_list()
+
+    def _on_diagram_selected_in_main_window(self):
+        """メインウィンドウのダイヤリストで選択が変更されたときに何もしない（暫定）"""
+        pass
 
     def _on_diagrams_reordered(self, parent, start, end, destination, row):
         """サイドバーでの運転ダイヤの並び替えをプロジェクトデータに反映する"""
