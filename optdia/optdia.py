@@ -7,7 +7,7 @@ import random
 import string
 import re
 import subprocess
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QAbstractTableModel, QModelIndex
 from PySide6.QtGui import QIcon, QColor, QPainter, QPixmap, QFont, QTextDocument, QAbstractTextDocumentLayout, QPen
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem, QCheckBox, QColorDialog, QStackedWidget,
     QRadioButton, QComboBox, QGroupBox, QFormLayout, QSpinBox,
     QStyledItemDelegate, QStyleOptionViewItem, QStyle, QScrollArea,
-    QSizePolicy
+    QSizePolicy, QTabBar, QTableView, QHeaderView, QStyleOptionButton
 )
 import assets_rc
 from project import OptDiaProject, load_project
@@ -3010,6 +3010,112 @@ class DiagramEditorDialog(QDialog):
                 self.parent().set_modified(True)
 
 
+# 時刻表テーブル用のモデル
+class TimetableModel(QAbstractTableModel):
+    def __init__(self, project: OptDiaProject):
+        super().__init__()
+        self.project = project
+        self.route_id = None
+        self.diagram_id = None
+        self.direction = "outbound"
+        self.row_headers = ["列車番号", "運用番号", "両数", "種別・愛称", "号数", "行き先"]
+        self.train_ids = []
+
+    def update_data(self, route_id, diagram_id, direction):
+        self.beginResetModel()
+        self.route_id = route_id
+        self.diagram_id = diagram_id
+        self.direction = direction
+        self.train_ids = []
+        if route_id and diagram_id:
+            route = self.project.routes.get(route_id)
+            if route:
+                tbd = route.get("trains_by_diagram", {}).get(diagram_id, {})
+                key = "inbound_trains_order" if direction == "inbound" else "outbound_trains_order"
+                self.train_ids = tbd.get(key, [])
+        self.endResetModel()
+
+    def rowCount(self, parent=QModelIndex()):
+        return len(self.row_headers)
+
+    def columnCount(self, parent=QModelIndex()):
+        return len(self.train_ids)
+
+    def data(self, index, role=Qt.DisplayRole):
+        if not index.isValid() or not (0 <= index.row() < len(self.row_headers)):
+            return None
+        
+        col = index.column()
+        row = index.row()
+        
+        if not self.route_id or not self.diagram_id:
+            return None
+
+        route = self.project.routes.get(self.route_id)
+        if not route: return None
+        tbd = route.get("trains_by_diagram", {}).get(self.diagram_id, {})
+        train_key = "inbound_trains" if self.direction == "inbound" else "outbound_trains"
+        trains = tbd.get(train_key, {})
+        
+        if col >= len(self.train_ids): return None
+        train_id = self.train_ids[col]
+        train = trains.get(train_id, {})
+
+        if role == Qt.DisplayRole:
+            if row == 0: # 列車番号
+                return train.get("train_number", "")
+            elif row == 1: # 運用番号
+                operations = train.get("operations", [])
+                if operations:
+                    op_ids = [str(op.get("operation_id", "")) for op in operations if "operation_id" in op]
+                    op_ids = [op_id for op_id in op_ids if op_id]
+                    if op_ids:
+                        return ",".join(op_ids)
+                return "未設定"
+            elif row == 2: # 両数
+                cc = train.get("car_count")
+                return str(cc) if cc is not None else ""
+            elif row == 3: # 種別・愛称
+                tt_id = train.get("train_type_id")
+                tt = self.project.train_types.get(tt_id)
+                name = tt.get("train_type_name", "") if tt else "未設定"
+                tname = train.get("train_name")
+                return f"{name} {tname}" if tname else name
+            elif row == 4: # 号数
+                return train.get("named_train_number", "")
+            elif row == 5: # 行き先
+                return train.get("destination", "")
+        
+        return None
+
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if orientation == Qt.Vertical and role == Qt.DisplayRole:
+            if 0 <= section < len(self.row_headers):
+                return self.row_headers[section]
+        return None
+
+# ボタン風の表示を行うためのデリゲート
+class TimetableButtonDelegate(QStyledItemDelegate):
+    def paint(self, painter, option, index):
+        row = index.row()
+        if row in (1, 3): # 運用番号(2行目)と種別(4行目)
+            button_option = QStyleOptionButton()
+            button_option.rect = option.rect.adjusted(2, 2, -2, -2)
+            button_option.text = index.data(Qt.DisplayRole)
+            button_option.state = QStyle.State_Enabled | QStyle.State_Active
+            
+            style = option.widget.style() if option.widget else QApplication.style()
+            style.drawControl(QStyle.CE_PushButton, button_option, painter)
+        else:
+            super().paint(painter, option, index)
+
+    def sizeHint(self, option, index):
+        size = super().sizeHint(option, index)
+        if index.row() in (1, 3):
+            size.setHeight(max(size.height(), 32))
+        return size
+
+
 # アプリケーション情報ダイアログ
 class AboutDialog(QDialog):
     def __init__(self, parent):
@@ -3143,6 +3249,7 @@ class MainWindow(QMainWindow):
         self.route_list_widget.setStyleSheet("font-size: 14px;")
         self.route_list_widget.setDragDropMode(QListWidget.InternalMove)
         self.route_list_widget.model().rowsMoved.connect(self._on_routes_reordered)
+        self.route_list_widget.itemSelectionChanged.connect(self._on_timetable_settings_changed)
         route_layout.addWidget(self.route_list_widget)
 
         # サイドバーの残りスペースを2等分するため、stretch=1 を指定
@@ -3178,13 +3285,64 @@ class MainWindow(QMainWindow):
         # レイアウトにサイドバーを追加
         main_layout.addWidget(sidebar)
         
-        # 右側のコンテンツ表示エリア (将来の拡張用)
-        self.content_container = QWidget()
-        main_layout.addWidget(self.content_container, stretch=1)
+        # 右側のコンテンツ表示エリア (スタックドウィジェット)
+        self.right_stack = QStackedWidget()
+
+        # --- コンテンツありのページ ---
+        self.timetable_page = QWidget()
+        self.timetable_layout = QVBoxLayout(self.timetable_page)
+        self.timetable_layout.setContentsMargins(0, 0, 0, 0)
+        self.timetable_layout.setSpacing(0)
+
+        # 方面選択用タブバー
+        self.direction_tab_bar = QTabBar()
+        self.direction_tab_bar.addTab("下り時刻表")
+        self.direction_tab_bar.addTab("上り時刻表")
+        self.direction_tab_bar.currentChanged.connect(self._on_timetable_settings_changed)
+        self.timetable_layout.addWidget(self.direction_tab_bar)
+
+        # 時刻表テーブル
+        self.timetable_model = TimetableModel(self.project)
+        self.timetable_view = QTableView()
+        self.timetable_view.setModel(self.timetable_model)
+        
+        # テーブルの外観設定
+        self.timetable_view.setStyleSheet("QTableView, QHeaderView { font-size: 12px; }")
+        self.timetable_view.horizontalHeader().setVisible(False)
+        v_header = self.timetable_view.verticalHeader()
+        v_header.setDefaultAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        
+        # ボタン用デリゲートの適用
+        self.timetable_delegate = TimetableButtonDelegate(self.timetable_view)
+        self.timetable_view.setItemDelegate(self.timetable_delegate)
+
+        self.timetable_layout.addWidget(self.timetable_view)
+        
+        self.right_stack.addWidget(self.timetable_page)
+
+        # --- コンテンツなしのプレースホルダーページ ---
+        self.placeholder_page = QWidget()
+        placeholder_layout = QVBoxLayout(self.placeholder_page)
+        placeholder_label = QLabel("時刻表を編集するには、路線情報・運行系統・ダイヤの設定を完了してください")
+        placeholder_label.setAlignment(Qt.AlignCenter)
+        placeholder_label.setStyleSheet("color: #888888; font-size: 18px;")
+        placeholder_layout.addWidget(placeholder_label)
+        
+        self.right_stack.addWidget(self.placeholder_page)
+
+        main_layout.addWidget(self.right_stack, stretch=1)
 
         # 初期リストの構築
         self._populate_route_list()
         self._populate_diagram_list()
+
+        # 初期選択の設定
+        if self.route_list_widget.count() > 0:
+            self.route_list_widget.setCurrentRow(0)
+        if self.diagram_list_widget.count() > 0:
+            self.diagram_list_widget.setCurrentRow(0)
+            
+        self._on_timetable_settings_changed()
 
     def _populate_route_list(self):
         """プロジェクトに登録されている運行系統をサイドバーのリストに表示する"""
@@ -3308,6 +3466,14 @@ class MainWindow(QMainWindow):
                 self._update_window_title()
                 self._populate_route_list()
                 self._populate_diagram_list()
+                
+                # 初期選択の設定
+                if self.route_list_widget.count() > 0:
+                    self.route_list_widget.setCurrentRow(0)
+                if self.diagram_list_widget.count() > 0:
+                    self.diagram_list_widget.setCurrentRow(0)
+                    
+                self._on_timetable_settings_changed()
             except Exception:
                 QMessageBox.critical(self, "エラー", "このファイルは破損しています")
         else:
@@ -3372,6 +3538,7 @@ class MainWindow(QMainWindow):
         dialog = RouteEditorDialog(self, self.project, initial_route_id)
         dialog.exec()
         self._populate_route_list()
+        self._on_timetable_settings_changed()
 
     def _on_edit_diagrams(self):
         """運転ダイヤ情報編集ウィンドウを表示する"""
@@ -3381,10 +3548,28 @@ class MainWindow(QMainWindow):
         dialog = DiagramEditorDialog(self, self.project, initial_diagram_id)
         dialog.exec()
         self._populate_diagram_list()
+        self._on_timetable_settings_changed()
 
     def _on_diagram_selected_in_main_window(self):
-        """メインウィンドウのダイヤリストで選択が変更されたときに何もしない（暫定）"""
-        pass
+        """メインウィンドウのダイヤリストで選択が変更されたときに表示を更新する"""
+        self._on_timetable_settings_changed()
+
+    def _on_timetable_settings_changed(self):
+        """サイドバーの選択やタブの切り替え時に、時刻表テーブルの表示内容を更新する"""
+        if not self.project.routes or not self.project.diagrams:
+            self.right_stack.setCurrentIndex(1)
+        else:
+            self.right_stack.setCurrentIndex(0)
+
+        route_item = self.route_list_widget.currentItem()
+        diagram_item = self.diagram_list_widget.currentItem()
+        
+        route_id = route_item.data(Qt.UserRole) if route_item else None
+        diagram_id = diagram_item.data(Qt.UserRole) if diagram_item else None
+        direction = "inbound" if self.direction_tab_bar.currentIndex() == 1 else "outbound"
+        
+        self.timetable_model.update_data(route_id, diagram_id, direction)
+        self.timetable_view.resizeColumnsToContents()
 
     def _on_diagrams_reordered(self, parent, start, end, destination, row):
         """サイドバーでの運転ダイヤの並び替えをプロジェクトデータに反映する"""
@@ -3395,6 +3580,7 @@ class MainWindow(QMainWindow):
         
         self.project.diagrams_order = new_order
         self.set_modified(True)
+        self._on_timetable_settings_changed()
 
 
     def _on_routes_reordered(self, parent, start, end, destination, row):
@@ -3406,6 +3592,7 @@ class MainWindow(QMainWindow):
         
         self.project.routes_order = new_order
         self.set_modified(True)
+        self._on_timetable_settings_changed()
 
 
 # アプリ起動処理
