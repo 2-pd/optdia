@@ -3031,9 +3031,108 @@ class TimetableModel(QAbstractTableModel):
             route = self.project.routes.get(route_id)
             if route:
                 tbd = route.get("trains_by_diagram", {}).get(diagram_id, {})
-                key = "inbound_trains_order" if direction == "inbound" else "outbound_trains_order"
-                self.train_ids = tbd.get(key, [])
+                
+                train_dict_key = "inbound_trains" if direction == "inbound" else "outbound_trains"
+                train_order_key = "inbound_trains_order" if direction == "inbound" else "outbound_trains_order"
+                
+                trains = tbd.get(train_dict_key, {})
+                order = tbd.get(train_order_key, [])
+                
+                # to_be_saved が False の列車の現在の数を確認
+                unsaved_count = sum(1 for tid in order if trains.get(tid, {}).get("to_be_saved") is False)
+                
+                # 10件に満たない場合は不足分を追加
+                needed = 10 - unsaved_count
+                if needed > 0:
+                    chars = string.ascii_letters + string.digits
+                    for _ in range(needed):
+                        while True:
+                            new_id = "tmp_" + "".join(random.choices(chars, k=8))
+                            if new_id not in trains:
+                                break
+                        trains[new_id] = {
+                            "train_id": new_id,
+                            "train_number": "",
+                            "operations": [],
+                            "train_type_id": None,
+                            "named_train_number": None,
+                            "car_count": None,
+                            "destination": None,
+                            "subsequent_trains": [],
+                            "note": "",
+                            "stops": [],
+                            "to_be_saved": False
+                        }
+                        order.append(new_id)
+                
+                self.train_ids = order
         self.endResetModel()
+
+    def flags(self, index):
+        if not index.isValid():
+            return Qt.ItemIsEnabled
+        return Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable
+
+    def setData(self, index, value, role=Qt.EditRole):
+        if not index.isValid() or role != Qt.EditRole:
+            return False
+
+        col = index.column()
+        row = index.row()
+
+        if not self.route_id or not self.diagram_id or col >= len(self.train_ids):
+            return False
+
+        route = self.project.routes.get(self.route_id)
+        tbd = route.get("trains_by_diagram", {}).get(self.diagram_id, {})
+        train_key = "inbound_trains" if self.direction == "inbound" else "outbound_trains"
+        trains = tbd.get(train_key, {})
+
+        train_id = self.train_ids[col]
+        train = trains.get(train_id)
+        if not train:
+            return False
+
+        changed = False
+        if row == 0:  # 列車番号
+            if train.get("train_number") != value:
+                train["train_number"] = value
+                changed = True
+        elif row == 2:  # 両数
+            try:
+                val = int(value) if value and value.strip() else None
+                if train.get("car_count") != val:
+                    train["car_count"] = val
+                    changed = True
+            except ValueError:
+                return False
+        elif row == 4:  # 号数
+            try:
+                val = int(value) if value and value.strip() else None
+                if train.get("named_train_number") != val:
+                    train["named_train_number"] = val
+                    changed = True
+            except ValueError:
+                return False
+        elif row == 5:  # 行き先
+            if train.get("destination") != value:
+                train["destination"] = value
+                changed = True
+
+        if changed:
+            # 変更があった列車およびそれより左側にある未保存の列車の保存フラグをTrueにする
+            # これにより、途中の空列を飛ばして入力しても、それ以前の列車が保存対象として確定される
+            for i in range(col + 1):
+                tid = self.train_ids[i]
+                t = trains.get(tid)
+                if t and t.get("to_be_saved") is False:
+                    t["to_be_saved"] = True
+
+            # 保存フラグがTrueになったことで不足した空列を補充し、テーブルを更新する
+            self.update_data(self.route_id, self.diagram_id, self.direction)
+            return True
+
+        return False
 
     def rowCount(self, parent=QModelIndex()):
         return len(self.row_headers)
@@ -3303,12 +3402,16 @@ class MainWindow(QMainWindow):
 
         # 時刻表テーブル
         self.timetable_model = TimetableModel(self.project)
+        self.timetable_model.dataChanged.connect(lambda: self.set_modified(True))
         self.timetable_view = QTableView()
         self.timetable_view.setModel(self.timetable_model)
         
         # テーブルの外観設定
         self.timetable_view.setStyleSheet("QTableView, QHeaderView { font-size: 12px; }")
-        self.timetable_view.horizontalHeader().setVisible(False)
+        h_header = self.timetable_view.horizontalHeader()
+        h_header.setVisible(False)
+        h_header.setDefaultSectionSize(60)
+        h_header.setSectionResizeMode(QHeaderView.Fixed)
         v_header = self.timetable_view.verticalHeader()
         v_header.setDefaultAlignment(Qt.AlignRight | Qt.AlignVCenter)
         
@@ -3461,6 +3564,7 @@ class MainWindow(QMainWindow):
         if self.filepath is None and not self.is_modified:
             try:
                 self.project = load_project(filepath)
+                self.timetable_model.project = self.project
                 self.filepath = filepath
                 self.set_modified(False)
                 self._update_window_title()
@@ -3569,7 +3673,6 @@ class MainWindow(QMainWindow):
         direction = "inbound" if self.direction_tab_bar.currentIndex() == 1 else "outbound"
         
         self.timetable_model.update_data(route_id, diagram_id, direction)
-        self.timetable_view.resizeColumnsToContents()
 
     def _on_diagrams_reordered(self, parent, start, end, destination, row):
         """サイドバーでの運転ダイヤの並び替えをプロジェクトデータに反映する"""

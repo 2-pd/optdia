@@ -47,11 +47,15 @@ class OptDiaProject:
                     diagram_trains["inbound_trains"], diagram_trains["inbound_trains_order"] = self._split_collection(
                         diagram_trains["inbound_trains"], "train_id"
                     )
+                    for train in diagram_trains["inbound_trains"].values():
+                        train["to_be_saved"] = True
                 # 下り列車 (outbound_trains: optdia_train[])
                 if "outbound_trains" in diagram_trains:
                     diagram_trains["outbound_trains"], diagram_trains["outbound_trains_order"] = self._split_collection(
                         diagram_trains["outbound_trains"], "train_id"
                     )
+                    for train in diagram_trains["outbound_trains"].values():
+                        train["to_be_saved"] = True
 
         # 列車種別 (train_types: optdia_train_type[])
         self.train_types, self.train_types_order = self._split_collection(entities.get("train_types", []), "train_type_id")
@@ -104,10 +108,18 @@ class OptDiaProject:
                 for did, dt in r["trains_by_diagram"].items():
                     dt_copy = dt.copy()
                     if "inbound_trains" in dt and "inbound_trains_order" in dt:
-                        dt_copy["inbound_trains"] = [dt["inbound_trains"][tid] for tid in dt["inbound_trains_order"]]
+                        dt_copy["inbound_trains"] = [
+                            {k: v for k, v in dt["inbound_trains"][tid].items() if k != "to_be_saved"}
+                            for tid in dt["inbound_trains_order"]
+                            if dt["inbound_trains"][tid].get("to_be_saved") is True
+                        ]
                         del dt_copy["inbound_trains_order"]
                     if "outbound_trains" in dt and "outbound_trains_order" in dt:
-                        dt_copy["outbound_trains"] = [dt["outbound_trains"][tid] for tid in dt["outbound_trains_order"]]
+                        dt_copy["outbound_trains"] = [
+                            {k: v for k, v in dt["outbound_trains"][tid].items() if k != "to_be_saved"}
+                            for tid in dt["outbound_trains_order"]
+                            if dt["outbound_trains"][tid].get("to_be_saved") is True
+                        ]
                         del dt_copy["outbound_trains_order"]
                     new_tbd[did] = dt_copy
                 r_copy["trains_by_diagram"] = new_tbd
