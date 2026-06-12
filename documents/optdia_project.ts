@@ -65,15 +65,15 @@ interface optdia_station {
     is_major_station: boolean; // 主要駅か否か
     is_signal_station: boolean; // 信号場か否か
     show_arrival_time: boolean; // 時刻表で着時刻を表示するか否か
-    show_track_number: boolean; // 時刻表で乗り場を表示するか否か
-    tracks: optdia_station_track[]; // 乗り場情報(下記)を表示順に配列で
+    show_track_number: boolean; // 時刻表で発着番線を表示するか否か
+    tracks: optdia_station_track[]; // 発着番線情報(下記)を表示順に配列で
 }
 
 
-// 乗り場情報を格納するオブジェクト
+// 発着番線情報を格納するオブジェクト
 interface optdia_station_track {
-    track_id: string; // 乗り場ID(異なる駅との重複は制限されない)
-    track_number: string; // 乗り場番号(アルファベット等も使用可能)
+    track_id: string; // 発着番線ID(異なる駅との重複は制限されない)
+    track_number: string; // 発着番線番号(アルファベット等も使用可能)
 }
 
 
@@ -81,8 +81,8 @@ interface optdia_station_track {
 interface optdia_line_station {
     station_id: string; // 駅ID
     station_number: string | null; // 駅番号
-    inbound_main_track: string | null; // 上り本線の乗り場ID
-    outbound_main_track: string | null; // 下り本線の乗り場ID
+    inbound_main_track: string | null; // 上り本線の発着番線ID
+    outbound_main_track: string | null; // 下り本線の発着番線ID
     absolute_standard_running_time: number | null; // 起点駅からの基準運転時分(秒単位、未入力の場合はnull)
 }
 
@@ -157,7 +157,7 @@ interface optdia_train {
 // 列車の経由駅情報
 interface optdia_train_stop {
     station_id: string; // 駅ID
-    track_id: string | null; // 乗り場ID
+    track_id: string | null; // 発着番線ID
     arrival_time: string; // 到着時刻(hh:mm:ss形式)
     departure_time: string; // 発車時刻(hh:mm:ss形式)
     stop_type: 1 | 0 | -1; // 客扱い情報(1:停車、0:通過、-1運転停車)
@@ -178,10 +178,10 @@ interface optdia_operation {
     max_car_count: number; // 運用に充当可能な最大の編成両数
     main_color: string; // 運用の表示色(デフォルト値は #ffffff)
     start_location: string; // 運用の出庫場所名
-    start_track: string | null; // 運用の出庫場所の乗り場等(乗り場等が規定されていない場合はnull)
+    start_track: string | null; // 運用の出庫場所の発着番線等(発着番線等が規定されていない場合はnull)
     start_time: string | null; // 運用の出庫時間(hh:mm:ss形式、出庫しない場合はnull)
     end_location: string; // 運用の入庫場所名
-    end_track: string | null; // 運用の入庫場所の乗り場等(乗り場等が規定されていない場合はnull)
+    end_track: string | null; // 運用の入庫場所の発着番線等(発着番線等が規定されていない場合はnull)
     end_time: string; // 運用の入庫時間(hh:mm:ss形式、入庫しない場合はnull)
     note: string; // 備考
     temporary_stabling_events: optdia_temporary_stabling_event[]; // 一時入庫の情報(下記)を時系列順に配列で
