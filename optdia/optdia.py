@@ -7,14 +7,14 @@ import random
 import string
 import re
 import subprocess
-from PySide6.QtCore import Qt, QSize, QAbstractTableModel, QModelIndex
+from PySide6.QtCore import Qt, QSize, QAbstractTableModel, QModelIndex, QEvent, QTimer
 from PySide6.QtGui import QIcon, QColor, QPainter, QPixmap, QFont, QTextDocument, QAbstractTextDocumentLayout, QPen
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QFileDialog, QMessageBox, QDialog, QLabel,
     QLineEdit, QTextEdit, QDialogButtonBox, QListWidget, QTabWidget,
     QListWidgetItem, QCheckBox, QColorDialog, QStackedWidget,
-    QRadioButton, QComboBox, QGroupBox, QFormLayout, QSpinBox,
+    QRadioButton, QComboBox, QGroupBox, QFormLayout, QSpinBox, QAbstractItemView, QAbstractItemDelegate,
     QStyledItemDelegate, QStyleOptionViewItem, QStyle, QScrollArea,
     QSizePolicy, QTabBar, QTableView, QHeaderView, QStyleOptionButton
 )
@@ -3091,6 +3091,7 @@ class TimetableModel(QAbstractTableModel):
         self.train_ids = []
         self.station_rows = []
         self.full_stop_sequence = []
+        self.full_stop_configs = []
 
     def _get_stations_in_segment(self, line_id, start_station_id, end_station_id):
         line_data = self.project.lines.get(line_id)
@@ -3111,6 +3112,64 @@ class TimetableModel(QAbstractTableModel):
                 stations.append(line_station_ids[i])
         return stations
 
+    def _format_time(self, text: str) -> str:
+        if not text:
+            return ""
+        
+        # 全角の数字と全角のコロンを半角に変換
+        table = str.maketrans("０１２３４５６７８９：", "0123456789:")
+        text = text.translate(table)
+        
+        # 数字とコロン以外の文字が含まれている場合は空文字列を返す
+        if not re.match(r"^[0-9:]+$", text):
+            return ""
+        
+        colon_count = text.count(':')
+        hh, mm, ss = 0, 0, 0
+        
+        try:
+            if colon_count == 0:
+                # コロンが含まれていない場合
+                s = text
+                if len(s) <= 4:
+                    s += "00"
+                # 6文字になるようにゼロ埋め
+                s = s.zfill(6)
+                if len(s) != 6: return ""
+                hh, mm, ss = int(s[0:2]), int(s[2:4]), int(s[4:6])
+            elif colon_count == 1:
+                # コロンが1つ含まれる場合: hh:mm
+                parts = text.split(':')
+                if not parts[0] or not parts[1]: return ""
+                hh, mm, ss = int(parts[0]), int(parts[1]), 0
+            elif colon_count == 2:
+                # コロンが2つ含まれる場合: hh:mm:ss
+                parts = text.split(':')
+                if not parts[0] or not parts[1] or not parts[2]: return ""
+                hh, mm, ss = int(parts[0]), int(parts[1]), int(parts[2])
+            else:
+                # コロンが3つ以上の場合は無効
+                return ""
+        except ValueError:
+            return ""
+
+        # 範囲チェック (00:00:00 から 99:59:59 まで)
+        if 0 <= hh <= 99 and 0 <= mm < 60 and 0 <= ss < 60:
+            return f"{hh:02d}:{mm:02d}:{ss:02d}"
+        
+        return ""
+
+    def _time_to_seconds(self, text: str):
+        if not text: return None
+        try:
+            parts = text.split(':')
+            if len(parts) == 3:
+                h, m, s = map(int, parts)
+                return h * 3600 + m * 60 + s
+        except (ValueError, AttributeError):
+            pass
+        return None
+
     def update_data(self, route_id, diagram_id, direction):
         self.beginResetModel()
         self.route_id = route_id
@@ -3119,6 +3178,7 @@ class TimetableModel(QAbstractTableModel):
         self.train_ids = []
         self.station_rows = []
         self.full_stop_sequence = []
+        self.full_stop_configs = []
 
         if route_id and diagram_id:
             route = self.project.routes.get(route_id)
@@ -3138,9 +3198,16 @@ class TimetableModel(QAbstractTableModel):
 
                 for seg in work_segments:
                     s_ids = self._get_stations_in_segment(seg["line_id"], seg["start_station"], seg["end_station"])
+                    line_data = self.project.lines.get(seg["line_id"], {})
+                    station_list = line_data.get("station_list", [])
+
                     for i, sid in enumerate(s_ids):
                         if not self.full_stop_sequence or self.full_stop_sequence[-1] != sid:
                             self.full_stop_sequence.append(sid)
+                            ls_item = next((s for s in station_list if s["station_id"] == sid), {})
+                            track_id = ls_item.get("inbound_main_track" if direction == "inbound" else "outbound_main_track")
+                            self.full_stop_configs.append({"station_id": sid, "track_id": track_id})
+
                         stop_idx = len(self.full_stop_sequence) - 1
                         s_data = self.project.stations.get(sid, {})
                         name = s_data.get("station_name", sid)
@@ -3247,19 +3314,39 @@ class TimetableModel(QAbstractTableModel):
             if row_idx < len(self.station_rows):
                 row_def = self.station_rows[row_idx]
                 stop_idx = row_def["stop_idx"]
-                if "stops" not in train: train["stops"] = []
-                while len(train["stops"]) < len(self.full_stop_sequence):
-                    sid = self.full_stop_sequence[len(train["stops"])]
-                    train["stops"].append({"station_id": sid})
-                stop = train["stops"][stop_idx]
-                if row_def["type"] == "arr":
-                    if stop.get("arrival_time") != value:
-                        stop["arrival_time"] = value
-                        changed = True
-                else:
-                    if stop.get("departure_time") != value:
-                        stop["departure_time"] = value
-                        changed = True
+                config = self.full_stop_configs[stop_idx]
+                sid = config["station_id"]
+
+                if "stops" not in train:
+                    train["stops"] = []
+                
+                formatted_value = self._format_time(value)
+                stop = next((s for s in train["stops"] if s.get("station_id") == sid), None)
+                
+                if not stop:
+                    if not formatted_value: return False
+                    stop = {
+                        "station_id": sid,
+                        "track_id": config["track_id"],
+                        "arrival_time": "",
+                        "departure_time": "",
+                        "stop_type": 1
+                    }
+                    train["stops"].append(stop)
+
+                time_key = "arrival_time" if row_def["type"] == "arr" else "departure_time"
+                other_key = "departure_time" if row_def["type"] == "arr" else "arrival_time"
+                if stop.get(time_key) != formatted_value:
+                    stop[time_key] = formatted_value
+                    # 入力時、もう片方が空なら自動入力する
+                    if formatted_value and not stop.get(other_key):
+                        stop[other_key] = formatted_value
+
+                    stop["track_id"] = config["track_id"]
+                    changed = True
+                    # 両方の時刻が空になった場合はデータから削除する
+                    if not stop.get("arrival_time") and not stop.get("departure_time"):
+                        train["stops"].remove(stop)
 
         if changed:
             # 変更があった列車およびそれより左側にある未保存の列車の保存フラグをTrueにする
@@ -3270,8 +3357,14 @@ class TimetableModel(QAbstractTableModel):
                 if t and t.get("to_be_saved") is False:
                     t["to_be_saved"] = True
 
-            # 保存フラグがTrueになったことで不足した空列を補充し、テーブルを更新する
-            self.update_data(self.route_id, self.diagram_id, self.direction)
+            # 【修正】直接 update_data (ResetModel) を呼ばない。
+            # setData の呼び出し元 (commitData) が完了し、エディタが正常に閉じた後に
+            # モデルのリセット（空列の補充）が実行されるよう、遅延実行させる。
+            QTimer.singleShot(0, lambda: self.update_data(self.route_id, self.diagram_id, self.direction))
+            
+            # ビューに対して、値が変更されたことだけをまず通知する
+            self.dataChanged.emit(index, index, [Qt.EditRole, Qt.DisplayRole])
+            
             return True
 
         return False
@@ -3302,28 +3395,43 @@ class TimetableModel(QAbstractTableModel):
         train_id = self.train_ids[col]
         train = trains.get(train_id, {})
 
-        if role == Qt.DisplayRole:
+        if role == Qt.ForegroundRole:
+            if row >= len(self.row_headers):
+                val = self.data(index, Qt.DisplayRole)
+                secs = self._time_to_seconds(val)
+                if secs is not None:
+                    # 前の時刻入力を探す
+                    for r in range(row - 1, len(self.row_headers) - 1, -1):
+                        p_val = self.data(self.index(r, col), Qt.DisplayRole)
+                        p_secs = self._time_to_seconds(p_val)
+                        if p_secs is not None:
+                            if secs < p_secs:
+                                return QColor(Qt.red)
+                            break
+            return None
+
+        if role in (Qt.DisplayRole, Qt.EditRole):
             if row == 0: # 列車番号
                 return train.get("train_number", "")
             elif row == 1: # 運用番号
                 operations = train.get("operations", [])
                 if operations:
-                    op_ids = [str(op.get("operation_id", "")) for op in operations if "operation_id" in op]
-                    op_ids = [op_id for op_id in op_ids if op_id]
+                    op_ids = [str(op.get("operation_id", "")) for op in operations if op.get("operation_id")]
                     if op_ids:
                         return ",".join(op_ids)
-                return "未設定"
+                return "" if role == Qt.EditRole else "未設定"
             elif row == 2: # 両数
                 cc = train.get("car_count")
                 return str(cc) if cc is not None else ""
             elif row == 3: # 種別・愛称
                 tt_id = train.get("train_type_id")
                 tt = self.project.train_types.get(tt_id)
-                name = tt.get("train_type_name", "") if tt else "未設定"
+                name = tt.get("train_type_name", "") if tt else ("" if role == Qt.EditRole else "未設定")
                 tname = train.get("train_name")
                 return f"{name} {tname}" if tname else name
             elif row == 4: # 号数
-                return train.get("named_train_number", "")
+                val = train.get("named_train_number")
+                return str(val) if val is not None else ""
             elif row == 5: # 行き先
                 return train.get("destination", "")
             elif row >= len(self.row_headers): # 駅時刻
@@ -3331,9 +3439,10 @@ class TimetableModel(QAbstractTableModel):
                 if row_idx < len(self.station_rows):
                     row_def = self.station_rows[row_idx]
                     stop_idx = row_def["stop_idx"]
+                    sid = self.full_stop_sequence[stop_idx]
                     stops = train.get("stops", [])
-                    if stop_idx < len(stops):
-                        stop = stops[stop_idx]
+                    stop = next((s for s in stops if s.get("station_id") == sid), None)
+                    if stop:
                         return stop.get("arrival_time" if row_def["type"] == "arr" else "departure_time", "")
         
         return None
@@ -3348,8 +3457,40 @@ class TimetableModel(QAbstractTableModel):
                     return self.station_rows[row_idx]["name"]
         return None
 
-# ボタン風の表示を行うためのデリゲート
-class TimetableButtonDelegate(QStyledItemDelegate):
+    def _get_next_editable_index(self, current_index: QModelIndex) -> QModelIndex:
+        """現在のインデックスから、次に編集可能なセル（次の行）のインデックスを返します。"""
+        next_row = current_index.row() + 1
+        next_column = current_index.column()
+        return self.index(next_row, next_column)
+
+class TimetableView(QTableView):
+    """時刻表専用のビュークラス。Enterキー入力時に次の行へ移動し、駅時刻であれば自動的に編集を開始します。"""
+    def move_to_next_cell_and_edit(self, row=None, col=None):
+        model = self.model()
+        if row is None or col is None:
+            current = self.currentIndex()
+            if not current.isValid(): return False
+            next_index = model._get_next_editable_index(current)
+        else:
+            next_index = model.index(row + 1, col)
+
+        if next_index.isValid():
+            if next_index.isValid():
+                self.setCurrentIndex(next_index)
+                # 駅の時刻入力行（row_headers 以降の行）であれば自動的に編集を開始する
+                if hasattr(model, 'row_headers') and next_index.row() >= len(model.row_headers):
+                    self.edit(next_index)
+                return True
+        return False
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            if self.move_to_next_cell_and_edit():
+                return # Consume the event if handled
+        super().keyPressEvent(event)
+
+# 時刻表セル専用のデリゲート
+class TimetableDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index):
         row = index.row()
         if row in (1, 3): # 運用番号(2行目)と種別(4行目)
@@ -3368,6 +3509,39 @@ class TimetableButtonDelegate(QStyledItemDelegate):
         if index.row() in (1, 3):
             size.setHeight(max(size.height(), 32))
         return size
+
+    def setEditorData(self, editor, index):
+        """エディタにデータをセットする際、テキストの全選択を解除し、カーソルを末尾に移動します。"""
+        super().setEditorData(editor, index)
+        if isinstance(editor, QLineEdit):
+            editor.deselect()
+            editor.setCursorPosition(len(editor.text()))
+
+    def createEditor(self, parent, option, index):
+        editor = super().createEditor(parent, option, index)
+        if isinstance(editor, QLineEdit):
+            editor.installEventFilter(self)
+        return editor
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.KeyPress and event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            if isinstance(obj, QLineEdit):
+                view = self.parent()
+                # モデルがリセットされる前に現在の行・列を保持しておく
+                current_row, current_col = -1, -1
+                if isinstance(view, TimetableView):
+                    idx = view.currentIndex()
+                    current_row, current_col = idx.row(), idx.column()
+
+                # データの確定とエディタのクローズを要求
+                self.commitData.emit(obj)
+                self.closeEditor.emit(obj, QAbstractItemDelegate.SubmitModelCache)
+                
+                # キャプチャした位置情報を元に、リセット完了後のイベントループでフォーカスを移動させる
+                if current_row != -1:
+                    QTimer.singleShot(0, lambda: view.move_to_next_cell_and_edit(current_row, current_col))
+                return True # エンターキーイベントを消費
+        return super().eventFilter(obj, event)
 
 
 # アプリケーション情報ダイアログ
@@ -3558,7 +3732,7 @@ class MainWindow(QMainWindow):
         # 時刻表テーブル
         self.timetable_model = TimetableModel(self.project)
         self.timetable_model.dataChanged.connect(lambda: self.set_modified(True))
-        self.timetable_view = QTableView()
+        self.timetable_view = TimetableView()
         self.timetable_view.setModel(self.timetable_model)
         
         # テーブルの外観設定
@@ -3571,7 +3745,7 @@ class MainWindow(QMainWindow):
         v_header.setDefaultAlignment(Qt.AlignRight | Qt.AlignVCenter)
         
         # ボタン用デリゲートの適用
-        self.timetable_delegate = TimetableButtonDelegate(self.timetable_view)
+        self.timetable_delegate = TimetableDelegate(self.timetable_view)
         self.timetable_view.setItemDelegate(self.timetable_delegate)
 
         self.timetable_layout.addWidget(self.timetable_view)
