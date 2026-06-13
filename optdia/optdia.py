@@ -3089,6 +3089,27 @@ class TimetableModel(QAbstractTableModel):
         self.direction = "outbound"
         self.row_headers = ["列車番号", "運用番号", "両数", "種別・愛称", "号数", "行き先"]
         self.train_ids = []
+        self.station_rows = []
+        self.full_stop_sequence = []
+
+    def _get_stations_in_segment(self, line_id, start_station_id, end_station_id):
+        line_data = self.project.lines.get(line_id)
+        if not line_data:
+            return []
+        line_station_ids = [s["station_id"] for s in line_data.get("station_list", [])]
+        try:
+            idx_start = line_station_ids.index(start_station_id)
+            idx_end = line_station_ids.index(end_station_id)
+        except ValueError:
+            return []
+        stations = []
+        if idx_start <= idx_end:
+            for i in range(idx_start, idx_end + 1):
+                stations.append(line_station_ids[i])
+        else:
+            for i in range(idx_start, idx_end - 1, -1):
+                stations.append(line_station_ids[i])
+        return stations
 
     def update_data(self, route_id, diagram_id, direction):
         self.beginResetModel()
@@ -3096,9 +3117,43 @@ class TimetableModel(QAbstractTableModel):
         self.diagram_id = diagram_id
         self.direction = direction
         self.train_ids = []
+        self.station_rows = []
+        self.full_stop_sequence = []
+
         if route_id and diagram_id:
             route = self.project.routes.get(route_id)
             if route:
+                # 駅行構成の構築
+                segments = route.get("line_segments", [])
+                work_segments = []
+                if direction == "inbound":
+                    for seg in reversed(segments):
+                        work_segments.append({
+                            "line_id": seg["line_id"],
+                            "start_station": seg["end_station"],
+                            "end_station": seg["start_station"]
+                        })
+                else:
+                    work_segments = segments
+
+                for seg in work_segments:
+                    s_ids = self._get_stations_in_segment(seg["line_id"], seg["start_station"], seg["end_station"])
+                    for i, sid in enumerate(s_ids):
+                        if not self.full_stop_sequence or self.full_stop_sequence[-1] != sid:
+                            self.full_stop_sequence.append(sid)
+                        stop_idx = len(self.full_stop_sequence) - 1
+                        s_data = self.project.stations.get(sid, {})
+                        name = s_data.get("station_name", sid)
+                        if i == 0:
+                            self.station_rows.append({"name": f"{name} [発]", "stop_idx": stop_idx, "type": "dep"})
+                        elif i == len(s_ids) - 1:
+                            self.station_rows.append({"name": f"{name} [着]", "stop_idx": stop_idx, "type": "arr"})
+                        elif s_data.get("show_arrival_time", False):
+                            self.station_rows.append({"name": f"{name} [着]", "stop_idx": stop_idx, "type": "arr"})
+                            self.station_rows.append({"name": f"{name} [発]", "stop_idx": stop_idx, "type": "dep"})
+                        else:
+                            self.station_rows.append({"name": name, "stop_idx": stop_idx, "type": "dep"})
+
                 tbd = route.get("trains_by_diagram", {}).get(diagram_id, {})
                 
                 train_dict_key = "inbound_trains" if direction == "inbound" else "outbound_trains"
@@ -3187,6 +3242,24 @@ class TimetableModel(QAbstractTableModel):
             if train.get("destination") != value:
                 train["destination"] = value
                 changed = True
+        elif row >= len(self.row_headers): # 駅時刻
+            row_idx = row - len(self.row_headers)
+            if row_idx < len(self.station_rows):
+                row_def = self.station_rows[row_idx]
+                stop_idx = row_def["stop_idx"]
+                if "stops" not in train: train["stops"] = []
+                while len(train["stops"]) < len(self.full_stop_sequence):
+                    sid = self.full_stop_sequence[len(train["stops"])]
+                    train["stops"].append({"station_id": sid})
+                stop = train["stops"][stop_idx]
+                if row_def["type"] == "arr":
+                    if stop.get("arrival_time") != value:
+                        stop["arrival_time"] = value
+                        changed = True
+                else:
+                    if stop.get("departure_time") != value:
+                        stop["departure_time"] = value
+                        changed = True
 
         if changed:
             # 変更があった列車およびそれより左側にある未保存の列車の保存フラグをTrueにする
@@ -3204,15 +3277,15 @@ class TimetableModel(QAbstractTableModel):
         return False
 
     def rowCount(self, parent=QModelIndex()):
-        return len(self.row_headers)
+        return len(self.row_headers) + len(self.station_rows)
 
     def columnCount(self, parent=QModelIndex()):
         return len(self.train_ids)
 
     def data(self, index, role=Qt.DisplayRole):
-        if not index.isValid() or not (0 <= index.row() < len(self.row_headers)):
+        if not index.isValid():
             return None
-        
+
         col = index.column()
         row = index.row()
         
@@ -3253,6 +3326,15 @@ class TimetableModel(QAbstractTableModel):
                 return train.get("named_train_number", "")
             elif row == 5: # 行き先
                 return train.get("destination", "")
+            elif row >= len(self.row_headers): # 駅時刻
+                row_idx = row - len(self.row_headers)
+                if row_idx < len(self.station_rows):
+                    row_def = self.station_rows[row_idx]
+                    stop_idx = row_def["stop_idx"]
+                    stops = train.get("stops", [])
+                    if stop_idx < len(stops):
+                        stop = stops[stop_idx]
+                        return stop.get("arrival_time" if row_def["type"] == "arr" else "departure_time", "")
         
         return None
 
@@ -3260,6 +3342,10 @@ class TimetableModel(QAbstractTableModel):
         if orientation == Qt.Vertical and role == Qt.DisplayRole:
             if 0 <= section < len(self.row_headers):
                 return self.row_headers[section]
+            else:
+                row_idx = section - len(self.row_headers)
+                if 0 <= row_idx < len(self.station_rows):
+                    return self.station_rows[row_idx]["name"]
         return None
 
 # ボタン風の表示を行うためのデリゲート
