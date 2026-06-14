@@ -3297,6 +3297,10 @@ class TimetableModel(QAbstractTableModel):
                     changed = True
             except ValueError:
                 return False
+        elif row == 3:  # 列車種別
+            if train.get("train_type_id") != value:
+                train["train_type_id"] = value
+                changed = True
         elif row == 4:  # 号数
             try:
                 val = int(value) if value and value.strip() else None
@@ -3395,7 +3399,19 @@ class TimetableModel(QAbstractTableModel):
         train_id = self.train_ids[col]
         train = trains.get(train_id, {})
 
+        if role == Qt.BackgroundRole:
+            tt_id = train.get("train_type_id")
+            tt = self.project.train_types.get(tt_id)
+            if tt:
+                return QColor(tt.get("background_color", "#ffffff"))
+            return None
+
         if role == Qt.ForegroundRole:
+            if row == 3:
+                tt_id = train.get("train_type_id")
+                tt = self.project.train_types.get(tt_id)
+                if tt:
+                    return QColor(tt.get("main_color", "#333333"))
             if row >= len(self.row_headers):
                 val = self.data(index, Qt.DisplayRole)
                 secs = self._time_to_seconds(val)
@@ -3417,16 +3433,19 @@ class TimetableModel(QAbstractTableModel):
                 operations = train.get("operations", [])
                 if operations:
                     op_ids = [str(op.get("operation_id", "")) for op in operations if op.get("operation_id")]
-                    if op_ids:
+                    if op_ids: # op_idsが空でない場合のみ結合
                         return ",".join(op_ids)
-                return "" if role == Qt.EditRole else "未設定"
+                return "" # 種別が設定されていない場合は空欄
             elif row == 2: # 両数
                 cc = train.get("car_count")
                 return str(cc) if cc is not None else ""
             elif row == 3: # 種別・愛称
                 tt_id = train.get("train_type_id")
                 tt = self.project.train_types.get(tt_id)
-                name = tt.get("train_type_name", "") if tt else ("" if role == Qt.EditRole else "未設定")
+                if tt:
+                    name = tt.get("train_type_short_name") or tt.get("train_type_name", "")
+                else:
+                    name = "" # 種別が設定されていない場合は空欄
                 tname = train.get("train_name")
                 return f"{name} {tname}" if tname else name
             elif row == 4: # 号数
@@ -3493,14 +3512,26 @@ class TimetableView(QTableView):
 class TimetableDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index):
         row = index.row()
-        if row in (1, 3): # 運用番号(2行目)と種別(4行目)
-            button_option = QStyleOptionButton()
-            button_option.rect = option.rect.adjusted(2, 2, -2, -2)
-            button_option.text = index.data(Qt.DisplayRole)
-            button_option.state = QStyle.State_Enabled | QStyle.State_Active
+        if row in (1, 3): # 運用番号(2行目) と 種別・愛称(4行目) - 枠線なし
+            options = QStyleOptionViewItem(option)
+            self.initStyleOption(options, index)
+            style = options.widget.style() if options.widget else QApplication.style()
             
-            style = option.widget.style() if option.widget else QApplication.style()
-            style.drawControl(QStyle.CE_PushButton, button_option, painter)
+            # 背景を描画（選択状態やホバー状態を反映させるため。テキストは手動で描画するのでクリアする）
+            options.text = ""
+            style.drawControl(QStyle.CE_ItemViewItem, options, painter)
+            
+            text = index.data(Qt.DisplayRole)
+            color = index.data(Qt.ForegroundRole)
+            if not isinstance(color, QColor):
+                color = options.palette.text().color()
+            
+            painter.save()
+            painter.setPen(color)
+            font = options.font
+            painter.setFont(font)
+            painter.drawText(options.rect, Qt.AlignCenter, text)
+            painter.restore()
         else:
             super().paint(painter, option, index)
 
@@ -3509,6 +3540,30 @@ class TimetableDelegate(QStyledItemDelegate):
         if index.row() in (1, 3):
             size.setHeight(max(size.height(), 32))
         return size
+
+    def editorEvent(self, event, model, option, index):
+        if event.type() == QEvent.MouseButtonRelease:
+            if index.row() == 3: # 種別・愛称
+                self._show_train_type_menu(index, model, option.widget)
+                return True
+        return super().editorEvent(event, model, option, index)
+
+    def _show_train_type_menu(self, index, model, widget):
+        col = index.column()
+        train_id = model.train_ids[col]
+        route = model.project.routes.get(model.route_id)
+        tbd = route.get("trains_by_diagram", {}).get(model.diagram_id, {})
+        train_key = "inbound_trains" if model.direction == "inbound" else "outbound_trains"
+        trains = tbd.get(train_key, {})
+        train = trains.get(train_id, {})
+        current_id = train.get("train_type_id")
+
+        picker = TrainTypePicker(widget, model.project, current_id)
+        rect = widget.visualRect(index)
+        pos = widget.viewport().mapToGlobal(rect.bottomLeft())
+        picker.move(pos)
+        if picker.exec() == QDialog.Accepted:
+            model.setData(index, picker.selected_id, Qt.EditRole)
 
     def setEditorData(self, editor, index):
         """エディタにデータをセットする際、テキストの全選択を解除し、カーソルを末尾に移動します。"""
@@ -3586,6 +3641,50 @@ class AboutDialog(QDialog):
         button_layout.addWidget(copy_btn)
         button_layout.addWidget(ok_btn)
         layout.addLayout(button_layout)
+
+class TrainTypePicker(QDialog):
+    """列車種別を選択するためのポップアップリストウィジェット"""
+    def __init__(self, parent, project: OptDiaProject, current_id=None):
+        super().__init__(parent, Qt.Popup)
+        self.project = project
+        self.selected_id = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self.list_widget = QListWidget(self)
+        self.list_widget.setStyleSheet("border: 1px solid #dddddd;")
+        self.list_widget.setItemDelegate(HtmlDelegate(self))
+
+        for tt_id in self.project.train_types_order:
+            tt = self.project.train_types[tt_id]
+            name = tt.get("train_type_name", "")
+            train_name = tt.get("train_name")
+            color = tt.get("main_color", "#333333")
+            bg_color = tt.get("background_color", "#ffffff")
+            
+            display_name = f"{name} {train_name}" if train_name else name
+            display = f"<font color='{color}'>{display_name}</font>"
+            item = QListWidgetItem(display)
+            item.setData(Qt.UserRole, tt_id)
+            item.setBackground(QColor(bg_color))
+            self.list_widget.addItem(item)
+
+        if current_id:
+            for i in range(self.list_widget.count()):
+                item = self.list_widget.item(i)
+                if item.data(Qt.UserRole) == current_id:
+                    self.list_widget.setCurrentItem(item)
+                    self.list_widget.scrollToItem(item)
+                    break
+
+        self.list_widget.itemClicked.connect(self._on_item_clicked)
+        layout.addWidget(self.list_widget)
+        self.setFixedSize(200, min(400, self.list_widget.count() * 32 + 2))
+
+    def _on_item_clicked(self, item):
+        self.selected_id = item.data(Qt.UserRole)
+        self.accept()
 
     def _copy_to_clipboard(self):
         """アプリ名とバージョン番号をクリップボードにコピーする"""
