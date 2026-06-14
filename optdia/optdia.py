@@ -7,8 +7,8 @@ import random
 import string
 import re
 import subprocess
-from PySide6.QtCore import Qt, QSize, QAbstractTableModel, QModelIndex, QEvent, QTimer
-from PySide6.QtGui import QIcon, QColor, QPainter, QPixmap, QFont, QTextDocument, QAbstractTextDocumentLayout, QPen
+from PySide6.QtCore import Qt, QSize, QAbstractTableModel, QModelIndex, QEvent, QTimer, QRect
+from PySide6.QtGui import QIcon, QColor, QPainter, QPixmap, QFont, QTextDocument, QAbstractTextDocumentLayout, QPen, QFontMetrics
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QFileDialog, QMessageBox, QDialog, QLabel,
@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem, QCheckBox, QColorDialog, QStackedWidget,
     QRadioButton, QComboBox, QGroupBox, QFormLayout, QSpinBox, QAbstractItemView, QAbstractItemDelegate,
     QStyledItemDelegate, QStyleOptionViewItem, QStyle, QScrollArea,
-    QSizePolicy, QTabBar, QTableView, QHeaderView, QStyleOptionButton
+    QSizePolicy, QTabBar, QTableView, QHeaderView, QStyleOptionButton, QStyleOptionHeader
 )
 import assets_rc
 from project import OptDiaProject, load_project
@@ -3197,8 +3197,10 @@ class TimetableModel(QAbstractTableModel):
                     work_segments = segments
 
                 for seg in work_segments:
-                    s_ids = self._get_stations_in_segment(seg["line_id"], seg["start_station"], seg["end_station"])
-                    line_data = self.project.lines.get(seg["line_id"], {})
+                    line_id = seg["line_id"]
+                    line_data = self.project.lines.get(line_id, {})
+                    line_color = line_data.get("line_color", "#333333")
+                    s_ids = self._get_stations_in_segment(line_id, seg["start_station"], seg["end_station"])
                     station_list = line_data.get("station_list", [])
 
                     for i, sid in enumerate(s_ids):
@@ -3212,14 +3214,14 @@ class TimetableModel(QAbstractTableModel):
                         s_data = self.project.stations.get(sid, {})
                         name = s_data.get("station_name", sid)
                         if i == 0:
-                            self.station_rows.append({"name": f"{name} [発]", "stop_idx": stop_idx, "type": "dep"})
+                            self.station_rows.append({"name": f"{name} [発]", "stop_idx": stop_idx, "type": "dep", "line_color": line_color})
                         elif i == len(s_ids) - 1:
-                            self.station_rows.append({"name": f"{name} [着]", "stop_idx": stop_idx, "type": "arr"})
+                            self.station_rows.append({"name": f"{name} [着]", "stop_idx": stop_idx, "type": "arr", "line_color": line_color})
                         elif s_data.get("show_arrival_time", False):
-                            self.station_rows.append({"name": f"{name} [着]", "stop_idx": stop_idx, "type": "arr"})
-                            self.station_rows.append({"name": f"{name} [発]", "stop_idx": stop_idx, "type": "dep"})
+                            self.station_rows.append({"name": f"{name} [着]", "stop_idx": stop_idx, "type": "arr", "line_color": line_color})
+                            self.station_rows.append({"name": f"{name} [発]", "stop_idx": stop_idx, "type": "dep", "line_color": line_color})
                         else:
-                            self.station_rows.append({"name": name, "stop_idx": stop_idx, "type": "dep"})
+                            self.station_rows.append({"name": name, "stop_idx": stop_idx, "type": "dep", "line_color": line_color})
 
                 tbd = route.get("trains_by_diagram", {}).get(diagram_id, {})
                 
@@ -3467,13 +3469,19 @@ class TimetableModel(QAbstractTableModel):
         return None
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
-        if orientation == Qt.Vertical and role == Qt.DisplayRole:
-            if 0 <= section < len(self.row_headers):
-                return self.row_headers[section]
-            else:
-                row_idx = section - len(self.row_headers)
-                if 0 <= row_idx < len(self.station_rows):
-                    return self.station_rows[row_idx]["name"]
+        if orientation == Qt.Vertical:
+            if role == Qt.DisplayRole:
+                if 0 <= section < len(self.row_headers):
+                    return self.row_headers[section]
+                else:
+                    row_idx = section - len(self.row_headers)
+                    if 0 <= row_idx < len(self.station_rows):
+                        return self.station_rows[row_idx]["name"]
+            elif role == Qt.TextAlignmentRole:
+                if 0 <= section < len(self.row_headers):
+                    return Qt.AlignCenter
+                else:
+                    return Qt.AlignRight | Qt.AlignVCenter
         return None
 
     def _get_next_editable_index(self, current_index: QModelIndex) -> QModelIndex:
@@ -3481,6 +3489,110 @@ class TimetableModel(QAbstractTableModel):
         next_row = current_index.row() + 1
         next_column = current_index.column()
         return self.index(next_row, next_column)
+
+class TimetableVerticalHeader(QHeaderView):
+    """時刻表の垂直ヘッダー。路線の色を左端に隙間なく描画します。"""
+    def __init__(self, parent=None):
+        super().__init__(Qt.Vertical, parent)
+
+    def paintSection(self, painter, rect, logicalIndex):
+        model = self.model()
+        if not model or not hasattr(model, 'row_headers') or not hasattr(model, 'station_rows'):
+            super().paintSection(painter, rect, logicalIndex)
+            return
+
+        painter.save()
+
+        # 1. 標準の描画（背景、選択状態など）を行う
+        option_header = QStyleOptionHeader()
+        option_header.initFrom(self)
+        option_header.rect = rect
+        option_header.section = logicalIndex
+        option_header.orientation = self.orientation()
+        # テキストは自分で描画するため、オプションからクリアする
+        option_header.text = ""
+        self.style().drawControl(QStyle.CE_Header, option_header, painter, self)
+
+        # 2. 路線の色を示す縦線を描画する
+        is_station_row = logicalIndex >= len(model.row_headers)
+        if is_station_row:
+            row_idx = logicalIndex - len(model.row_headers)
+            if 0 <= row_idx < len(model.station_rows):
+                color_hex = model.station_rows[row_idx].get("line_color", "#333333")
+                painter.fillRect(rect.left(), rect.top(), 6, rect.height(), QColor(color_hex))
+
+        # 3. テキストを描画する
+        display_text = model.headerData(logicalIndex, Qt.Vertical, Qt.DisplayRole)
+        display_text = str(display_text).strip() if display_text is not None else ""
+        text_alignment = model.headerData(logicalIndex, Qt.Vertical, Qt.TextAlignmentRole)
+        if text_alignment is None:
+            text_alignment = Qt.AlignRight | Qt.AlignVCenter # 駅行のデフォルト
+
+        base_font = painter.font() # 基本フォントを取得
+        fm_normal = QFontMetrics(base_font)
+        trailing_space_width = fm_normal.horizontalAdvance(" ")
+
+        # スタイルシートで設定されたパディングを考慮したテキスト描画領域
+        # 右側には文字の重なりを防ぐため半角スペース1つ分の余白を設ける
+        text_left_padding = 8 # "QHeaderView::section { padding: 0px 4px 0px 8px; margin: 0px; }"
+        text_right_padding = 4
+        text_draw_rect = QRect(rect.left() + text_left_padding, rect.top(),
+                               rect.width() - text_left_padding - text_right_padding - trailing_space_width, rect.height())
+
+        painter.setFont(base_font) # まず基本フォントを設定
+        painter.setPen(option_header.palette.buttonText().color()) # ヘッダーの文字色をパレットから設定
+
+        if is_station_row:
+            row_idx = logicalIndex - len(model.row_headers)
+            if 0 <= row_idx < len(model.station_rows):
+                station_row_data = model.station_rows[row_idx]
+                station_id = model.full_stop_sequence[station_row_data["stop_idx"]]
+                station_data = model.project.stations.get(station_id, {})
+
+                # 信号場の場合は文字色を灰色にする
+                if station_data.get("is_signal_station", False):
+                    painter.setPen(Qt.gray)
+
+                is_major_station = station_data.get("is_major_station", False)
+
+                if is_major_station:
+                    # 駅名と「[発]」「[着]」を分離
+                    match = re.match(r"^(.*?)\s*(\[発\]|\s*\[着\])?\s*$", display_text)
+                    station_name_part = match.group(1).strip() if match else display_text.strip()
+                    suffix_part = match.group(2).strip() if match and match.group(2) else ""
+
+                    bold_font = QFont(base_font)
+                    bold_font.setBold(True)
+
+                    fm_bold = QFontMetrics(bold_font)
+                    
+                    station_name_width = fm_bold.horizontalAdvance(station_name_part)
+                    suffix_width = fm_normal.horizontalAdvance(suffix_part)
+                    
+                    space_width = fm_normal.horizontalAdvance(" ") if station_name_part and suffix_part else 0
+                    total_text_width = station_name_width + space_width + suffix_width
+
+                    # 右寄せで描画するための開始X座標を計算
+                    start_x = text_draw_rect.right() - total_text_width
+
+                    painter.setFont(bold_font)
+                    painter.drawText(start_x, text_draw_rect.top(), station_name_width, text_draw_rect.height(),
+                                     Qt.AlignRight | Qt.AlignVCenter, station_name_part)
+
+                    if suffix_part:
+                        painter.setFont(base_font) # サフィックスは通常フォント
+                        painter.drawText(start_x + station_name_width + space_width, text_draw_rect.top(), suffix_width, text_draw_rect.height(),
+                                         Qt.AlignRight | Qt.AlignVCenter, suffix_part)
+                else:
+                    # 主要駅でない場合は全体を通常フォントで描画
+                    painter.setFont(base_font)
+                    painter.drawText(text_draw_rect, text_alignment, display_text)
+        else:
+            # 駅行以外のヘッダー行は通常フォントで描画
+            painter.setFont(base_font)
+            painter.drawText(text_draw_rect, text_alignment, display_text)
+
+        painter.restore()
 
 class TimetableView(QTableView):
     """時刻表専用のビュークラス。Enterキー入力時に次の行へ移動し、駅時刻であれば自動的に編集を開始します。"""
@@ -3512,6 +3624,7 @@ class TimetableView(QTableView):
 class TimetableDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index):
         row = index.row()
+        model = index.model()
         if row in (1, 3): # 運用番号(2行目) と 種別・愛称(4行目) - 枠線なし
             options = QStyleOptionViewItem(option)
             self.initStyleOption(options, index)
@@ -3534,6 +3647,22 @@ class TimetableDelegate(QStyledItemDelegate):
             painter.restore()
         else:
             super().paint(painter, option, index)
+
+        # グリッド線の手動描画 (setShowGrid(False) に対応)
+        painter.save()
+        # グリッドの色 (標準的なライトグレー)
+        painter.setPen(QColor("#d0d0d0"))
+        
+        rect = option.rect
+        # 右側の垂直線
+        painter.drawLine(rect.right(), rect.top(), rect.right(), rect.bottom())
+        
+        # 下側の水平線 (駅時刻行の間は描画しない)
+        num_headers = len(model.row_headers) if hasattr(model, 'row_headers') else 0
+        if row < num_headers:
+            painter.drawLine(rect.left(), rect.bottom(), rect.right(), rect.bottom())
+            
+        painter.restore()
 
     def sizeHint(self, option, index):
         size = super().sizeHint(option, index)
@@ -3836,12 +3965,17 @@ class MainWindow(QMainWindow):
         
         # テーブルの外観設定
         self.timetable_view.setStyleSheet("QTableView, QHeaderView { font-size: 12px; }")
+        self.timetable_view.setShowGrid(False)
         h_header = self.timetable_view.horizontalHeader()
         h_header.setVisible(False)
         h_header.setDefaultSectionSize(60)
         h_header.setSectionResizeMode(QHeaderView.Fixed)
-        v_header = self.timetable_view.verticalHeader()
+        
+        v_header = TimetableVerticalHeader(self.timetable_view)
+        # padding: top right bottom left (左8px = 縦線6px + 余白2px、右4px)
+        v_header.setStyleSheet("QHeaderView::section { padding: 0px 4px 0px 8px; margin: 0px; }")
         v_header.setDefaultAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.timetable_view.setVerticalHeader(v_header)
         
         # ボタン用デリゲートの適用
         self.timetable_delegate = TimetableDelegate(self.timetable_view)
