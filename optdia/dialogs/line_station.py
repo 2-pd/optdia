@@ -272,8 +272,9 @@ class AddTrackDialog(QDialog):
         super().__init__(parent)
         self.station_data = station_data
         self.setWindowTitle("発着番線の追加")
-        self.setFixedSize(400, 240)
+        self.setFixedSize(400, 300)
         self._is_track_number_manually_edited = False
+        self._is_short_track_number_manually_edited = False
 
         layout = QVBoxLayout(self)
 
@@ -296,6 +297,14 @@ class AddTrackDialog(QDialog):
         self.number_edit.textEdited.connect(self._on_number_edited)
         layout.addWidget(self.number_edit)
 
+        # 発着番線番号の省略表記
+        layout.addWidget(QLabel("発着番線番号の省略表記(2文字以内):"))
+        self.short_number_edit = QLineEdit()
+        self.short_number_edit.setPlaceholderText("例) 1")
+        self.short_number_edit.textEdited.connect(self._on_short_number_edited)
+        self.short_number_edit.editingFinished.connect(self._on_short_number_editing_finished)
+        layout.addWidget(self.short_number_edit)
+
         layout.addStretch()
 
         # ボタンエリア
@@ -316,14 +325,33 @@ class AddTrackDialog(QDialog):
         self.warning_label.setText("")
         if not self._is_track_number_manually_edited:
             self.number_edit.setText(text)
+        if not self._is_short_track_number_manually_edited:
+            truncated_text = text[:2] if len(text) > 2 else text
+            self.short_number_edit.setText(truncated_text)
 
     def _on_number_edited(self):
         """ユーザーが手動で番号を編集したことを記録する"""
         self._is_track_number_manually_edited = True
 
+    def _on_short_number_edited(self):
+        """ユーザーが手動で省略表記を編集したことを記録する"""
+        self._is_short_track_number_manually_edited = True
+
+    def _on_short_number_editing_finished(self):
+        """省略表記の入力欄のフォーカスが外れたときに、3文字目以降を削除する"""
+        text = self.short_number_edit.text()
+        if len(text) > 2:
+            self.short_number_edit.setText(text[:2])
+
     def _on_add_clicked(self):
         """入力内容の検証"""
+        # 念のための切り詰め処理
+        if len(self.short_number_edit.text()) > 2:
+            self.short_number_edit.setText(self.short_number_edit.text()[:2])
+
         track_id = self.id_edit.text().strip()
+        track_number = self.number_edit.text().strip()
+        short_track_number = self.short_number_edit.text().strip()
 
         if not track_id:
             self.warning_label.setText("発着番線IDを入力してください")
@@ -341,16 +369,26 @@ class AddTrackDialog(QDialog):
             self.warning_label.setText("発着番線IDが既に現在の駅で使用されています")
             self.id_edit.setStyleSheet("background-color: #ffeeee;")
             return
+        
+        if not track_number:
+            self.warning_label.setText("発着番線番号を入力してください")
+            self.number_edit.setStyleSheet("background-color: #ffeeee;")
+            return
+
+        if not short_track_number:
+            self.warning_label.setText("発着番線番号の省略表記を入力してください")
+            self.short_number_edit.setStyleSheet("background-color: #ffeeee;")
+            return
 
         self.accept()
 
 
 # 発着番線の編集ダイアログ
 class EditTrackDialog(QDialog):
-    def __init__(self, parent, track_id: str, track_number: str):
+    def __init__(self, parent, track_id: str, track_number: str, short_track_number: str):
         super().__init__(parent)
         self.setWindowTitle("発着番線の編集")
-        self.setFixedSize(400, 200)
+        self.setFixedSize(400, 280)
 
         layout = QVBoxLayout(self)
 
@@ -366,6 +404,12 @@ class EditTrackDialog(QDialog):
         self.number_edit = QLineEdit(track_number)
         layout.addWidget(self.number_edit)
 
+        # 発着番線番号の省略表記
+        layout.addWidget(QLabel("発着番線番号の省略表記(2文字以内):"))
+        self.short_number_edit = QLineEdit(short_track_number)
+        self.short_number_edit.editingFinished.connect(self._on_short_number_editing_finished)
+        layout.addWidget(self.short_number_edit)
+
         layout.addStretch()
 
         # ボタンエリア
@@ -379,6 +423,30 @@ class EditTrackDialog(QDialog):
 
         self.ok_button.clicked.connect(self.accept)
         self.cancel_button.clicked.connect(self.reject)
+
+    def _on_short_number_editing_finished(self):
+        """省略表記の入力欄のフォーカスが外れたときに、3文字目以降を削除する"""
+        text = self.short_number_edit.text()
+        if len(text) > 2:
+            self.short_number_edit.setText(text[:2])
+
+    def accept(self):
+        """入力内容の検証と受け入れ"""
+        # 念のための切り詰め処理
+        if len(self.short_number_edit.text()) > 2:
+            self.short_number_edit.setText(self.short_number_edit.text()[:2])
+
+        track_number = self.number_edit.text().strip()
+        short_track_number = self.short_number_edit.text().strip()
+
+        if not track_number:
+            QMessageBox.warning(self, "エラー", "発着番線番号を入力してください。")
+            return
+        if not short_track_number:
+            QMessageBox.warning(self, "エラー", "発着番線番号の省略表記を入力してください。")
+            return
+        
+        super().accept()
 
 
 # 路線・駅情報編集ダイアログ
@@ -1139,13 +1207,15 @@ class LineStationEditorDialog(QDialog):
         if dialog.exec() == QDialog.Accepted:
             track_id = dialog.id_edit.text().strip()
             track_number = dialog.number_edit.text().strip()
+            short_track_number = dialog.short_number_edit.text().strip() # Get short_track_number
 
             if "tracks" not in station_data: station_data["tracks"] = {}
             if "tracks_order" not in station_data: station_data["tracks_order"] = []
 
             station_data["tracks"][track_id] = {
                 "track_id": track_id,
-                "track_number": track_number
+                "track_number": track_number,
+                "short_track_number": short_track_number # Add short_track_number
             }
             station_data["tracks_order"].append(track_id)
 
@@ -1170,9 +1240,12 @@ class LineStationEditorDialog(QDialog):
         if not track_data:
             return
 
-        dialog = EditTrackDialog(self, track_id, track_data.get("track_number", ""))
+        dialog = EditTrackDialog(self, track_id, 
+                                 track_data.get("track_number", ""), 
+                                 track_data.get("short_track_number", "")) # Pass short_track_number
         if dialog.exec() == QDialog.Accepted:
             track_data["track_number"] = dialog.number_edit.text().strip()
+            track_data["short_track_number"] = dialog.short_number_edit.text().strip() # Update short_track_number
             
             self._populate_track_list(station_data)
             self._on_station_selected()
@@ -1273,7 +1346,8 @@ class LineStationEditorDialog(QDialog):
                             tid = str(i)
                             self.project.stations[station_id]["tracks"][tid] = {
                                 "track_id": tid,
-                                "track_number": f"{i}{suffix}"
+                                "track_number": f"{i}{suffix}",
+                                "short_track_number": str(i)
                             }
                             self.project.stations[station_id]["tracks_order"].append(tid)
 

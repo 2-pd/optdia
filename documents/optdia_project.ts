@@ -74,6 +74,7 @@ interface optdia_station {
 interface optdia_station_track {
     track_id: string; // 発着番線ID(異なる駅との重複は制限されない)
     track_number: string; // 発着番線番号(アルファベット等も使用可能)
+    short_track_number: string; // 発着番線番号の省略表記
 }
 
 
