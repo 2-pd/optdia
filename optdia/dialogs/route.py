@@ -75,11 +75,14 @@ class AddRouteDialog(QDialog):
 
 # 路線と区間の選択ダイアログ
 class SelectSegmentDialog(QDialog):
-    def __init__(self, parent, project: OptDiaProject, is_add=True, 
-                 initial_line=None, initial_start=None, initial_end=None):
+    def __init__(self, parent, project: OptDiaProject, is_add=True,
+                 initial_line=None, initial_start=None, initial_end=None,
+                 existing_segments: list = None, editing_segment_index: int = None):
         super().__init__(parent)
         self.project = project
         self.setWindowTitle("路線と区間の選択")
+        self.existing_segments = existing_segments if existing_segments is not None else []
+        self.editing_segment_index = editing_segment_index
         self.setFixedSize(480, 240)
 
         layout = QVBoxLayout(self)
@@ -179,6 +182,45 @@ class SelectSegmentDialog(QDialog):
         self.start_combo.setCurrentIndex(e_idx)
         self.end_combo.setCurrentIndex(s_idx)
 
+    def _get_stations_in_segment_ordered(self, line_id, start_station_id, end_station_id):
+        """指定された路線の区間に含まれる駅のIDリストを順序通りに返す"""
+        line_data = self.project.lines.get(line_id)
+        if not line_data:
+            return []
+
+        line_station_ids = [s["station_id"] for s in line_data.get("station_list", [])]
+
+        try:
+            idx_start = line_station_ids.index(start_station_id)
+            idx_end = line_station_ids.index(end_station_id)
+        except ValueError:
+            return [] # 路線で駅が見つからない場合
+
+        stations = []
+        if idx_start <= idx_end:
+            # 順向き
+            for i in range(idx_start, idx_end + 1):
+                stations.append(line_station_ids[i])
+        else:
+            # 逆向き
+            for i in range(idx_start, idx_end - 1, -1): # range(start, stop, step) -> stop is exclusive
+                stations.append(line_station_ids[i])
+        
+        return stations
+
+    def _get_segment_direction(self, line_id, start_station_id, end_station_id):
+        """指定された区間の方向を判定する ('forward' または 'reverse')"""
+        line_data = self.project.lines.get(line_id)
+        if not line_data:
+            return None
+        line_station_ids = [s["station_id"] for s in line_data.get("station_list", [])]
+        try:
+            idx_start = line_station_ids.index(start_station_id)
+            idx_end = line_station_ids.index(end_station_id)
+        except ValueError:
+            return None
+        return "forward" if idx_start <= idx_end else "reverse"
+
     def get_data(self):
         return {
             "line_id": self.line_combo.currentData(),
@@ -191,6 +233,38 @@ class SelectSegmentDialog(QDialog):
         if self.start_combo.currentData() == self.end_combo.currentData():
             QMessageBox.warning(self, "エラー", "区間の起点と終点に同じ駅を設定することはできません。")
             return
+        
+        new_segment_data = self.get_data()
+        new_line_id = new_segment_data["line_id"]
+        new_start_sid = new_segment_data["start_station"]
+        new_end_sid = new_segment_data["end_station"]
+
+        new_stations = self._get_stations_in_segment_ordered(new_line_id, new_start_sid, new_end_sid)
+        new_segment_direction = self._get_segment_direction(new_line_id, new_start_sid, new_end_sid)
+        # 区間内の駅間（エッジ）の集合を作成
+        new_edges = set(zip(new_stations, new_stations[1:]))
+
+        for i, existing_segment in enumerate(self.existing_segments):
+            # 編集中の区間自身とは重複チェックを行わない
+            if self.editing_segment_index is not None and i == self.editing_segment_index:
+                continue
+
+            existing_line_id = existing_segment["line_id"]
+            existing_start_sid = existing_segment["start_station"]
+            existing_end_sid = existing_segment["end_station"]
+
+            # 路線IDが同じ場合にのみ重複をチェック
+            if new_line_id == existing_line_id:
+                existing_segment_direction = self._get_segment_direction(existing_line_id, existing_start_sid, existing_end_sid)
+
+                # 方向が同じ場合にのみ重複とみなす
+                if new_segment_direction == existing_segment_direction:
+                    existing_stations = self._get_stations_in_segment_ordered(existing_line_id, existing_start_sid, existing_end_sid)
+                    existing_edges = set(zip(existing_stations, existing_stations[1:]))
+
+                    if new_edges.intersection(existing_edges):
+                        QMessageBox.warning(self, "エラー", "この区間は、既に登録されている他の区間と重複しています。方向が同じ区間は重複できません。")
+                        return
         
         self.accept()
 
@@ -719,7 +793,12 @@ class RouteEditorDialog(QDialog):
             QMessageBox.warning(self, "情報", "追加可能な路線がありません")
             return
 
-        dialog = SelectSegmentDialog(self, self.project, is_add=True)
+        # 現在選択されている運行系統のデータを取得
+        selected = self.route_list_widget.selectedItems()
+        if not selected: return
+        route_id = selected[0].data(Qt.UserRole)
+        route_data = self.project.routes.get(route_id)
+        dialog = SelectSegmentDialog(self, self.project, is_add=True, existing_segments=route_data.get("line_segments", []))
         if dialog.exec() == QDialog.Accepted:
             selected = self.route_list_widget.selectedItems()
             if not selected: return
@@ -763,10 +842,16 @@ class RouteEditorDialog(QDialog):
 
     def _on_edit_segment(self, segment_data, index):
         """路線の区間編集ダイアログを表示し、データを更新する"""
+        # 現在選択されている運行系統のデータを取得
+        selected = self.route_list_widget.selectedItems()
+        if not selected: return
+        route_id = selected[0].data(Qt.UserRole)
+        route_data = self.project.routes.get(route_id)
         dialog = SelectSegmentDialog(self, self.project, is_add=False, 
                                      initial_line=segment_data.get("line_id"),
                                      initial_start=segment_data.get("start_station"),
-                                     initial_end=segment_data.get("end_station"))
+                                     initial_end=segment_data.get("end_station"),
+                                     existing_segments=route_data.get("line_segments", []), editing_segment_index=index)
         if dialog.exec() == QDialog.Accepted:
             selected = self.route_list_widget.selectedItems()
             if not selected: return

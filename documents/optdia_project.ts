@@ -149,18 +149,28 @@ interface optdia_train {
     named_train_number: number | null; // 列車の号数
     car_count: null | number; // 両数(nullの場合は担当運用の所定両数の合計値が指定されたものとみなす)
     destination: null | string; // 行き先表示(nullの場合は終着駅の駅名が指定されたものとみなす)
-    subsequent_trains: string[]; // 連続する列車のID(0〜2件)
+    subsequent_trains: optdia_subsequent_train_identifier[]; // 連続する列車の識別情報(0〜2件)
     note: string; // 備考
     stops: optdia_train_stop[]; // 経由駅情報(下記)を経由順に配列で
 }
 
 
+// 連続する列車の識別情報
+interface optdia_subsequent_train_identifier {
+    route_id: string; // 運行系統ID
+    direction: "inbound" | "outbound"; // 方向(上りまたは下り)
+    train_id: string; // 列車ID
+}
+
+
 // 列車の経由駅情報
 interface optdia_train_stop {
+    line_id: string; // 路線ID
+    direction: "inbound" | "outbound"; // 方向(上りまたは下り)
     station_id: string; // 駅ID
     track_id: string | null; // 発着番線ID
-    arrival_time: string; // 到着時刻(hh:mm:ss形式)
-    departure_time: string; // 発車時刻(hh:mm:ss形式)
+    arrival_time: string | null; // 到着時刻(hh:mm:ss形式)
+    departure_time: string | null; // 発車時刻(hh:mm:ss形式)
     stop_type: 1 | 0 | -1; // 客扱い情報(1:停車、0:通過、-1運転停車)
 }
 
