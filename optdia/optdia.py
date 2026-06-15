@@ -5,16 +5,17 @@ import sys
 import os
 import subprocess
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon, QAction
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QFileDialog, QMessageBox, QDialog, QLabel,
     QListWidget, QListWidgetItem, QStackedWidget,
-    QTabBar, QHeaderView
+    QTabBar, QHeaderView, QMenu
 )
 import assets_rc
 from version import APP_NAME, __version__
 from project import OptDiaProject, load_project
+from settings import AppSettings
 from common.gui_utils import HtmlDelegate, create_color_square_pixmap
 from common.widgets import LineSampleWidget
 from dialogs.route import AddRouteDialog, SelectSegmentDialog, SplitSegmentDialog, RouteEditorDialog
@@ -35,9 +36,13 @@ class MainWindow(QMainWindow):
         self.filepath = filepath
         self.is_modified = False
 
+        # 設定管理クラスの初期化
+        self.app_settings = AppSettings()
+
         # 初期タイトルと初期サイズ
         self._update_window_title()
         self.resize(960, 640)
+        self.app_settings.load_window_settings(self)
 
         # メニューバーの設定
         self._init_menu_bar()
@@ -236,6 +241,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         """閉じるイベントを捕捉し、未保存の変更がある場合に確認する"""
         if not self.is_modified:
+            self.app_settings.save_window_settings(self)
             event.accept()
             return
 
@@ -250,10 +256,12 @@ class MainWindow(QMainWindow):
         if reply == QMessageBox.StandardButton.Save:
             self._on_save_project()
             if not self.is_modified:  # 保存が完了（フラグがクリア）したなら閉じる
+                self.app_settings.save_window_settings(self)
                 event.accept()
             else:  # 保存ダイアログでキャンセルされた場合は閉じない
                 event.ignore()
         elif reply == QMessageBox.StandardButton.Discard:
+            self.app_settings.save_window_settings(self)
             event.accept()
         else:
             event.ignore()
@@ -300,6 +308,9 @@ class MainWindow(QMainWindow):
         properties_action = file_menu.addAction("プロジェクトのプロパティ")
         file_menu.addSeparator()
         properties_action.triggered.connect(self._on_project_properties)
+        self.recent_files_menu = file_menu.addMenu("最近開いたファイル(&R)") # 最近開いたファイルメニューを追加
+        self._update_recent_files_menu() # メニューを初期化
+        file_menu.addSeparator()
         exit_action = file_menu.addAction("終了(&Q)")
         exit_action.setShortcut("Ctrl+Q")
         exit_action.triggered.connect(self.close)
@@ -310,6 +321,36 @@ class MainWindow(QMainWindow):
         # ヘルプ(H)
         help_menu = menu_bar.addMenu("ヘルプ(&H)")
         about_action = help_menu.addAction(f"{APP_NAME}について(&A)")
+        about_action.triggered.connect(self._on_about)
+
+    def _update_recent_files_menu(self):
+        """最近開いたファイルメニューを更新する"""
+        self.recent_files_menu.clear()
+        recent_files = self.app_settings.load_recent_files()
+
+        if not recent_files:
+            no_recent_action = self.recent_files_menu.addAction("最近開いたファイルはありません")
+            no_recent_action.setEnabled(False)
+            return
+
+        for i, filepath in enumerate(recent_files):
+            # ファイル名のみを表示し、ツールチップにフルパスを表示
+            filename = os.path.basename(filepath)
+            action = self.recent_files_menu.addAction(f"&{i+1} {filename}")
+            action.setToolTip(filepath)
+            action.setData(filepath) # アクションにファイルパスを紐付け
+            action.triggered.connect(self._open_recent_file)
+
+    def _open_recent_file(self):
+        """最近開いたファイルメニューから選択されたファイルを開く"""
+        action = self.sender() # シグナルを送信したアクションを取得
+        if action:
+            filepath = action.data()
+            # 現在のプロジェクトが変更されている場合は別プロセスで開く
+            if self.is_modified:
+                subprocess.Popen([sys.executable, sys.argv[0], filepath])
+            else:
+                self._load_project_in_current_window(filepath)
         about_action.triggered.connect(self._on_about)
 
     def _on_new_project(self):
@@ -330,24 +371,7 @@ class MainWindow(QMainWindow):
 
         # 現在のプロジェクトが「編集されていない新規状態」であれば、現在のプロセスでロードする
         if self.filepath is None and not self.is_modified:
-            try:
-                self.project = load_project(filepath)
-                self.timetable_model.project = self.project
-                self.filepath = filepath
-                self.set_modified(False)
-                self._update_window_title()
-                self._populate_route_list()
-                self._populate_diagram_list()
-                
-                # 初期選択の設定
-                if self.route_list_widget.count() > 0:
-                    self.route_list_widget.setCurrentRow(0)
-                if self.diagram_list_widget.count() > 0:
-                    self.diagram_list_widget.setCurrentRow(0)
-                    
-                self._on_timetable_settings_changed()
-            except Exception:
-                QMessageBox.critical(self, "エラー", "このファイルは破損しています")
+            self._load_project_in_current_window(filepath)
         else:
             # それ以外（既にファイルを開いているか、変更がある場合）は別プロセスで開く
             subprocess.Popen([sys.executable, sys.argv[0], filepath])
@@ -355,7 +379,9 @@ class MainWindow(QMainWindow):
     def _on_save_project(self):
         """現在のファイルパスに上書き保存する。パスがない場合は名前を付けて保存を実行する"""
         if self.filepath:
-            self.project.save_project(self.filepath)
+            # save_projectが成功した場合のみrecent_filesに追加
+            if self._save_project_to_path(self.filepath):
+                self.app_settings.add_recent_file(self.filepath)
             self.set_modified(False)
         else:
             self._on_save_as_project()
@@ -376,10 +402,43 @@ class MainWindow(QMainWindow):
                 else:
                     filepath += ".optdia"
             
+            if self._save_project_to_path(filepath):
+                self.filepath = filepath
+                self.set_modified(False)
+                self._update_window_title()
+                self.app_settings.add_recent_file(filepath)
+                self._update_recent_files_menu()
+
+    def _save_project_to_path(self, filepath: str) -> bool:
+        """指定されたパスにプロジェクトを保存する。成功したらTrueを返す。"""
+        try:
             self.project.save_project(filepath)
+            return True
+        except Exception as e:
+            QMessageBox.critical(self, "保存エラー", f"プロジェクトの保存中にエラーが発生しました:\n{e}")
+            return False
+
+    def _load_project_in_current_window(self, filepath: str):
+        """現在のウィンドウでプロジェクトをロードする"""
+        try:
+            self.project = load_project(filepath)
+            self.timetable_model.project = self.project
             self.filepath = filepath
             self.set_modified(False)
             self._update_window_title()
+            self._populate_route_list()
+            self._populate_diagram_list()
+            
+            # 初期選択の設定
+            if self.route_list_widget.count() > 0:
+                self.route_list_widget.setCurrentRow(0)
+            if self.diagram_list_widget.count() > 0:
+                self.diagram_list_widget.setCurrentRow(0)
+            self._on_timetable_settings_changed()
+            self.app_settings.add_recent_file(filepath) # 成功したら最近開いたファイルに追加
+            self._update_recent_files_menu()
+        except Exception as e:
+            QMessageBox.critical(self, "エラー", f"プロジェクトファイルの読み込み中にエラーが発生しました:\n{e}\nファイルが破損している可能性があります。")
 
     def _on_project_properties(self):
         """プロジェクトのプロパティダイアログを表示する"""
