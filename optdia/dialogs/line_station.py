@@ -624,6 +624,9 @@ class LineStationEditorDialog(QDialog):
         self.add_track_button = QPushButton("追加")
         self.add_track_button.clicked.connect(self._on_add_track)
         track_btn_layout.addWidget(self.add_track_button)
+        self.delete_track_button = QPushButton("削除")
+        self.delete_track_button.clicked.connect(self._on_delete_track)
+        track_btn_layout.addWidget(self.delete_track_button)
         right_vertical_layout.addLayout(track_btn_layout)
         bottom_base_info_layout.addLayout(right_vertical_layout)
 
@@ -671,6 +674,13 @@ class LineStationEditorDialog(QDialog):
         station_form_layout.addWidget(self.line_station_group)
 
         station_form_layout.addStretch()
+
+        # 駅削除ボタン
+        self.delete_station_button = QPushButton("この駅を削除")
+        self.delete_station_button.setFixedSize(120, 30)
+        self.delete_station_button.clicked.connect(self._on_delete_station)
+        self.delete_station_button.setStyleSheet("QPushButton { color: #cc3333; border: none; text-decoration: underline; background-color: transparent; }")
+        station_form_layout.addWidget(self.delete_station_button, alignment=Qt.AlignRight)
 
         # 駅情報タブの右側をスタックウィジェット化（フォームとプレースホルダーの切り替え）
         self.station_right_stack = QStackedWidget()
@@ -746,6 +756,13 @@ class LineStationEditorDialog(QDialog):
 
         self.line_info_layout.addStretch() # 内容を上部に寄せる
 
+        # 路線削除ボタン
+        self.delete_line_button = QPushButton("この路線を削除")
+        self.delete_line_button.setFixedSize(120, 30)
+        self.delete_line_button.clicked.connect(self._on_delete_line)
+        self.delete_line_button.setStyleSheet("QPushButton { color: #cc3333; border: none; text-decoration: underline; background-color: transparent; }")
+        self.line_info_layout.addWidget(self.delete_line_button, alignment=Qt.AlignRight)
+
         self.right_panel_tabs.addTab(self.line_info_tab, "路線情報")
 
         # 初期リストの構築
@@ -768,6 +785,7 @@ class LineStationEditorDialog(QDialog):
         self.inbound_direction_checkbox.setEnabled(enabled)
         self.station_list_widget.setEnabled(enabled)
         self.add_station_button.setEnabled(enabled)
+        self.delete_line_button.setEnabled(enabled)
         
         if not enabled:
             self.line_name_edit.blockSignals(True)
@@ -1256,6 +1274,206 @@ class LineStationEditorDialog(QDialog):
                     self.track_list_widget.setCurrentRow(i)
                     break
 
+            if hasattr(self.parent(), "set_modified"):
+                self.parent().set_modified(True)
+
+    def _on_delete_line(self):
+        """現在選択中の路線を削除し、関連する運行系統や列車データ、孤立駅をクリーンアップする"""
+        line_id = self.current_selected_line_id
+        if not line_id or line_id not in self.project.lines:
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "路線の削除",
+            "この路線を削除しますか？\n"
+            "この路線を削除すると、時刻表からはこの路線内の発着時刻が全て削除され、"
+            "この路線のみに登録されている駅の情報も失われます。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # 1. 削除対象の路線に含まれていた駅を特定（後で孤立駅チェックに使用）
+        line_data = self.project.lines[line_id]
+        stations_in_line = [s["station_id"] for s in line_data.get("station_list", [])]
+
+        # 2. 全ての運行系統の区間設定（line_segments）から削除対象路線を削除
+        for route in self.project.routes.values():
+            if "line_segments" in route:
+                route["line_segments"] = [seg for seg in route["line_segments"] if seg.get("line_id") != line_id]
+
+        # 3. 全ての列車の経由駅情報（stops）から削除対象路線のデータを削除
+        for route in self.project.routes.values():
+            tbd = route.get("trains_by_diagram", {})
+            for diagram_data in tbd.values():
+                for direction_key in ["inbound_trains", "outbound_trains"]:
+                    trains_dict = diagram_data.get(direction_key, {})
+                    for train in trains_dict.values():
+                        if "stops" in train:
+                            train["stops"] = [stop for stop in train["stops"] if stop.get("line_id") != line_id]
+
+        # 4. プロジェクトの路線データ本体から削除
+        del self.project.lines[line_id]
+        if line_id in self.project.lines_order:
+            self.project.lines_order.remove(line_id)
+
+        # 5. 他の路線で使用されていない駅をプロジェクトの駅情報から削除
+        for sid in stations_in_line:
+            is_used_elsewhere = False
+            for other_line in self.project.lines.values():
+                if any(s.get("station_id") == sid for s in other_line.get("station_list", [])):
+                    is_used_elsewhere = True
+                    break
+            
+            if not is_used_elsewhere and sid in self.project.stations:
+                del self.project.stations[sid]
+
+        # 6. UIの更新
+        self.current_selected_line_id = None
+        self.current_selected_line_data = None
+        self._populate_line_list()
+        
+        if hasattr(self.parent(), "set_modified"):
+            self.parent().set_modified(True)
+
+    def _on_delete_station(self):
+        """現在編集中の駅を現在の路線から削除し、必要に応じてプロジェクト全体から削除する"""
+        if not self.current_selected_line_id or not self.current_selected_line_data:
+            return
+
+        selected_items = self.station_list_widget.selectedItems()
+        if not selected_items:
+            return
+
+        station_id = selected_items[0].data(Qt.UserRole)
+        station_data = self.project.stations.get(station_id)
+        if not station_data:
+            return
+
+        line_name = self.current_selected_line_data.get("line_name", self.current_selected_line_id)
+
+        # 1. 運行系統の制約チェック
+        # 全ての運行系統を走査し、編集中の路線の部分区間の始点・終点になっていないか確認
+        for route in self.project.routes.values():
+            for seg in route.get("line_segments", []):
+                if seg.get("line_id") == self.current_selected_line_id:
+                    if seg.get("start_station") == station_id or seg.get("end_station") == station_id:
+                        QMessageBox.warning(
+                            self,
+                            "エラー",
+                            "この駅は運行系統で部分区間の始点または終点として設定されているため削除できません"
+                        )
+                        return
+
+        # 2. 路線からの削除確認
+        reply = QMessageBox.question(
+            self,
+            "駅の削除",
+            f"「{line_name}」からこの駅を削除しますか？\n"
+            "駅を削除すると、時刻表の列車に設定されているこの駅の発着時刻も削除されます。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # 3. 孤立駅（他路線での利用有無）のチェック
+        other_lines_using = False
+        for lid, line in self.project.lines.items():
+            if lid == self.current_selected_line_id:
+                continue
+            if any(s.get("station_id") == station_id for s in line.get("station_list", [])):
+                other_lines_using = True
+                break
+
+        if not other_lines_using:
+            reply = QMessageBox.question(
+                self,
+                "確認",
+                f"この駅は「{line_name}」以外の路線には登録されていません。このまま削除を実行すると駅情報は全て失われます。\n"
+                "よろしいですか？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        # 4. 実際の削除処理
+        # A. 路線情報の駅リストから削除
+        self.current_selected_line_data["station_list"] = [
+            s for s in self.current_selected_line_data.get("station_list", [])
+            if s.get("station_id") != station_id
+        ]
+
+        # B. 全ての列車の発着情報を検査し、削除対象の駅・路線ペアの経由駅データを削除
+        for route in self.project.routes.values():
+            tbd = route.get("trains_by_diagram", {})
+            for diagram_data in tbd.values():
+                for direction_key in ["inbound_trains", "outbound_trains"]:
+                    trains_dict = diagram_data.get(direction_key, {})
+                    for train in trains_dict.values():
+                        if "stops" in train:
+                            train["stops"] = [
+                                stop for stop in train["stops"]
+                                if not (stop.get("station_id") == station_id and stop.get("line_id") == self.current_selected_line_id)
+                            ]
+
+        # C. 他の路線で使用されていない場合は、プロジェクト全体の駅情報からも削除
+        if not other_lines_using:
+            if station_id in self.project.stations:
+                del self.project.stations[station_id]
+
+        # 5. UIの更新
+        self._populate_station_list(self.current_selected_line_data)
+        
+        if hasattr(self.parent(), "set_modified"):
+            self.parent().set_modified(True)
+
+    def _on_delete_track(self):
+        """選択中の発着番線を削除する"""
+        selected_items = self.track_list_widget.selectedItems()
+        if not selected_items:
+            return
+
+        track_id = selected_items[0].data(Qt.UserRole)
+        station_id = self.station_id_edit.text()
+        station_data = self.project.stations.get(station_id)
+        if not station_data:
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "発着番線の削除",
+            "この駅から選択中の発着番線を削除しますか？\n"
+            "発着番線を削除すると、時刻表の列車に設定されているこの発着番線の情報も失われます。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            # 1. プロジェクトデータ（駅情報）から削除
+            if "tracks" in station_data and track_id in station_data["tracks"]:
+                del station_data["tracks"][track_id]
+            if "tracks_order" in station_data and track_id in station_data["tracks_order"]:
+                station_data["tracks_order"].remove(track_id)
+
+            # 2. 全ての列車の発着情報を検査し、削除した番線設定を解除
+            for route in self.project.routes.values():
+                tbd = route.get("trains_by_diagram", {})
+                for diagram_data in tbd.values():
+                    for direction_key in ["inbound_trains", "outbound_trains"]:
+                        trains_dict = diagram_data.get(direction_key, {})
+                        for train in trains_dict.values():
+                            for stop in train.get("stops", []):
+                                if stop.get("station_id") == station_id and stop.get("track_id") == track_id:
+                                    stop["track_id"] = None
+
+            # UIの更新
+            self._populate_track_list(station_data)
+            self._on_station_selected()
+            
             if hasattr(self.parent(), "set_modified"):
                 self.parent().set_modified(True)
 

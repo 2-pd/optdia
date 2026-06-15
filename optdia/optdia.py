@@ -396,6 +396,7 @@ class MainWindow(QMainWindow):
         """路線・駅情報編集ダイアログを表示する"""
         dialog = LineStationEditorDialog(self, self.project)
         dialog.exec()
+        self._on_timetable_settings_changed()
 
     def _on_edit_train_types(self):
         """種別情報編集ダイアログを表示する"""
