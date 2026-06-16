@@ -192,11 +192,24 @@ class TrainTypeEditorDialog(QDialog):
         self.tt_editor_layout.addWidget(self.tt_form_container)
         self.tt_editor_layout.addStretch()
 
-        # 最下部に複製ボタンを追加
+        # 下部ボタンエリア (複製 / 削除)
+        bottom_button_layout = QHBoxLayout()
+        bottom_button_layout.addStretch()
+
+        # 複製ボタン
         self.duplicate_tt_button = QPushButton("この種別のコピーを作成")
         self.duplicate_tt_button.setFixedWidth(200)
         self.duplicate_tt_button.clicked.connect(self._on_duplicate_train_type)
-        self.tt_editor_layout.addWidget(self.duplicate_tt_button, alignment=Qt.AlignRight)
+        bottom_button_layout.addWidget(self.duplicate_tt_button)
+        
+        # 削除ボタン
+        self.delete_tt_button = QPushButton("この種別を削除")
+        self.delete_tt_button.setFixedSize(120, 30)
+        self.delete_tt_button.clicked.connect(self._on_delete_train_type)
+        self.delete_tt_button.setStyleSheet("QPushButton { color: #ee3333; border: none; text-decoration: underline; background-color: transparent; }")
+        bottom_button_layout.addWidget(self.delete_tt_button)
+        
+        self.tt_editor_layout.addLayout(bottom_button_layout)
 
         self.tt_right_stack.addWidget(self.tt_editor_page)
 
@@ -254,6 +267,7 @@ class TrainTypeEditorDialog(QDialog):
         self.tt_weight_combo.blockSignals(True)
         self.tt_style_combo.blockSignals(True)
         self.duplicate_tt_button.setEnabled(True)
+        self.delete_tt_button.setEnabled(True)
 
         self.tt_name_edit.setText(tt_data.get("train_type_name", ""))
         self.tt_nickname_edit.setText(tt_data.get("train_name") or "")
@@ -283,6 +297,7 @@ class TrainTypeEditorDialog(QDialog):
         self.tt_weight_combo.blockSignals(False)
         self.tt_style_combo.blockSignals(False)
         self.duplicate_tt_button.setEnabled(True)
+        self.delete_tt_button.setEnabled(True)
         
         self._update_line_sample()
 
@@ -456,3 +471,50 @@ class TrainTypeEditorDialog(QDialog):
             self.tt_right_stack.setCurrentWidget(self.tt_editor_page)
         else:
             self.tt_right_stack.setCurrentWidget(self.tt_placeholder_page)
+        
+        # 新しいボタンの有効/無効を設定
+        self.delete_tt_button.setEnabled(enabled)
+
+    def _on_delete_train_type(self):
+        """選択中の列車種別を削除する"""
+        selected_items = self.train_type_list_widget.selectedItems()
+        if not selected_items:
+            return
+
+        tt_id = selected_items[0].data(Qt.UserRole)
+
+        reply = QMessageBox.question(
+            self,
+            "列車種別の削除",
+            "この列車種別を削除すると、この種別が設定されている全ての列車から種別情報が削除されます。\n"
+            "本当に列車種別を削除しますか？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            # プロジェクトデータから種別を削除
+            if tt_id in self.project.train_types:
+                del self.project.train_types[tt_id]
+            if tt_id in self.project.train_types_order:
+                self.project.train_types_order.remove(tt_id)
+
+            # 全ての運行系統の全てのダイヤから全ての列車を走査して種別設定を解除
+            for route in self.project.routes.values():
+                tbd_dict = route.get("trains_by_diagram", {})
+                for diagram_trains in tbd_dict.values():
+                    for key in ["inbound_trains", "outbound_trains"]:
+                        trains_dict = diagram_trains.get(key, {})
+                        for train in trains_dict.values():
+                            if train.get("train_type_id") == tt_id:
+                                train["train_type_id"] = None
+
+            # UIの更新
+            self._populate_train_type_list()
+
+            # 削除後に項目が残っていれば最初の項目を選択状態にする
+            if self.train_type_list_widget.count() > 0:
+                self.train_type_list_widget.setCurrentRow(0)
+
+            if hasattr(self.parent(), "set_modified"):
+                self.parent().set_modified(True)
