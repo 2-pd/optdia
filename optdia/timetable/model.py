@@ -143,6 +143,10 @@ class TimetableModel(QAbstractTableModel):
                                 "is_segment_start": is_current_segment_start,
                                 "is_segment_end": is_current_segment_end
                             })
+                        else:
+                            # すでに存在する経由駅設定とマージされる場合（隣接セグメントの接続点）
+                            # セグメントの終端フラグを更新する（マージされたので、前のセグメントの終端ではなくなる）
+                            self.full_stop_configs[-1]["is_segment_end"] = is_current_segment_end
 
                         stop_idx = len(self.full_stop_sequence) - 1
                         s_data = self.project.stations.get(sid, {})
@@ -161,13 +165,15 @@ class TimetableModel(QAbstractTableModel):
                 train_order_key = "inbound_trains_order" if direction == "inbound" else "outbound_trains_order"
                 trains = tbd.get(train_dict_key, {})
                 order = tbd.get(train_order_key, [])
+
+                # 末尾に列車の空データを10本追加（これらの列車はプロジェクトデータの保存時に除去される）
                 unsaved_count = sum(1 for tid in order if trains.get(tid, {}).get("to_be_saved") is False)
                 needed = 10 - unsaved_count
                 if needed > 0:
                     chars = string.ascii_letters + string.digits
                     for _ in range(needed):
                         while True:
-                            new_id = "tmp_" + "".join(random.choices(chars, k=8))
+                            new_id = "".join(random.choices(chars, k=16)) # 16文字のランダムな英数字からなる列車IDを生成
                             if new_id not in trains: break
                         trains[new_id] = {
                             "train_id": new_id, "train_number": "", "operations": [], "train_type_id": None,
@@ -176,7 +182,61 @@ class TimetableModel(QAbstractTableModel):
                         }
                         order.append(new_id)
                 self.train_ids = order
+
+        self._normalize_all_trains()
         self.endResetModel()
+
+    def _normalize_all_trains(self):
+        """現在の運行系統・ダイヤに含まれる全列車のストップデータを正規化（マージ・分割）する"""
+        if not self.route_id or not self.diagram_id:
+            return
+        route = self.project.routes.get(self.route_id)
+        if not route:
+            return
+        tbd = route.get("trains_by_diagram", {}).get(self.diagram_id, {})
+        train_keys = ["inbound_trains", "outbound_trains"]
+        for key in train_keys:
+            trains = tbd.get(key, {})
+            for train in trains.values():
+                self._normalize_train_stops(train)
+
+    def _normalize_train_stops(self, train):
+        """個別の列車の stops リストを現在の full_stop_configs に基づいて再構成（マージ・分割）する"""
+        if not train.get("stops"):
+            return
+
+        # 保存時に消去された stop_idx を、現在の駅順 (full_stop_configs) に基づいて復元する
+        # JSONから読み込まれた直後は stop_idx が無いため、駅ID・路線ID・方向の並び順から推測する
+        curr_cfg_idx = 0
+        for s in train["stops"]:
+            sid, lid, ldir = s["station_id"], s["line_id"], s["direction"]
+            # 一致する設定を timetable の並び順から探す
+            for i in range(curr_cfg_idx, len(self.full_stop_configs)):
+                cfg = self.full_stop_configs[i]
+                if cfg["station_id"] == sid and cfg["line_id"] == lid and cfg["direction"] == ldir:
+                    s["stop_idx"] = i
+                    curr_cfg_idx = i + 1
+                    break
+
+        # stop_idx に基づいてソート（これでテーブル上の並び順と一致する）
+        train["stops"].sort(key=lambda x: x.get("stop_idx", 0))
+
+        # セグメントの境界フラグに基づいて None 値を補正
+        for s in train["stops"]:
+            idx = s.get("stop_idx")
+            if idx is not None and idx < len(self.full_stop_configs):
+                config = self.full_stop_configs[idx]
+                
+                if config.get("is_segment_start"):
+                    s["arrival_time"] = None
+                if config.get("is_segment_end"):
+                    s["departure_time"] = None
+                
+                # 空文字（入力中）かつ None でない箇所を補完
+                if s.get("arrival_time") == "" and s.get("departure_time"):
+                    s["arrival_time"] = s["departure_time"]
+                if s.get("departure_time") == "" and s.get("arrival_time"):
+                    s["departure_time"] = s["arrival_time"]
 
     def flags(self, index):
         if not index.isValid(): return Qt.ItemIsEnabled
@@ -232,12 +292,9 @@ class TimetableModel(QAbstractTableModel):
                 ldir = config["direction"]
                 if "stops" not in train: train["stops"] = []
                 formatted_value = self._format_time(value)
-
-                # 駅ID、路線ID、方向の3つが一致するデータを検索
-                stop = next((s for s in train["stops"] 
-                             if s.get("station_id") == sid 
-                             and s.get("line_id") == lid 
-                             and s.get("direction") == ldir), None)
+                
+                # 管理用インデックス stop_idx を使用して、該当する駅訪問データを特定
+                stop = next((s for s in train["stops"] if s.get("stop_idx") == stop_idx), None)
 
                 if not stop:
                     # 時刻が入力されていない場合は、新しいstopを作成しない
@@ -256,7 +313,8 @@ class TimetableModel(QAbstractTableModel):
                         "track_id": config["track_id"],
                         "arrival_time": initial_arrival_time,
                         "departure_time": initial_departure_time,
-                        "stop_type": 1
+                        "stop_type": 1,
+                        "stop_idx": stop_idx
                     }
                     train["stops"].append(stop)
                 time_key = "arrival_time" if row_def["type"] == "arr" else "departure_time"
@@ -340,13 +398,8 @@ class TimetableModel(QAbstractTableModel):
                 row_idx = row - len(self.row_headers)
                 if row_idx < len(self.station_rows):
                     row_def = self.station_rows[row_idx]
-                    config = self.full_stop_configs[row_def["stop_idx"]]
-                    
-                    # 駅ID、路線ID、方向の3つが一致するデータを表示
-                    stop = next((s for s in train.get("stops", []) 
-                                 if s.get("station_id") == config["station_id"]
-                                 and s.get("line_id") == config["line_id"]
-                                 and s.get("direction") == config["direction"]), None)
+                    # 管理用インデックス stop_idx を使用してデータを特定
+                    stop = next((s for s in train.get("stops", []) if s.get("stop_idx") == row_def["stop_idx"]), None)
 
                     if stop: return stop.get("arrival_time" if row_def["type"] == "arr" else "departure_time", "")
         return None

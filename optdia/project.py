@@ -69,6 +69,70 @@ class OptDiaProject:
         # 運用 (operations) は TS 上で既に連想配列として定義されているためそのまま保持
         self.operations = entities.get("operations", {})
 
+        # 読込時にセグメント境界での分割処理を行う
+        self._split_all_boundary_stops()
+
+    def _split_all_boundary_stops(self):
+        """全路線の全列車に対し、セグメント境界駅での発着時刻分割を行う"""
+        for route in self.routes.values():
+            # セグメント境界駅（路線の接続点）を特定
+            segments = route.get("line_segments", [])
+            boundary_stations = set()
+            for i in range(len(segments) - 1):
+                if segments[i]["end_station"] == segments[i+1]["start_station"]:
+                    boundary_stations.add(segments[i]["end_station"])
+
+            tbd_dict = route.get("trains_by_diagram", {})
+            for tbd in tbd_dict.values():
+                for key in ["inbound_trains", "outbound_trains"]:
+                    for train in tbd.get(key, {}).values():
+                        new_stops = []
+                        for s in train.get("stops", []):
+                            # 境界駅でかつ着発両方の時刻がある場合、分割する
+                            if (s.get("station_id") in boundary_stations and 
+                                s.get("arrival_time") and s.get("departure_time")):
+                                
+                                # 着時刻のみのデータ
+                                s_arr = s.copy()
+                                s_arr["departure_time"] = "" # 空文字で保持
+                                new_stops.append(s_arr)
+                                
+                                # 発時刻のみのデータ
+                                s_dep = s.copy()
+                                s_dep["arrival_time"] = ""
+                                new_stops.append(s_dep)
+                            else:
+                                new_stops.append(s)
+                        train["stops"] = new_stops
+
+    def _merge_train_stops_for_save(self, stops):
+        """保存用に、同一駅・路線の連続する着・発データを統合する"""
+        if not stops:
+            return []
+        
+        merged_stops = []
+        i = 0
+        while i < len(stops):
+            s1 = stops[i]
+            # 最後の要素でなく、かつ「s1が着のみ」「s2が発のみ」かつ「同一駅・路線・方向」なら統合
+            if i + 1 < len(stops):
+                s2 = stops[i+1]
+                if (s1["station_id"] == s2["station_id"] and 
+                    s1["line_id"] == s2["line_id"] and 
+                    s1["direction"] == s2["direction"] and
+                    s1.get("arrival_time") and not s1.get("departure_time") and
+                    not s2.get("arrival_time") and s2.get("departure_time")):
+                    
+                    combined = s1.copy()
+                    combined["departure_time"] = s2["departure_time"]
+                    merged_stops.append(combined)
+                    i += 2
+                    continue
+            
+            merged_stops.append(s1)
+            i += 1
+        return merged_stops
+
     def _split_collection(self, items: list, id_key: str):
         """
         指定された ID キーを含むオブジェクトの配列を、ID をキーとした辞書と、ID の順序リストに分割する。
@@ -84,6 +148,18 @@ class OptDiaProject:
                 item_order.append(item_id)
         
         return item_dict, item_order
+
+    def _clean_train_for_export(self, train_data: dict):
+        """保存用に列車データから一時的な管理用フラグやインデックスを削除する"""
+        clean_train = {k: v for k, v in train_data.items() if k != "to_be_saved"}
+        if "stops" in clean_train:
+            # 保存直前に連続する着発データをマージする
+            stops = self._merge_train_stops_for_save(clean_train["stops"])
+            clean_train["stops"] = [
+                {sk: sv for sk, sv in stop.items() if sk != "stop_idx"}
+                for stop in stops
+            ]
+        return clean_train
 
     def to_dict(self):
         """
@@ -109,14 +185,14 @@ class OptDiaProject:
                     dt_copy = dt.copy()
                     if "inbound_trains" in dt and "inbound_trains_order" in dt:
                         dt_copy["inbound_trains"] = [
-                            {k: v for k, v in dt["inbound_trains"][tid].items() if k != "to_be_saved"}
+                            self._clean_train_for_export(dt["inbound_trains"][tid])
                             for tid in dt["inbound_trains_order"]
                             if dt["inbound_trains"][tid].get("to_be_saved") is True
                         ]
                         del dt_copy["inbound_trains_order"]
                     if "outbound_trains" in dt and "outbound_trains_order" in dt:
                         dt_copy["outbound_trains"] = [
-                            {k: v for k, v in dt["outbound_trains"][tid].items() if k != "to_be_saved"}
+                            self._clean_train_for_export(dt["outbound_trains"][tid])
                             for tid in dt["outbound_trains_order"]
                             if dt["outbound_trains"][tid].get("to_be_saved") is True
                         ]

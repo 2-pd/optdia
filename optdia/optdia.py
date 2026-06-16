@@ -308,7 +308,7 @@ class MainWindow(QMainWindow):
         properties_action = file_menu.addAction("プロジェクトのプロパティ")
         file_menu.addSeparator()
         properties_action.triggered.connect(self._on_project_properties)
-        self.recent_files_menu = file_menu.addMenu("最近開いたファイル(&R)") # 最近開いたファイルメニューを追加
+        self.recent_files_menu = file_menu.addMenu("最近開いたプロジェクト(&R)")
         self._update_recent_files_menu() # メニューを初期化
         file_menu.addSeparator()
         exit_action = file_menu.addAction("終了(&Q)")
@@ -324,12 +324,12 @@ class MainWindow(QMainWindow):
         about_action.triggered.connect(self._on_about)
 
     def _update_recent_files_menu(self):
-        """最近開いたファイルメニューを更新する"""
+        """最近開いたプロジェクトメニューを更新する"""
         self.recent_files_menu.clear()
         recent_files = self.app_settings.load_recent_files()
 
         if not recent_files:
-            no_recent_action = self.recent_files_menu.addAction("最近開いたファイルはありません")
+            no_recent_action = self.recent_files_menu.addAction("最近開いたプロジェクトはありません")
             no_recent_action.setEnabled(False)
             return
 
@@ -342,7 +342,7 @@ class MainWindow(QMainWindow):
             action.triggered.connect(self._open_recent_file)
 
     def _open_recent_file(self):
-        """最近開いたファイルメニューから選択されたファイルを開く"""
+        """最近開いたプロジェクトメニューから選択されたファイルを開く"""
         action = self.sender() # シグナルを送信したアクションを取得
         if action:
             filepath = action.data()
@@ -351,7 +351,6 @@ class MainWindow(QMainWindow):
                 subprocess.Popen([sys.executable, sys.argv[0], filepath])
             else:
                 self._load_project_in_current_window(filepath)
-        about_action.triggered.connect(self._on_about)
 
     def _on_new_project(self):
         """新規プロジェクトとして、新しくアプリを起動する"""
