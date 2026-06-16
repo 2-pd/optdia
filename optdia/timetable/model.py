@@ -5,6 +5,8 @@ from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QTimer
 from PySide6.QtGui import QColor
 from project import OptDiaProject
 
+TrackIdRole = Qt.UserRole + 100
+
 class TimetableModel(QAbstractTableModel):
     def __init__(self, project: OptDiaProject):
         super().__init__()
@@ -243,7 +245,7 @@ class TimetableModel(QAbstractTableModel):
         return Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable
 
     def setData(self, index, value, role=Qt.EditRole):
-        if not index.isValid() or role != Qt.EditRole: return False
+        if not index.isValid() or role not in (Qt.EditRole, TrackIdRole): return False
         col = index.column()
         row = index.row()
         if not self.route_id or not self.diagram_id or col >= len(self.train_ids): return False
@@ -290,6 +292,31 @@ class TimetableModel(QAbstractTableModel):
                 sid = config["station_id"]
                 lid = config["line_id"]
                 ldir = config["direction"]
+
+                # 番線IDの更新処理
+                if role == TrackIdRole:
+                    stop = next((s for s in train.get("stops", []) if s.get("stop_idx") == stop_idx), None)
+                    if not stop:
+                        # 時刻未入力の状態で番線だけ選んだ場合、ストップデータを新規作成
+                        config_for_stop = self.full_stop_configs[stop_idx]
+                        initial_arr = None if config_for_stop.get("is_segment_start", False) else ""
+                        initial_dep = None if config_for_stop.get("is_segment_end", False) else ""
+                        stop = {
+                            "station_id": sid, "line_id": lid, "direction": ldir,
+                            "track_id": value,
+                            "arrival_time": initial_arr, "departure_time": initial_dep,
+                            "stop_type": 1, "stop_idx": stop_idx
+                        }
+                        train["stops"].append(stop)
+                        changed = True
+                    elif stop.get("track_id") != value:
+                        stop["track_id"] = value
+                        changed = True
+                    
+                    if changed:
+                        self._trigger_update(col, trains, index)
+                    return changed
+
                 if "stops" not in train: train["stops"] = []
                 formatted_value = self._format_time(value)
                 
@@ -332,14 +359,17 @@ class TimetableModel(QAbstractTableModel):
                        (stop.get("departure_time") is None or stop.get("departure_time") == ""):
                         train["stops"].remove(stop)
         if changed:
-            for i in range(col + 1):
-                tid = self.train_ids[i]
-                t = trains.get(tid)
-                if t and t.get("to_be_saved") is False: t["to_be_saved"] = True
-            QTimer.singleShot(0, lambda: self.update_data(self.route_id, self.diagram_id, self.direction))
-            self.dataChanged.emit(index, index, [Qt.EditRole, Qt.DisplayRole])
+            self._trigger_update(col, trains, index)
             return True
         return False
+
+    def _trigger_update(self, col, trains, index):
+        for i in range(col + 1):
+            tid = self.train_ids[i]
+            t = trains.get(tid)
+            if t and t.get("to_be_saved") is False: t["to_be_saved"] = True
+        QTimer.singleShot(0, lambda: self.update_data(self.route_id, self.diagram_id, self.direction))
+        self.dataChanged.emit(index, index, [Qt.EditRole, Qt.DisplayRole])
 
     def rowCount(self, parent=QModelIndex()):
         return len(self.row_headers) + len(self.station_rows)
@@ -359,6 +389,12 @@ class TimetableModel(QAbstractTableModel):
         if col >= len(self.train_ids): return None
         train_id = self.train_ids[col]
         train = trains.get(train_id, {})
+
+        if role == Qt.TextAlignmentRole:
+            if row in (1, 3):
+                return Qt.AlignCenter
+            return Qt.AlignRight | Qt.AlignVCenter
+
         if role == Qt.BackgroundRole:
             tt = self.project.train_types.get(train.get("train_type_id"))
             return QColor(tt.get("background_color", "#ffffff")) if tt else None
@@ -401,7 +437,16 @@ class TimetableModel(QAbstractTableModel):
                     # 管理用インデックス stop_idx を使用してデータを特定
                     stop = next((s for s in train.get("stops", []) if s.get("stop_idx") == row_def["stop_idx"]), None)
 
-                    if stop: return stop.get("arrival_time" if row_def["type"] == "arr" else "departure_time", "")
+                    if stop:
+                        full_time = stop.get("arrival_time" if row_def["type"] == "arr" else "departure_time", "")
+                        if role == Qt.DisplayRole:
+                            # 非編集時は時と分だけを表示 (HH:MM)
+                            if full_time and len(full_time) == 8: # "HH:MM:SS" 形式を想定
+                                return full_time[:5] # "HH:MM" の部分を返す
+                            return full_time # 不正な形式または空の場合はそのまま返す
+                        elif role == Qt.EditRole:
+                            # 編集時は秒まで含めた完全な時刻を表示 (HH:MM:SS)
+                            return full_time
         return None
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
