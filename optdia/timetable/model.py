@@ -7,6 +7,7 @@ from project import OptDiaProject
 
 TrackIdRole = Qt.UserRole + 100
 
+# メインウィンドウの時刻表テーブルに紐付けられるモデル
 class TimetableModel(QAbstractTableModel):
     def __init__(self, project: OptDiaProject):
         super().__init__()
@@ -391,7 +392,7 @@ class TimetableModel(QAbstractTableModel):
         train = trains.get(train_id, {})
 
         if role == Qt.TextAlignmentRole:
-            if row in (1, 3):
+            if row < len(self.row_headers):
                 return Qt.AlignCenter
             return Qt.AlignRight | Qt.AlignVCenter
 
@@ -399,7 +400,7 @@ class TimetableModel(QAbstractTableModel):
             tt = self.project.train_types.get(train.get("train_type_id"))
             return QColor(tt.get("background_color", "#ffffff")) if tt else None
         if role == Qt.ForegroundRole:
-            if row == 3:
+            if row in (0, 3):
                 tt = self.project.train_types.get(train.get("train_type_id"))
                 if tt: return QColor(tt.get("main_color", "#333333"))
             if row >= len(self.row_headers):

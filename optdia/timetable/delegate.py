@@ -19,8 +19,8 @@ class TrainTypePicker(QDialog):
         self.list_widget.setStyleSheet("border: 1px solid #dddddd;")
         self.list_widget.setItemDelegate(HtmlDelegate(self))
 
-        # 「設定なし」アイテムの追加
-        none_item = QListWidgetItem("<font color='#888888'>設定なし</font>")
+        # 「設定しない」アイテムの追加
+        none_item = QListWidgetItem("<font color='#888888'>設定しない</font>")
         none_item.setData(Qt.UserRole, None)
         self.list_widget.addItem(none_item)
 
@@ -59,8 +59,8 @@ class TrackPicker(QDialog):
         self.list_widget = QListWidget(self)
         self.list_widget.setStyleSheet("border: 1px solid #dddddd;")
         
-        # 「設定なし」アイテムの追加
-        none_item = QListWidgetItem("設定なし")
+        # 「設定しない」アイテムの追加
+        none_item = QListWidgetItem("設定しない")
         none_item.setData(Qt.UserRole, None)
         self.list_widget.addItem(none_item)
         if current_track_id is None:
@@ -86,6 +86,7 @@ class TrackPicker(QDialog):
         self.selected_id = item.data(Qt.UserRole)
         self.accept()
 
+# メインウィンドウの時刻表テーブルで使用するデリゲート
 class TimetableDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index):
         row, model = index.row(), index.model()
@@ -136,7 +137,7 @@ class TimetableDelegate(QStyledItemDelegate):
             # 時刻テキストの描画範囲を右へオフセット
             text_option.rect.setLeft(option.rect.left() + track_box_width)
 
-        if row in (1, 3):
+        if row < num_headers:
             self.initStyleOption(text_option, index)
             style = text_option.widget.style() if text_option.widget else QApplication.style()
             text_option.text = ""
@@ -144,10 +145,11 @@ class TimetableDelegate(QStyledItemDelegate):
             text = index.data(Qt.DisplayRole)
             color = index.data(Qt.ForegroundRole)
             if not isinstance(color, QColor): color = text_option.palette.text().color()
+            alignment = index.data(Qt.TextAlignmentRole) or Qt.AlignCenter
             painter.save()
             painter.setPen(color)
             painter.setFont(text_option.font)
-            painter.drawText(text_option.rect, Qt.AlignCenter, text)
+            painter.drawText(text_option.rect, alignment, text)
             painter.restore()
         else:
             super().paint(painter, text_option, index)

@@ -3,6 +3,7 @@ from PySide6.QtCore import Qt, QRect, QModelIndex
 from PySide6.QtGui import QColor, QPainter, QFont, QFontMetrics
 from PySide6.QtWidgets import QHeaderView, QStyleOptionHeader, QStyle, QTableView
 
+# 時刻表テーブルの垂直ヘッダーのビュー
 class TimetableVerticalHeader(QHeaderView):
     def __init__(self, parent=None):
         super().__init__(Qt.Vertical, parent)
@@ -20,7 +21,17 @@ class TimetableVerticalHeader(QHeaderView):
         option_header.section = logicalIndex
         option_header.orientation = self.orientation()
         option_header.text = ""
-        self.style().drawControl(QStyle.CE_Header, option_header, painter, self)
+
+        # フォーカスされている（カレントセルがある）行の背景色を #cccccc にする
+        view = self.parent()
+        is_current = view and view.currentIndex().isValid() and view.currentIndex().row() == logicalIndex
+        bg_color = QColor("#eeeeee") if is_current else option_header.palette.button().color()
+
+        # 標準のヘッダー描画(CE_Header)を使うと上下に線が出るため、背景と右側の境界線を個別に描画する
+        # これにより上下の枠線が非表示になる
+        painter.fillRect(rect, bg_color)
+        painter.setPen(QColor("#dddddd"))
+        painter.drawLine(rect.right(), rect.top(), rect.right(), rect.bottom())
 
         is_station_row = logicalIndex >= len(model.row_headers)
         if is_station_row:
@@ -79,7 +90,13 @@ class TimetableVerticalHeader(QHeaderView):
             painter.drawText(text_draw_rect, text_alignment, display_text)
         painter.restore()
 
+# メインウィンドウの時刻表テーブルのビュー
 class TimetableView(QTableView):
+    def setModel(self, model):
+        super().setModel(model)
+        # セルの選択（カレント）状態が変わったときに垂直ヘッダーを再描画して背景色を更新する
+        self.selectionModel().currentChanged.connect(lambda: self.verticalHeader().update())
+
     def move_to_next_cell_and_edit(self, row=None, col=None):
         model = self.model()
         if row is None or col is None:
