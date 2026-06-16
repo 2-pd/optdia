@@ -96,6 +96,19 @@ class TimetableDelegate(QStyledItemDelegate):
         draw_track_box = False
         short_track_number = ""
         track_box_width = 15
+        
+        # フッター行（連続する列車）の判定
+        num_stations = len(model.station_rows) if hasattr(model, 'station_rows') else 0
+        footer_row_idx = num_headers + num_stations
+        
+        if row == footer_row_idx:
+            # セル内のボタンは TimetableView で setIndexWidget により配置されるため、
+            # デリゲートでは境界線のみ描画する
+            painter.save()
+            painter.setPen(QColor("#dddddd"))
+            painter.drawLine(option.rect.right(), option.rect.top(), option.rect.right(), option.rect.bottom())
+            painter.restore()
+            return
 
         if row >= num_headers:
             row_idx = row - num_headers
@@ -155,16 +168,26 @@ class TimetableDelegate(QStyledItemDelegate):
             super().paint(painter, text_option, index)
 
         painter.save()
-        painter.setPen(QColor("#d0d0d0"))
+        painter.setPen(QColor("#dddddd"))
         rect = option.rect
         painter.drawLine(rect.right(), rect.top(), rect.right(), rect.bottom())
-        if row < num_headers:
+        # 下部の枠線を描画
+        if row == num_headers - 1 or row == footer_row_idx - 1:
+            painter.setPen(QColor("#999999")) # 境界（行き先の下、または最後の駅の下）を少し濃い色で強調
+            painter.drawLine(rect.left(), rect.bottom(), rect.right(), rect.bottom())
+        elif row < num_headers:
             painter.drawLine(rect.left(), rect.bottom(), rect.right(), rect.bottom())
         painter.restore()
 
     def sizeHint(self, option, index):
         size = super().sizeHint(option, index)
         if index.row() in (1, 3): size.setHeight(max(size.height(), 32))
+        
+        model = index.model()
+        num_headers = len(model.row_headers) if hasattr(model, 'row_headers') else 0
+        num_stations = len(model.station_rows) if hasattr(model, 'station_rows') else 0
+        if index.row() == num_headers + num_stations:
+            size.setHeight(size.height() * 3)
         return size
 
     def editorEvent(self, event, model, option, index):

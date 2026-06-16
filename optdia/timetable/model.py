@@ -243,6 +243,12 @@ class TimetableModel(QAbstractTableModel):
 
     def flags(self, index):
         if not index.isValid(): return Qt.ItemIsEnabled
+        
+        # フッター行（ボタン行）はテキスト編集を無効にする
+        num_rows_before_footer = len(self.row_headers) + len(self.station_rows)
+        if index.row() == num_rows_before_footer:
+            return Qt.ItemIsEnabled | Qt.ItemIsSelectable
+
         return Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable
 
     def setData(self, index, value, role=Qt.EditRole):
@@ -373,7 +379,7 @@ class TimetableModel(QAbstractTableModel):
         self.dataChanged.emit(index, index, [Qt.EditRole, Qt.DisplayRole])
 
     def rowCount(self, parent=QModelIndex()):
-        return len(self.row_headers) + len(self.station_rows)
+        return len(self.row_headers) + len(self.station_rows) + 1
 
     def columnCount(self, parent=QModelIndex()):
         return len(self.train_ids)
@@ -392,6 +398,10 @@ class TimetableModel(QAbstractTableModel):
         train = trains.get(train_id, {})
 
         if role == Qt.TextAlignmentRole:
+            # フッター行（ボタン行）は中央揃え
+            num_rows_before_footer = len(self.row_headers) + len(self.station_rows)
+            if row == num_rows_before_footer:
+                return Qt.AlignCenter
             if row < len(self.row_headers):
                 return Qt.AlignCenter
             return Qt.AlignRight | Qt.AlignVCenter
@@ -448,6 +458,12 @@ class TimetableModel(QAbstractTableModel):
                         elif role == Qt.EditRole:
                             # 編集時は秒まで含めた完全な時刻を表示 (HH:MM:SS)
                             return full_time
+        
+        if role == Qt.DisplayRole:
+            # フッター行のセルにはデータは返さない（デリゲートでボタンを描画するため）
+            num_rows_before_footer = len(self.row_headers) + len(self.station_rows)
+            if row == num_rows_before_footer:
+                return None
         return None
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
@@ -456,8 +472,11 @@ class TimetableModel(QAbstractTableModel):
                 if 0 <= section < len(self.row_headers): return self.row_headers[section]
                 row_idx = section - len(self.row_headers)
                 if 0 <= row_idx < len(self.station_rows): return self.station_rows[row_idx]["name"]
+                if section == len(self.row_headers) + len(self.station_rows): return "連続する列車"
             elif role == Qt.TextAlignmentRole:
-                return Qt.AlignCenter if 0 <= section < len(self.row_headers) else Qt.AlignRight | Qt.AlignVCenter
+                if 0 <= section < len(self.row_headers): return Qt.AlignCenter
+                if section == len(self.row_headers) + len(self.station_rows): return Qt.AlignCenter
+                return Qt.AlignRight | Qt.AlignVCenter
         return None
 
     def _get_next_editable_index(self, current_index: QModelIndex) -> QModelIndex:

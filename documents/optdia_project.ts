@@ -92,7 +92,7 @@ interface optdia_line_station {
 interface optdia_route {
     route_id: string; // 運行系統ID
     route_name: string; // 運行系統名
-    line_segments: optdia_line_segment[]; // 路線の部分区間(下記)を下り列車の通過順に配列で
+    line_segments: optdia_line_segment[]; // 路線の部分区間(下記)を下り列車の経由順に配列で
     trains_by_diagram: optdia_route_diagram_dict; // ダイヤ別の上下列車情報(下記)
 }
 
@@ -149,7 +149,7 @@ interface optdia_train {
     named_train_number: number | null; // 列車の号数
     car_count: null | number; // 両数(nullの場合は担当運用の所定両数の合計値が指定されたものとみなす)
     destination: null | string; // 行き先表示(nullの場合は終着駅の駅名が指定されたものとみなす)
-    subsequent_trains: optdia_subsequent_train_identifier[]; // 連続する列車の識別情報(0〜2件)
+    subsequent_trains: optdia_subsequent_train_identifier[]; // 連続する列車の識別情報(下記)
     note: string; // 備考
     stops: optdia_train_stop[]; // 経由駅情報(下記)を経由順に配列で
 }

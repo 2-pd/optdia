@@ -1,7 +1,7 @@
 import re
 from PySide6.QtCore import Qt, QRect, QModelIndex
 from PySide6.QtGui import QColor, QPainter, QFont, QFontMetrics
-from PySide6.QtWidgets import QHeaderView, QStyleOptionHeader, QStyle, QTableView
+from PySide6.QtWidgets import QHeaderView, QStyleOptionHeader, QStyle, QTableView, QPushButton, QSizePolicy, QVBoxLayout, QLabel
 
 # 時刻表テーブルの垂直ヘッダーのビュー
 class TimetableVerticalHeader(QHeaderView):
@@ -86,6 +86,9 @@ class TimetableVerticalHeader(QHeaderView):
                                          Qt.AlignRight | Qt.AlignVCenter, suffix_part)
                 else:
                     painter.drawText(text_draw_rect, text_alignment, display_text)
+            else:
+                # 駅行以外の行（フッター行など）
+                painter.drawText(text_draw_rect, text_alignment, display_text)
         else:
             painter.drawText(text_draw_rect, text_alignment, display_text)
         painter.restore()
@@ -96,6 +99,100 @@ class TimetableView(QTableView):
         super().setModel(model)
         # セルの選択（カレント）状態が変わったときに垂直ヘッダーを再描画して背景色を更新する
         self.selectionModel().currentChanged.connect(lambda: self.verticalHeader().update())
+
+        # モデルのリセット時や行・列の変更時にボタンを再配置する
+        model.modelReset.connect(self._update_footer_widgets)
+        model.columnsInserted.connect(self._update_footer_widgets)
+        model.columnsRemoved.connect(self._update_footer_widgets)
+        model.rowsInserted.connect(self._update_footer_widgets)
+        model.rowsRemoved.connect(self._update_footer_widgets)
+        model.dataChanged.connect(self._update_footer_widgets)
+        
+        self._update_footer_widgets()
+
+    def _update_footer_widgets(self):
+        model = self.model()
+        if not model or not hasattr(model, 'row_headers') or not hasattr(model, 'station_rows'):
+            return
+            
+        footer_row = len(model.row_headers) + len(model.station_rows)
+        if footer_row >= model.rowCount():
+            return
+
+        route = model.project.routes.get(model.route_id)
+        if not route: return
+        tbd = route.get("trains_by_diagram", {}).get(model.diagram_id, {})
+        train_key = "inbound_trains" if model.direction == "inbound" else "outbound_trains"
+        trains = tbd.get(train_key, {})
+
+        for col in range(model.columnCount()):
+            index = model.index(footer_row, col)
+            if not index.isValid(): continue
+
+            btn = self.indexWidget(index)
+            if not btn:
+                btn = QPushButton()
+                btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+                btn.setFocusPolicy(Qt.NoFocus)
+                # 枠線を非表示にし、背景を透明に設定
+                btn.setStyleSheet("QPushButton { border: none; background: transparent; margin: 0px; }")
+                
+                # 複数色のテキスト（HTML）を表示するために内部にラベルを配置
+                layout = QVBoxLayout(btn)
+                layout.setContentsMargins(0, 0, 0, 0)
+                layout.setSpacing(0)
+                label = QLabel()
+                label.setAlignment(Qt.AlignCenter)
+                label.setAttribute(Qt.WA_TransparentForMouseEvents) # クリックを下のボタンに透過させる
+                layout.addWidget(label)
+                
+                btn.clicked.connect(lambda _, c=col: self._on_footer_button_clicked(c))
+                self.setIndexWidget(index, btn)
+
+            label = btn.findChild(QLabel)
+
+            # 連続する列車の列車番号を取得して表示（最大3つ）
+            if col < len(model.train_ids):
+                train_id = model.train_ids[col]
+                train_data = trains.get(train_id, {})
+                subsequent_list = train_data.get("subsequent_trains") or []
+                
+                html_parts = []
+                for item in subsequent_list[:3]:
+                    s_rid, s_dir, s_tid = item.get("route_id"), item.get("direction"), item.get("train_id")
+                    if s_tid:
+                        s_route = model.project.routes.get(s_rid)
+                        if s_route:
+                            s_tbd = s_route.get("trains_by_diagram", {}).get(model.diagram_id, {})
+                            s_train_key = "inbound_trains" if s_dir == "inbound" else "outbound_trains"
+                            s_train = s_tbd.get(s_train_key, {}).get(s_tid)
+                            if s_train:
+                                num = s_train.get("train_number") or "(番号なし)"
+                                # 種別の基本色を取得
+                                tt_id = s_train.get("train_type_id")
+                                tt = model.project.train_types.get(tt_id)
+                                color = tt.get("main_color", "#333333") if tt else "#333333"
+                                html_parts.append(f"<div style='color: {color};'>{num}</div>")
+                
+                if label:
+                    label.setText("".join(html_parts))
+
+    def _on_footer_button_clicked(self, col):
+        from .dialogs import SubsequentTrainDialog
+        model = self.model()
+        if not model.route_id or not model.diagram_id:
+            return
+            
+        route = model.project.routes.get(model.route_id)
+        tbd = route.get("trains_by_diagram", {}).get(model.diagram_id, {})
+        train_key = "inbound_trains" if model.direction == "inbound" else "outbound_trains"
+        train_id = model.train_ids[col]
+        train_data = tbd.get(train_key, {}).get(train_id)
+        
+        if train_data:
+            dialog = SubsequentTrainDialog(self, model.project, train_data, model.diagram_id,
+                                          model.route_id, model.direction)
+            dialog.exec()
 
     def move_to_next_cell_and_edit(self, row=None, col=None):
         model = self.model()
