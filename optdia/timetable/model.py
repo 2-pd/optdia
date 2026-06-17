@@ -40,13 +40,13 @@ class TimetableModel(QAbstractTableModel):
                 stations.append(line_station_ids[i])
         return stations
 
-    def _format_time(self, text: str) -> str:
+    def _format_time(self, text: str):
         if not text:
-            return ""
+            return None
         table = str.maketrans("０１２３４５６７８９：", "0123456789:")
         text = text.translate(table)
         if not re.match(r"^[0-9:]+$", text):
-            return ""
+            return None
         colon_count = text.count(':')
         hh, mm, ss = 0, 0, 0
         try:
@@ -55,23 +55,23 @@ class TimetableModel(QAbstractTableModel):
                 if len(s) <= 4:
                     s += "00"
                 s = s.zfill(6)
-                if len(s) != 6: return ""
+                if len(s) != 6: return None
                 hh, mm, ss = int(s[0:2]), int(s[2:4]), int(s[4:6])
             elif colon_count == 1:
                 parts = text.split(':')
-                if not parts[0] or not parts[1]: return ""
+                if not parts[0] or not parts[1]: return None
                 hh, mm, ss = int(parts[0]), int(parts[1]), 0
             elif colon_count == 2:
                 parts = text.split(':')
-                if not parts[0] or not parts[1] or not parts[2]: return ""
+                if not parts[0] or not parts[1] or not parts[2]: return None
                 hh, mm, ss = int(parts[0]), int(parts[1]), int(parts[2])
             else:
-                return ""
+                return None
         except ValueError:
-            return ""
+            return None
         if 0 <= hh <= 99 and 0 <= mm < 60 and 0 <= ss < 60:
             return f"{hh:02d}:{mm:02d}:{ss:02d}"
-        return ""
+        return None
 
     def _time_to_seconds(self, text: str):
         if not text: return None
@@ -131,25 +131,15 @@ class TimetableModel(QAbstractTableModel):
                         is_current_segment_start = (i == 0)
                         is_current_segment_end = (i == len(s_ids) - 1)
 
-                        # 駅ID、路線ID、方向の組み合わせが直前の駅と異なる場合に新しい経由駅として定義
-                        if not self.full_stop_configs or (
-                            self.full_stop_configs[-1]["station_id"] != sid or
-                            self.full_stop_configs[-1]["line_id"] != line_id or
-                            self.full_stop_configs[-1]["direction"] != seg_line_direction
-                        ):
-                            self.full_stop_sequence.append(sid)
-                            self.full_stop_configs.append({
-                                "station_id": sid, 
-                                "line_id": line_id, 
-                                "direction": seg_line_direction, 
-                                "track_id": track_id,
-                                "is_segment_start": is_current_segment_start,
-                                "is_segment_end": is_current_segment_end
-                            })
-                        else:
-                            # すでに存在する経由駅設定とマージされる場合（隣接セグメントの接続点）
-                            # セグメントの終端フラグを更新する（マージされたので、前のセグメントの終端ではなくなる）
-                            self.full_stop_configs[-1]["is_segment_end"] = is_current_segment_end
+                        self.full_stop_sequence.append(sid)
+                        self.full_stop_configs.append({
+                            "station_id": sid, 
+                            "line_id": line_id, 
+                            "direction": seg_line_direction, 
+                            "track_id": track_id,
+                            "is_segment_start": is_current_segment_start,
+                            "is_segment_end": is_current_segment_end
+                        })
 
                         stop_idx = len(self.full_stop_sequence) - 1
                         s_data = self.project.stations.get(sid, {})
@@ -197,32 +187,45 @@ class TimetableModel(QAbstractTableModel):
         if not route:
             return
         tbd = route.get("trains_by_diagram", {}).get(self.diagram_id, {})
-        train_keys = ["inbound_trains", "outbound_trains"]
-        for key in train_keys:
-            trains = tbd.get(key, {})
-            for train in trains.values():
-                self._normalize_train_stops(train)
+        # 現在の方面に該当する列車のみを処理する
+        train_key = "inbound_trains" if self.direction == "inbound" else "outbound_trains"
+        trains = tbd.get(train_key, {})
+        for train in trains.values():
+            self._normalize_train_stops(train)
 
     def _normalize_train_stops(self, train):
         """個別の列車の stops リストを現在の full_stop_configs に基づいて再構成（マージ・分割）する"""
         if not train.get("stops"):
             return
 
+        # 空文字列を None に統一する（誤った仕様で作成されたデータへの対策）
+        for s in train["stops"]:
+            if s.get("arrival_time") == "": s["arrival_time"] = None
+            if s.get("departure_time") == "": s["departure_time"] = None
+
         # 保存時に消去された stop_idx を、現在の駅順 (full_stop_configs) に基づいて復元する
         # JSONから読み込まれた直後は stop_idx が無いため、駅ID・路線ID・方向の並び順から推測する
-        curr_cfg_idx = 0
+        # 一時的に stop_idx が割り当てられた stops を格納するリスト
+        stops_with_idx = []
+
         for s in train["stops"]:
             sid, lid, ldir = s["station_id"], s["line_id"], s["direction"]
-            # 一致する設定を timetable の並び順から探す
-            for i in range(curr_cfg_idx, len(self.full_stop_configs)):
+            # 一致する設定を full_stop_configs 全体から探す（順序に依存しないように）
+            for i in range(len(self.full_stop_configs)):
                 cfg = self.full_stop_configs[i]
-                if cfg["station_id"] == sid and cfg["line_id"] == lid and cfg["direction"] == ldir:
+                if (cfg["station_id"] == sid and cfg["line_id"] == lid and cfg["direction"] == ldir and
+                    (not cfg.get("is_segment_start") or s.get("arrival_time") is None) and
+                    (not cfg.get("is_segment_end") or s.get("departure_time") is None)):
+                    # 境界駅の整合性を保ちつつ、中間駅での欠損（ユーザーによる削除）を許容する
+
                     s["stop_idx"] = i
-                    curr_cfg_idx = i + 1
+                    stops_with_idx.append(s)
                     break
 
         # stop_idx に基づいてソート（これでテーブル上の並び順と一致する）
         train["stops"].sort(key=lambda x: x.get("stop_idx", 0))
+        # stop_idx が割り当てられなかった stops はここで除外される
+        train["stops"] = sorted(stops_with_idx, key=lambda x: x["stop_idx"])
 
         # セグメントの境界フラグに基づいて None 値を補正
         for s in train["stops"]:
@@ -234,12 +237,6 @@ class TimetableModel(QAbstractTableModel):
                     s["arrival_time"] = None
                 if config.get("is_segment_end"):
                     s["departure_time"] = None
-                
-                # 空文字（入力中）かつ None でない箇所を補完
-                if s.get("arrival_time") == "" and s.get("departure_time"):
-                    s["arrival_time"] = s["departure_time"]
-                if s.get("departure_time") == "" and s.get("arrival_time"):
-                    s["departure_time"] = s["arrival_time"]
 
     def flags(self, index):
         if not index.isValid(): return Qt.ItemIsEnabled
@@ -306,8 +303,8 @@ class TimetableModel(QAbstractTableModel):
                     if not stop:
                         # 時刻未入力の状態で番線だけ選んだ場合、ストップデータを新規作成
                         config_for_stop = self.full_stop_configs[stop_idx]
-                        initial_arr = None if config_for_stop.get("is_segment_start", False) else ""
-                        initial_dep = None if config_for_stop.get("is_segment_end", False) else ""
+                        initial_arr = None
+                        initial_dep = None
                         stop = {
                             "station_id": sid, "line_id": lid, "direction": ldir,
                             "track_id": value,
@@ -332,13 +329,13 @@ class TimetableModel(QAbstractTableModel):
 
                 if not stop:
                     # 時刻が入力されていない場合は、新しいstopを作成しない
-                    if not formatted_value:
+                    if formatted_value is None:
                         return False
 
                     # 運行系統内の路線ごとの始点駅であれば到着時刻をNoneに、終点駅であれば発車時刻をNoneに設定
                     config_for_stop = self.full_stop_configs[stop_idx]
-                    initial_arrival_time = None if config_for_stop.get("is_segment_start", False) else ""
-                    initial_departure_time = None if config_for_stop.get("is_segment_end", False) else ""
+                    initial_arrival_time = None
+                    initial_departure_time = None
 
                     stop = {
                         "station_id": sid,
@@ -355,16 +352,23 @@ class TimetableModel(QAbstractTableModel):
                 other_key = "departure_time" if row_def["type"] == "arr" else "arrival_time"
                 if stop.get(time_key) != formatted_value:
                     stop[time_key] = formatted_value
-                    # ユーザーが時刻を入力し、かつ、もう一方の時刻が空文字列の場合のみ自動補完する
-                    # None（運行系統の始点・終点）の場合は上書きしない
-                    if formatted_value and stop.get(other_key) == "":
-                        stop[other_key] = formatted_value
+                    # ユーザーが時刻を入力し、かつ、もう一方の時刻が未入力（None）の場合のみ自動補完する
+                    # 運行系統内の各路線の始点・終点での「着のみ」「発のみ」の定義を壊さないように判定
+                    if formatted_value is not None and stop.get(other_key) is None:
+                        config_for_stop = self.full_stop_configs[stop_idx]
+                        if (row_def["type"] == "arr" and not config_for_stop.get("is_segment_end")) or \
+                           (row_def["type"] == "dep" and not config_for_stop.get("is_segment_start")):
+                            stop[other_key] = formatted_value
+
+                    # 発時刻が編集（入力または削除）された場合、中間駅かつ着時刻非表示なら着時刻も連動させる
+                    if row_def["type"] == "dep":
+                        station_data = self.project.stations.get(config["station_id"], {})
+                        if not config.get("is_segment_start") and not config.get("is_segment_end") and \
+                           not station_data.get("show_arrival_time"):
+                            stop["arrival_time"] = formatted_value
+
                     stop["track_id"] = config["track_id"]
                     changed = True
-                    # 到着時刻と発車時刻が両方ともNoneまたは空文字列になった場合、stopを削除する
-                    if (stop.get("arrival_time") is None or stop.get("arrival_time") == "") and \
-                       (stop.get("departure_time") is None or stop.get("departure_time") == ""):
-                        train["stops"].remove(stop)
         if changed:
             self._trigger_update(col, trains, index)
             return True

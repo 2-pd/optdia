@@ -69,13 +69,13 @@ class OptDiaProject:
         # 運用 (operations) は TS 上で既に連想配列として定義されているためそのまま保持
         self.operations = entities.get("operations", {})
 
-        # 読込時にセグメント境界での分割処理を行う
+        # 読込時に部分区間境界での分割処理を行い、発着時刻データが2つの部分区間に跨っている可能性を排除する
         self._split_all_boundary_stops()
 
     def _split_all_boundary_stops(self):
-        """全路線の全列車に対し、セグメント境界駅での発着時刻分割を行う"""
+        """全路線の全列車に対し、部分区間境界駅での発着時刻分割を行う"""
         for route in self.routes.values():
-            # セグメント境界駅（路線の接続点）を特定
+            # 部分区間境界駅（路線の接続点）を特定
             segments = route.get("line_segments", [])
             boundary_stations = set()
             for i in range(len(segments) - 1):
@@ -94,22 +94,28 @@ class OptDiaProject:
                                 
                                 # 着時刻のみのデータ
                                 s_arr = s.copy()
-                                s_arr["departure_time"] = "" # 空文字で保持
+                                s_arr["departure_time"] = None
                                 new_stops.append(s_arr)
                                 
                                 # 発時刻のみのデータ
                                 s_dep = s.copy()
-                                s_dep["arrival_time"] = ""
+                                s_dep["arrival_time"] = None
                                 new_stops.append(s_dep)
                             else:
                                 new_stops.append(s)
                         train["stops"] = new_stops
 
-    def _merge_train_stops_for_save(self, stops):
-        """保存用に、同一駅・路線の連続する着・発データを統合する"""
+    def _normalize_train_stops_for_save(self, stops):
+        """保存用に、不要なデータの削除と、同一駅・路線の連続するデータの統合を行う"""
         if not stops:
             return []
         
+        # 着時刻と発時刻が共に None のデータを削除
+        stops = [
+            s for s in stops
+            if not (s.get("arrival_time") is None and s.get("departure_time") is None)
+        ]
+
         merged_stops = []
         i = 0
         while i < len(stops):
@@ -153,8 +159,8 @@ class OptDiaProject:
         """保存用に列車データから一時的な管理用フラグやインデックスを削除する"""
         clean_train = {k: v for k, v in train_data.items() if k != "to_be_saved"}
         if "stops" in clean_train:
-            # 保存直前に連続する着発データをマージする
-            stops = self._merge_train_stops_for_save(clean_train["stops"])
+            # 保存直前に、不要なデータの削除と、同一駅・路線の連続するデータの統合を行う
+            stops = self._normalize_train_stops_for_save(clean_train["stops"])
             clean_train["stops"] = [
                 {sk: sv for sk, sv in stop.items() if sk != "stop_idx"}
                 for stop in stops

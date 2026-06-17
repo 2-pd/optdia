@@ -100,6 +100,15 @@ class TimetableDelegate(QStyledItemDelegate):
         # フッター行（連続する列車）の判定
         num_stations = len(model.station_rows) if hasattr(model, 'station_rows') else 0
         footer_row_idx = num_headers + num_stations
+
+        # 未入力セルの記号判定
+        placeholder_symbol = None
+        if row >= num_headers and row < footer_row_idx:
+            display_text = index.data(Qt.DisplayRole)
+            if not display_text:
+                # フォーカスや選択がない場合のみプレースホルダーを表示
+                if not (option.state & (QStyle.State_HasFocus | QStyle.State_Selected)):
+                    placeholder_symbol = self._get_placeholder_symbol(index)
         
         if row == footer_row_idx:
             # セル内のボタンは TimetableView で setIndexWidget により配置されるため、
@@ -134,6 +143,7 @@ class TimetableDelegate(QStyledItemDelegate):
 
         # 描画用オプションの作成（番線ボックスがある場合は右にずらす）
         text_option = QStyleOptionViewItem(option)
+        self.initStyleOption(text_option, index)
         if draw_track_box:
             # 番線ボックスの描画（編集時のボタンと同じ外観）
             track_rect = QRect(option.rect.left(), option.rect.top(), track_box_width, option.rect.height())
@@ -151,7 +161,6 @@ class TimetableDelegate(QStyledItemDelegate):
             text_option.rect.setLeft(option.rect.left() + track_box_width)
 
         if row < num_headers:
-            self.initStyleOption(text_option, index)
             style = text_option.widget.style() if text_option.widget else QApplication.style()
             text_option.text = ""
             style.drawControl(QStyle.CE_ItemViewItem, text_option, painter)
@@ -165,7 +174,27 @@ class TimetableDelegate(QStyledItemDelegate):
             painter.drawText(text_option.rect, alignment, text)
             painter.restore()
         else:
-            super().paint(painter, text_option, index)
+            # セルの背景（選択ハイライトなど）を描画
+            style = text_option.widget.style() if text_option.widget else QApplication.style()
+            text_option.text = "" # テキストは後で手動描画する
+            style.drawControl(QStyle.CE_ItemViewItem, text_option, painter)
+
+            painter.save()
+            if placeholder_symbol:
+                painter.setPen(Qt.gray)
+                alignment = Qt.AlignCenter
+                # 番線ボックスの有無にかかわらず、セル本体の中央に描画する
+                painter.drawText(option.rect, alignment, placeholder_symbol)
+            else:
+                text = index.data(Qt.DisplayRole)
+                if text:
+                    color = index.data(Qt.ForegroundRole)
+                    if not isinstance(color, QColor): color = text_option.palette.text().color()
+                    alignment = index.data(Qt.TextAlignmentRole) or (Qt.AlignRight | Qt.AlignVCenter)
+                    painter.setPen(color)
+                    painter.setFont(text_option.font)
+                    painter.drawText(text_option.rect, alignment, text)
+            painter.restore()
 
         painter.save()
         painter.setPen(QColor("#dddddd"))
@@ -283,3 +312,47 @@ class TimetableDelegate(QStyledItemDelegate):
             QTimer.singleShot(0, lambda: view.move_to_next_cell_and_edit(r, c))
             return True
         return super().eventFilter(obj, event)
+
+    def _get_placeholder_symbol(self, index):
+        model = index.model()
+        row, col = index.row(), index.column()
+        num_headers = len(model.row_headers)
+        row_idx = row - num_headers
+        if not (0 <= row_idx < len(model.station_rows)):
+            return None
+        
+        row_def = model.station_rows[row_idx]
+        stop_idx = row_def["stop_idx"]
+        
+        train_id = model.train_ids[col]
+        route = model.project.routes.get(model.route_id)
+        if not route: return None
+        tbd = route.get("trains_by_diagram", {}).get(model.diagram_id, {})
+        train_key = "inbound_trains" if model.direction == "inbound" else "outbound_trains"
+        train = tbd.get(train_key, {}).get(train_id)
+        if not train: return None
+        
+        stops = train.get("stops", [])
+        # 時刻が入っている(未入力でない)stop_idxの集合を取得
+        timed_indices = {s["stop_idx"] for s in stops if s.get("arrival_time") or s.get("departure_time")}
+        
+        if not timed_indices:
+            return "・・"
+            
+        first_idx = min(timed_indices)
+        last_idx = max(timed_indices)
+        
+        if stop_idx < first_idx or stop_idx > last_idx:
+            return "・・"
+            
+        # 始発から終着の間にある駅。セグメントの範囲を特定する
+        seg_start = stop_idx
+        while seg_start > 0 and not model.full_stop_configs[seg_start].get("is_segment_start"):
+            seg_start -= 1
+        seg_end = stop_idx
+        while seg_end < len(model.full_stop_configs) - 1 and not model.full_stop_configs[seg_end].get("is_segment_end"):
+            seg_end += 1
+            
+        # セグメント内のいずれかの駅に時刻が入っているか
+        any_in_segment = any(seg_start <= idx <= seg_end for idx in timed_indices)
+        return "ﾚ" if any_in_segment else "| |"
