@@ -83,7 +83,7 @@ class SelectSegmentDialog(QDialog):
         self.setWindowTitle("路線と区間の選択")
         self.existing_segments = existing_segments if existing_segments is not None else []
         self.editing_segment_index = editing_segment_index
-        self.setFixedSize(480, 240)
+        self.setFixedSize(480, 320)
 
         layout = QVBoxLayout(self)
         form_layout = QFormLayout()
@@ -121,6 +121,14 @@ class SelectSegmentDialog(QDialog):
         invert_container.addStretch()
         form_layout.addRow("", invert_container)
 
+        # 警告表示用ラベル
+        self.warning_label = QLabel("")
+        self.warning_label.setStyleSheet("color: orange;")
+        self.warning_label.setFixedHeight(50)
+        self.warning_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self.warning_label.setWordWrap(True)
+        form_layout.addRow(self.warning_label)
+
         layout.addLayout(form_layout)
 
         # 説明文
@@ -144,6 +152,8 @@ class SelectSegmentDialog(QDialog):
         self.cancel_button.clicked.connect(self.reject)
 
         self.line_combo.currentIndexChanged.connect(self._on_line_changed)
+        self.start_combo.currentIndexChanged.connect(self._validate_segment)
+        self.end_combo.currentIndexChanged.connect(self._validate_segment)
 
         # 初期値の設定
         if initial_line:
@@ -159,6 +169,8 @@ class SelectSegmentDialog(QDialog):
         if initial_end:
             idx = self.end_combo.findData(initial_end)
             if idx >= 0: self.end_combo.setCurrentIndex(idx)
+
+        self._validate_segment()
 
     def _on_line_changed(self):
         self.start_combo.clear()
@@ -181,6 +193,40 @@ class SelectSegmentDialog(QDialog):
         e_idx = self.end_combo.currentIndex()
         self.start_combo.setCurrentIndex(e_idx)
         self.end_combo.setCurrentIndex(s_idx)
+
+    def _validate_segment(self):
+        """現在選択されている区間が妥当かどうか（他区間の端点を途中に含まないか）をチェックし、警告を表示する"""
+        data = self.get_data()
+        line_id = data["line_id"]
+        start_sid = data["start_station"]
+        end_sid = data["end_station"]
+
+        if not line_id or not start_sid or not end_sid or start_sid == end_sid:
+            self.warning_label.clear()
+            return
+
+        # 他の部分区間の末端駅（始点・終点）を収集
+        all_other_endpoints = set()
+        for i, seg in enumerate(self.existing_segments):
+            if self.editing_segment_index is not None and i == self.editing_segment_index:
+                continue
+            all_other_endpoints.add(seg.get("start_station"))
+            all_other_endpoints.add(seg.get("end_station"))
+
+        # 現在選択中の区間の駅リストを取得
+        stations = self._get_stations_in_segment_ordered(line_id, start_sid, end_sid)
+        if len(stations) <= 2:
+            self.warning_label.clear()
+            return
+
+        # 途中駅の抽出（始点と終点を除く）
+        intermediate_stations = stations[1:-1]
+        has_endpoint_in_middle = any(sid in all_other_endpoints for sid in intermediate_stations)
+
+        if has_endpoint_in_middle:
+            self.warning_label.setText("選択中の区間の途中に他の区間の末端駅が含まれます。\n分岐駅が存在する場合はその駅で区間を分割してください。")
+        else:
+            self.warning_label.clear()
 
     def _get_stations_in_segment_ordered(self, line_id, start_station_id, end_station_id):
         """指定された路線の区間に含まれる駅のIDリストを順序通りに返す"""
@@ -479,7 +525,7 @@ class RouteEditorDialog(QDialog):
         lbl_preview.setStyleSheet("font-size: 14px; border: none;")
         self.station_preview_layout.addWidget(lbl_preview)
         
-        self.direction_label = QLabel("下り列車の通過順で表示中")
+        self.direction_label = QLabel("下り列車の経由順で表示中")
         self.direction_label.setStyleSheet("font-size: 12px; color: #888888; padding-top: 10px; padding-bottom: 20px;")
         self.station_preview_layout.addWidget(self.direction_label)
 
@@ -598,6 +644,12 @@ class RouteEditorDialog(QDialog):
 
         segments = route_data.get("line_segments", [])
         
+        # すべての部分区間の末端駅（始点・終点）を収集
+        all_endpoints = set()
+        for s in segments:
+            all_endpoints.add(s.get("start_station"))
+            all_endpoints.add(s.get("end_station"))
+
         for seg in segments:
             line_id = seg.get("line_id")
             # line_colorが取得できない場合はデフォルト色を設定
@@ -640,7 +692,10 @@ class RouteEditorDialog(QDialog):
                 
                 # 駅の表示スタイルを設定
                 station_data = self.project.stations.get(sid, {})
-                if station_data.get("is_signal_station", False):
+                if sid in all_endpoints and sid != start_sid and sid != end_sid:
+                    # 他区間の末端駅はオレンジ色
+                    station_label.setStyleSheet("color: orange;")
+                elif station_data.get("is_signal_station", False):
                     # 信号場は灰色
                     station_label.setStyleSheet("color: gray;")
                 elif station_data.get("is_major_station", False):
@@ -662,12 +717,18 @@ class RouteEditorDialog(QDialog):
         if not segments:
             self.direction_label.setText("表示する駅がありません\n路線の区間を追加してください")
         else:
-            self.direction_label.setText("下り列車の通過順で表示中")
+            self.direction_label.setText("下り列車の経由順で表示中")
     def _populate_segment_list(self, route_data: dict):
         """選択された系統に含まれる路線の部分区間リストを表示する"""
         self.segment_list_widget.clear()
         segments = route_data.get("line_segments") or []
         
+        # すべての部分区間の末端駅（始点・終点）を収集
+        all_endpoints = set()
+        for s in segments:
+            all_endpoints.add(s.get("start_station"))
+            all_endpoints.add(s.get("end_station"))
+
         for i, seg in enumerate(segments):
             item_widget = QWidget()
             item_layout = QHBoxLayout(item_widget) # 上下に10pxの余白を設ける
@@ -692,9 +753,24 @@ class RouteEditorDialog(QDialog):
             # 区間 (始点駅-終点駅)
             start_sid = seg.get("start_station")
             end_sid = seg.get("end_station")
-            start_name = self.project.stations.get(start_sid, {}).get("station_name", start_sid)
-            end_name = self.project.stations.get(end_sid, {}).get("station_name", end_sid)
-            segment_label = QLabel(f"{start_name} - {end_name}")
+
+            # 途中に他区間の末端駅が含まれているかチェック
+            stations_in_this_segment = self._get_stations_in_segment(line_id, start_sid, end_sid)
+            intermediate_stations = stations_in_this_segment[1:-1]
+            conflicting_sids = [sid for sid in intermediate_stations if sid in all_endpoints]
+
+            if conflicting_sids:
+                segment_label = QLabel("【!】分岐駅を途中に含む")
+                segment_label.setStyleSheet("color: orange;")
+
+                # 具体的な駅名をツールチップで表示
+                conflicting_names = [self.project.stations.get(sid, {}).get("station_name", sid) for sid in conflicting_sids]
+                segment_label.setToolTip("途中に含まれる他区間の末端駅:\n" + "\n".join(conflicting_names))
+            else:
+                start_name = self.project.stations.get(start_sid, {}).get("station_name", start_sid)
+                end_name = self.project.stations.get(end_sid, {}).get("station_name", end_sid)
+                segment_label = QLabel(f"{start_name} - {end_name}")
+
             segment_label.setAlignment(Qt.AlignCenter)
             item_layout.addWidget(segment_label, stretch=1)
             
@@ -723,6 +799,32 @@ class RouteEditorDialog(QDialog):
             self.segment_list_widget.addItem(list_item)
             self.segment_list_widget.setItemWidget(list_item, item_widget)
         self.segment_list_widget.update()
+
+    def _get_expected_route_sequence(self, segments, is_inbound):
+        """運行系統の定義から、期待される(路線ID, 駅ID)の並び順リストを生成する"""
+        route_stations = []
+        target_segments = segments[::-1] if is_inbound else segments
+        for s in target_segments:
+            s_stations = self._get_stations_in_segment(s["line_id"], s["start_station"], s["end_station"])
+            if is_inbound:
+                s_stations = s_stations[::-1]
+            for sid in s_stations:
+                route_stations.append((s["line_id"], sid))
+        return route_stations
+
+    def _get_segment_range_in_sequence(self, segments, index, is_inbound):
+        """特定の区間インデックスが、期待される駅シーケンス内のどの範囲(start, end)に相当するかを返す"""
+        # 各セグメントの駅数を計算
+        seg_lengths = [len(self._get_stations_in_segment(s["line_id"], s["start_station"], s["end_station"])) for s in segments]
+
+        if not is_inbound:
+            start_idx = sum(seg_lengths[:index])
+            end_idx = start_idx + seg_lengths[index] - 1
+        else:
+            # inboundは逆順(セグメントリストの末尾側から)にシーケンスが組まれる
+            start_idx = sum(seg_lengths[index+1:])
+            end_idx = start_idx + seg_lengths[index] - 1
+        return start_idx, end_idx
 
     def _on_segments_reordered(self, parent, start, end, destination, row):
         """路線の区間の並び替えをプロジェクトデータに反映する"""
@@ -847,18 +949,83 @@ class RouteEditorDialog(QDialog):
         if not selected: return
         route_id = selected[0].data(Qt.UserRole)
         route_data = self.project.routes.get(route_id)
-        dialog = SelectSegmentDialog(self, self.project, is_add=False, 
-                                     initial_line=segment_data.get("line_id"),
-                                     initial_start=segment_data.get("start_station"),
-                                     initial_end=segment_data.get("end_station"),
-                                     existing_segments=route_data.get("line_segments", []), editing_segment_index=index)
+
+        # 編集前の状態を記録
+        old_line_id = segment_data.get("line_id")
+        old_start = segment_data.get("start_station")
+        old_end = segment_data.get("end_station")
+        old_stations = self._get_stations_in_segment(old_line_id, old_start, old_end)
+
+        dialog = SelectSegmentDialog(
+            self, self.project, is_add=False, 
+            initial_line=old_line_id,
+            initial_start=old_start,
+            initial_end=old_end,
+            existing_segments=route_data.get("line_segments", []), 
+            editing_segment_index=index
+        )
+
         if dialog.exec() == QDialog.Accepted:
             selected = self.route_list_widget.selectedItems()
             if not selected: return
             route_id = selected[0].data(Qt.UserRole)
             route_data = self.project.routes.get(route_id)
             
-            route_data["line_segments"][index] = dialog.get_data()
+            new_data = dialog.get_data()
+            new_line_id = new_data["line_id"]
+            new_start = new_data["start_station"]
+            new_end = new_data["end_station"]
+            new_stations = self._get_stations_in_segment(new_line_id, new_start, new_end)
+
+            # 全ダイヤ・全列車のデータを走査して更新
+            tbd = route_data.get("trains_by_diagram", {})
+            segments = route_data.get("line_segments", [])
+
+            for diag_data in tbd.values():
+                for train_key in ["inbound_trains", "outbound_trains"]:
+                    is_inbound = (train_key == "inbound_trains")
+                    
+                    # 期待されるシーケンスと、編集対象区間のインデックス範囲を取得
+                    route_stations = self._get_expected_route_sequence(segments, is_inbound)
+                    r_start_idx, r_end_idx = self._get_segment_range_in_sequence(segments, index, is_inbound)
+
+                    # 走行方向に応じた新しい区間の末端（起点・終点）を特定
+                    seg_start = new_end if is_inbound else new_start
+                    seg_end = new_start if is_inbound else new_end
+                    
+                    for train in diag_data.get(train_key, {}).values():
+                        stops = train.get("stops", [])
+                        new_stops = []
+                        
+                        r_ptr = 0
+                        for stop in stops:
+                            matched_r_idx = -1
+                            temp_r_ptr = r_ptr
+                            while temp_r_ptr < len(route_stations):
+                                if (stop.get("line_id") == route_stations[temp_r_ptr][0] and 
+                                    stop.get("station_id") == route_stations[temp_r_ptr][1]):
+                                    matched_r_idx = temp_r_ptr
+                                    r_ptr = temp_r_ptr + 1
+                                    break
+                                temp_r_ptr += 1
+
+                            # この停車駅が、編集対象の区間に属するかを判定
+                            if matched_r_idx != -1 and r_start_idx <= matched_r_idx <= r_end_idx:
+                                # 1. 除外されたかどうかの判定 (路線変更 or 駅削除)
+                                if old_line_id != new_line_id or stop.get("station_id") not in new_stations:
+                                    continue # 削除（リストに追加しない）
+                                
+                                # 2. 新しい区間の末端に対するNone設定の適用
+                                if stop.get("line_id") == new_line_id:
+                                    if stop.get("station_id") == seg_start:
+                                        stop["arrival_time"] = None
+                                    if stop.get("station_id") == seg_end:
+                                        stop["departure_time"] = None
+                            
+                            new_stops.append(stop)
+                        train["stops"] = new_stops
+
+            route_data["line_segments"][index] = new_data
             self._populate_segment_list(route_data)
             self._populate_station_preview(route_data) # プレビューの更新
             if hasattr(self.parent(), "set_modified"):
@@ -892,6 +1059,59 @@ class RouteEditorDialog(QDialog):
             if not selected: return
             route_id = selected[0].data(Qt.UserRole)
             route_data = self.project.routes.get(route_id)
+
+            segments = route_data.get("line_segments", [])
+
+            # 全ダイヤ・全列車のデータを走査して更新
+            tbd = route_data.get("trains_by_diagram", {})
+            stations_in_this_segment = self._get_stations_in_segment(line_id, start_sid, end_sid)
+            rel_idx = stations_in_this_segment.index(split_sid)
+
+            for diag_data in tbd.values():
+                for train_key in ["inbound_trains", "outbound_trains"]:
+                    is_inbound = (train_key == "inbound_trains")
+                    
+                    # 期待されるシーケンスと、分割駅が属するセグメントの開始位置を取得
+                    route_stations = self._get_expected_route_sequence(segments, is_inbound)
+                    r_start_idx, _ = self._get_segment_range_in_sequence(segments, index, is_inbound)
+
+                    # 期待されるリスト内での分割駅の正確な位置を特定
+                    if not is_inbound:
+                        target_route_idx = r_start_idx + rel_idx
+                    else:
+                        target_route_idx = r_start_idx + (len(stations_in_this_segment) - 1 - rel_idx)
+
+                    for train in diag_data.get(train_key, {}).values():
+                        stops = train.get("stops", [])
+
+                        # 列車が持つ停車駅リスト(stops)と、運行系統が定義する期待される駅リスト(route_stations)を突き合わせ、
+                        # target_route_idx に対応する stops 内のインデックス(split_idx)を探す
+                        split_idx = -1
+                        r_ptr = 0
+                        for s_idx, stop in enumerate(stops):
+                            while r_ptr < len(route_stations):
+                                if (stop.get("line_id") == route_stations[r_ptr][0] and 
+                                    stop.get("station_id") == route_stations[r_ptr][1]):
+                                    if r_ptr == target_route_idx:
+                                        split_idx = s_idx
+                                    r_ptr += 1
+                                    break
+                                r_ptr += 1
+                            if split_idx != -1: break
+
+                        if split_idx != -1:
+                            orig_stop = stops[split_idx]
+                            
+                            # 進行方向における前段区間の「終点」としてのデータ（発時刻をNoneに設定）
+                            stop_terminal = orig_stop.copy()
+                            stop_terminal["departure_time"] = None
+                            
+                            # 進行方向における後段区間の「起点」としてのデータ（着時刻をNoneに設定）
+                            stop_origin = orig_stop.copy()
+                            stop_origin["arrival_time"] = None
+                            
+                            # 1つの停車駅データを、境界を跨ぐ2つのデータに分割して挿入
+                            stops[split_idx : split_idx+1] = [stop_terminal, stop_origin]
             
             # 分割処理：元の要素を削除し、新しい2つの区間を挿入
             route_data["line_segments"].pop(index)
@@ -910,6 +1130,57 @@ class RouteEditorDialog(QDialog):
         route_id = selected[0].data(Qt.UserRole)
         route_data = self.project.routes.get(route_id)
         if route_data and 0 <= index < len(route_data["line_segments"]):
+            # 削除されるセグメントの情報
+            segment_data = route_data["line_segments"][index]
+            line_id = segment_data.get("line_id")
+            start_sid = segment_data.get("start_station")
+            end_sid = segment_data.get("end_station")
+
+            # 全ダイヤ・全列車のデータを走査して更新
+            tbd = route_data.get("trains_by_diagram", {})
+            segments = route_data.get("line_segments", [])
+
+            for diag_data in tbd.values():
+                for train_key in ["inbound_trains", "outbound_trains"]:
+                    is_inbound = (train_key == "inbound_trains")
+                    
+                    # 期待されるシーケンスと、削除対象区間のインデックス範囲を取得
+                    route_stations = self._get_expected_route_sequence(segments, is_inbound)
+                    r_start_idx, r_end_idx = self._get_segment_range_in_sequence(segments, index, is_inbound)
+
+                    # 走行方向における起点と終点（境界判定用）
+                    seg_start_sid = end_sid if is_inbound else start_sid
+                    seg_end_sid = start_sid if is_inbound else end_sid
+
+                    for train in diag_data.get(train_key, {}).values():
+                        stops = train.get("stops", [])
+                        new_stops = []
+                        r_ptr = 0
+                        for stop in stops:
+                            matched_r_idx = -1
+                            temp_r_ptr = r_ptr
+                            while temp_r_ptr < len(route_stations):
+                                if (stop.get("line_id") == route_stations[temp_r_ptr][0] and 
+                                    stop.get("station_id") == route_stations[temp_r_ptr][1]):
+                                    matched_r_idx = temp_r_ptr
+                                    r_ptr = temp_r_ptr + 1
+                                    break
+                                temp_r_ptr += 1
+
+                            # この停車駅が、削除対象の区間に属するかを判定
+                            if matched_r_idx != -1 and r_start_idx <= matched_r_idx <= r_end_idx:
+                                sid = stop.get("station_id")
+                                # 境界駅において、隣接する残る区間のためのデータ（着時刻or発時刻がある）なら保持
+                                if sid == seg_start_sid and stop.get("arrival_time") is not None:
+                                    pass # 他の区間の終了点としての役割があるため保持
+                                elif sid == seg_end_sid and stop.get("departure_time") is not None:
+                                    pass # 他の区間の開始点としての役割があるため保持
+                                else:
+                                    continue # 削除（リストに追加しない）
+
+                            new_stops.append(stop)
+                        train["stops"] = new_stops
+
             route_data["line_segments"].pop(index)
             self._populate_segment_list(route_data)
             self._populate_station_preview(route_data) # プレビューの更新
