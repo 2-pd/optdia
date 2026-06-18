@@ -417,6 +417,9 @@ class TimetableModel(QAbstractTableModel):
             if row in (0, 3):
                 tt = self.project.train_types.get(train.get("train_type_id"))
                 if tt: return QColor(tt.get("main_color", "#333333"))
+            if row == 5:
+                if not train.get("destination"):
+                    return QColor(Qt.gray)
             if row >= len(self.row_headers):
                 val = self.data(index, Qt.DisplayRole)
                 secs = self._time_to_seconds(val)
@@ -444,7 +447,17 @@ class TimetableModel(QAbstractTableModel):
             elif row == 4:
                 val = train.get("named_train_number")
                 return str(val) if val is not None else ""
-            elif row == 5: return train.get("destination", "")
+            elif row == 5:
+                raw_dest = train.get("destination")
+                if raw_dest:
+                    # ユーザー入力がある場合: 8文字制限
+                    return raw_dest[:8] + ".." if len(raw_dest) > 8 else raw_dest
+                
+                # 自動表示ロジック
+                dest, is_branched = self._resolve_destination(train, self.diagram_id)
+                if is_branched:
+                    return dest
+                return dest[:8] + ".." if len(dest) > 8 else dest
             elif row >= len(self.row_headers):
                 row_idx = row - len(self.row_headers)
                 if row_idx < len(self.station_rows):
@@ -485,3 +498,60 @@ class TimetableModel(QAbstractTableModel):
 
     def _get_next_editable_index(self, current_index: QModelIndex) -> QModelIndex:
         return self.index(current_index.row() + 1, current_index.column())
+
+    def _get_terminal_station_name(self, train):
+        """列車の発着時刻データのうち最後の駅名を返す"""
+        stops = train.get("stops", [])
+        if not stops:
+            return ""
+        timed_stops = [s for s in stops if s.get("arrival_time") or s.get("departure_time")]
+        if not timed_stops:
+            return ""
+        last_stop = timed_stops[-1]
+        sid = last_stop.get("station_id")
+        station_data = self.project.stations.get(sid, {})
+        return station_data.get("station_name", sid)
+
+    def _get_train_from_sub_info(self, sub_info, diagram_id):
+        """subsequent_trains の情報から列車オブジェクトを取得する"""
+        rid = sub_info.get("route_id")
+        direction = sub_info.get("direction")
+        tid = sub_info.get("train_id")
+        if not rid or not direction or not tid:
+            return None
+        route = self.project.routes.get(rid)
+        if not route:
+            return None
+        tbd = route.get("trains_by_diagram", {}).get(diagram_id, {})
+        train_key = "inbound_trains" if direction == "inbound" else "outbound_trains"
+        return tbd.get(train_key, {}).get(tid)
+
+    def _resolve_destination(self, train, diagram_id, depth=0, force_single=False):
+        """行き先を再帰的に解決する。未入力なら終着駅を返す。
+        Returns: (destination_string, is_branched)
+        """
+        if depth >= 5:
+            return self._get_terminal_station_name(train), False
+
+        dest = train.get("destination")
+        if dest:
+            return dest, False
+
+        subs = train.get("subsequent_trains", [])
+        if not force_single and len(subs) >= 2:
+            # 再帰探索の過程で初めて複数の連続する列車を検出した場合
+            results = []
+            for sub_info in subs[:2]:
+                st = self._get_train_from_sub_info(sub_info, diagram_id)
+                # 分岐後の探査では、さらなる分岐は追わず1つ目のみを辿る
+                res, _ = self._resolve_destination(st, diagram_id, depth + 1, force_single=True) if st else (self._get_terminal_station_name(train), False)
+                # 分岐表示用の文字数制限を適用
+                results.append(res[:3] + ".." if len(res) > 4 else res)
+            return "/".join(results), True
+
+        if subs:
+            st = self._get_train_from_sub_info(subs[0], diagram_id)
+            if st:
+                return self._resolve_destination(st, diagram_id, depth + 1, force_single=force_single)
+
+        return self._get_terminal_station_name(train), False

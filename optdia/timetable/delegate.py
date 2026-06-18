@@ -168,6 +168,8 @@ class TimetableDelegate(QStyledItemDelegate):
             color = index.data(Qt.ForegroundRole)
             if not isinstance(color, QColor): color = text_option.palette.text().color()
             alignment = index.data(Qt.TextAlignmentRole) or Qt.AlignCenter
+            if row == 5:
+                alignment |= Qt.TextWordWrap
             painter.save()
             painter.setPen(color)
             painter.setFont(text_option.font)
@@ -209,14 +211,23 @@ class TimetableDelegate(QStyledItemDelegate):
         painter.restore()
 
     def sizeHint(self, option, index):
+        # 1行あたりの標準的な高さを計算（フォント高さ＋上下パディングの目安）
+        line_height = option.fontMetrics.height() + 8
         size = super().sizeHint(option, index)
-        if index.row() in (1, 3): size.setHeight(max(size.height(), 32))
+        row = index.row()
+
+        if row in (1, 3):
+            size.setHeight(max(line_height, 32))
+        elif row == 5:
+            # 入力内容（折り返し数）に関わらず、高さを1行分の2倍に固定します
+            size.setHeight(line_height * 2)
         
         model = index.model()
         num_headers = len(model.row_headers) if hasattr(model, 'row_headers') else 0
         num_stations = len(model.station_rows) if hasattr(model, 'station_rows') else 0
-        if index.row() == num_headers + num_stations:
-            size.setHeight(size.height() * 3)
+        if row == num_headers + num_stations:
+            # フッターも同様に3行分に固定します
+            size.setHeight(line_height * 3)
         return size
 
     def editorEvent(self, event, model, option, index):

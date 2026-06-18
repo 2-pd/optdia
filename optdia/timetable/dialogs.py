@@ -9,7 +9,7 @@ from project import OptDiaProject
 # 列車を選択するためのポップアップダイアログ
 class TrainPicker(QDialog):
     def __init__(self, parent, project: OptDiaProject, diagram_id: str, route_id: str, 
-                 direction: str, excluded_ids: set, current_train_id: str = None):
+                 direction: str, excluded_ids: set, current_train_id: str = None, min_departure_time: str = None):
         super().__init__(parent, Qt.Popup)
         self.selected_train_id = None
 
@@ -53,10 +53,16 @@ class TrainPicker(QDialog):
             num = train.get("train_number") or "(番号なし)"
             tt = project.train_types.get(train.get("train_type_id"))
             tt_color = tt.get("main_color", "#333333") if tt else "#333333"
+
+            first_stop = next((s for s in train.get("stops", []) if s.get("departure_time")), None)
+            # 始発時刻が編集対象列車の終着時刻より前の場合は除外
+            if min_departure_time and first_stop and first_stop.get("departure_time"):
+                if first_stop["departure_time"] < min_departure_time:
+                    continue
+
             tt_short = (tt.get("train_type_short_name") or tt.get("train_type_name") or "") if tt else ""
             tt_display = f"<font color='{tt_color}'>{tt_short}</font>"
             
-            first_stop = next((s for s in train.get("stops", []) if s.get("departure_time")), None)
             if first_stop:
                 s_name = project.stations.get(first_stop["station_id"], {}).get("station_name", first_stop["station_id"])
                 display_text = f"{num} {tt_display} <font color='#666666'>({s_name} {first_stop['departure_time'][:5]}発)</font>"
@@ -77,10 +83,17 @@ class TrainPicker(QDialog):
             
         self.list_widget.itemClicked.connect(self._on_item_clicked)
         layout.addWidget(self.list_widget)
+
+        # フィルタリングに関する説明ラベルを追加
+        if min_departure_time:
+            info_label = QLabel("始発時刻がもとの列車の終着時刻より早い列車は表示されません")
+            info_label.setStyleSheet("color: gray; font-size: 12px;")
+            info_label.setWordWrap(True)
+            layout.addWidget(info_label)
         
         # 呼び出し元のボタンの幅に合わせる
         self.setFixedWidth(parent.width() if parent else 300)
-        self.setFixedHeight(200)
+        self.setFixedHeight(240 if min_departure_time else 220)
         self.search_edit.setFocus()
 
     def _on_search_text_changed(self, text):
@@ -262,9 +275,17 @@ class SubsequentTrainDialog(QDialog):
             if i != index and other_item.get("train_id"):
                 excluded_ids.add(other_item["train_id"])
         
+        # 編集対象の列車の終着時刻（最後に入力されている時刻）を取得
+        min_dep_time = None
+        stops = self.train_data.get("stops", [])
+        timed_stops = [s for s in stops if s.get("arrival_time") or s.get("departure_time")]
+        if timed_stops:
+            last_stop = timed_stops[-1]
+            min_dep_time = last_stop.get("arrival_time") or last_stop.get("departure_time")
+
         picker = TrainPicker(button, self.project, self.diagram_id, 
                              item["route_id"], item["direction"], excluded_ids,
-                             item.get("train_id"))
+                             item.get("train_id"), min_departure_time=min_dep_time)
         
         pos = button.mapToGlobal(button.rect().bottomLeft())
         picker.move(pos)
