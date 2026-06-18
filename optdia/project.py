@@ -37,25 +37,23 @@ class OptDiaProject:
             if "tracks" in station:
                 station["tracks"], station["tracks_order"] = self._split_collection(station["tracks"], "track_id")
 
-        # 運行系統 (routes: optdia_route[]): 内部に列車情報 (optdia_train[]) を含む
+        # 運行系統 (routes: optdia_route[])
         self.routes, self.routes_order = self._split_collection(entities.get("routes", []), "route_id")
         for route in self.routes.values():
+            # 定義に基づき、運行系統が直接保持する列車辞書(optdia_train_dict)を確保
+            route.setdefault("inbound_trains", {})
+            route.setdefault("outbound_trains", {})
+
             tbd = route.get("trains_by_diagram", {})
             for diagram_trains in tbd.values():
-                # 上り列車 (inbound_trains: optdia_train[])
-                if "inbound_trains" in diagram_trains:
-                    diagram_trains["inbound_trains"], diagram_trains["inbound_trains_order"] = self._split_collection(
-                        diagram_trains["inbound_trains"], "train_id"
-                    )
-                    for train in diagram_trains["inbound_trains"].values():
-                        train["to_be_saved"] = True
-                # 下り列車 (outbound_trains: optdia_train[])
-                if "outbound_trains" in diagram_trains:
-                    diagram_trains["outbound_trains"], diagram_trains["outbound_trains_order"] = self._split_collection(
-                        diagram_trains["outbound_trains"], "train_id"
-                    )
-                    for train in diagram_trains["outbound_trains"].values():
-                        train["to_be_saved"] = True
+                # 各ダイヤ内の列車(optdia_diagram_train[])を辞書分割し、保存対象フラグを付与
+                for key in ["inbound_trains", "outbound_trains"]:
+                    if key in diagram_trains:
+                        diagram_trains[key], diagram_trains[f"{key}_order"] = self._split_collection(
+                            diagram_trains[key], "train_id"
+                        )
+                        for d_train in diagram_trains[key].values():
+                            d_train["to_be_saved"] = True
 
         # 列車種別 (train_types: optdia_train_type[])
         self.train_types, self.train_types_order = self._split_collection(entities.get("train_types", []), "train_type_id")
@@ -82,10 +80,8 @@ class OptDiaProject:
                 if segments[i]["end_station"] == segments[i+1]["start_station"]:
                     boundary_stations.add(segments[i]["end_station"])
 
-            tbd_dict = route.get("trains_by_diagram", {})
-            for tbd in tbd_dict.values():
-                for key in ["inbound_trains", "outbound_trains"]:
-                    for train in tbd.get(key, {}).values():
+            for key in ["inbound_trains", "outbound_trains"]:
+                for train in route.get(key, {}).values():
                         new_stops = []
                         for s in train.get("stops", []):
                             # 境界駅でかつ着発両方の時刻がある場合、分割する
@@ -185,24 +181,40 @@ class OptDiaProject:
         for rid in self.routes_order:
             r = self.routes[rid]
             r_copy = r.copy()
+
+            # 1. いずれかのダイヤで使用されている(保存対象の)列車IDを収集
+            active_tids = set()
+            if "trains_by_diagram" in r:
+                for dt in r["trains_by_diagram"].values():
+                    for key in ["inbound_trains", "outbound_trains"]:
+                        if key in dt:
+                            for tid, d_train in dt[key].items():
+                                if d_train.get("to_be_saved"):
+                                    active_tids.add(tid)
+
+            # 2. 運行系統直下の列車辞書の復元（使用されている列車のみを抽出し、停車駅を正規化）
+            for key in ["inbound_trains", "outbound_trains"]:
+                if key in r:
+                    r_copy[key] = {
+                        tid: self._clean_train_for_export(t)
+                        for tid, t in r[key].items()
+                        if tid in active_tids
+                    }
+
+            # 3. ダイヤ別の列車情報の復元 (optdia_diagram_train を配列に戻す)
             if "trains_by_diagram" in r:
                 new_tbd = {}
                 for did, dt in r["trains_by_diagram"].items():
                     dt_copy = dt.copy()
-                    if "inbound_trains" in dt and "inbound_trains_order" in dt:
-                        dt_copy["inbound_trains"] = [
-                            self._clean_train_for_export(dt["inbound_trains"][tid])
-                            for tid in dt["inbound_trains_order"]
-                            if dt["inbound_trains"][tid].get("to_be_saved") is True
+                    for key in ["inbound_trains", "outbound_trains"]:
+                        order_key = f"{key}_order"
+                        if key in dt and order_key in dt:
+                            dt_copy[key] = [
+                                {k: v for k, v in dt[key][tid].items() if k != "to_be_saved"}
+                                for tid in dt[order_key]
+                                if dt[key][tid].get("to_be_saved") is True
                         ]
-                        del dt_copy["inbound_trains_order"]
-                    if "outbound_trains" in dt and "outbound_trains_order" in dt:
-                        dt_copy["outbound_trains"] = [
-                            self._clean_train_for_export(dt["outbound_trains"][tid])
-                            for tid in dt["outbound_trains_order"]
-                            if dt["outbound_trains"][tid].get("to_be_saved") is True
-                        ]
-                        del dt_copy["outbound_trains_order"]
+                        del dt_copy[order_key]
                     new_tbd[did] = dt_copy
                 r_copy["trains_by_diagram"] = new_tbd
             routes_export.append(r_copy)

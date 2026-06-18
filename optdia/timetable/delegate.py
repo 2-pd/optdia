@@ -70,8 +70,8 @@ class TrackPicker(QDialog):
         order = station_data.get("tracks_order", [])
         for tid in order:
             track = tracks.get(tid, {})
-            track_number = track.get("track_number") or tid
-            item = QListWidgetItem(track_number)
+            track_name = track.get("track_name") or tid
+            item = QListWidgetItem(track_name)
             item.setData(Qt.UserRole, tid)
             self.list_widget.addItem(item)
             if tid == current_track_id:
@@ -94,7 +94,7 @@ class TimetableDelegate(QStyledItemDelegate):
 
         # 番線表示の設定確認
         draw_track_box = False
-        short_track_number = ""
+        track_short_name = ""
         track_box_width = 15
         
         # フッター行（連続する列車）の判定
@@ -125,21 +125,21 @@ class TimetableDelegate(QStyledItemDelegate):
                 row_def = model.station_rows[row_idx]
                 config = model.full_stop_configs[row_def["stop_idx"]]
                 station_data = model.project.stations.get(config["station_id"], {})
-                if station_data.get("show_track_number", False):
+                if station_data.get("show_track_name", False):
                     draw_track_box = True
                     # 時刻情報に対応する番線名を取得
                     train_id = model.train_ids[index.column()]
                     route = model.project.routes.get(model.route_id)
                     if route:
-                        tbd = route.get("trains_by_diagram", {}).get(model.diagram_id, {})
                         train_key = "inbound_trains" if model.direction == "inbound" else "outbound_trains"
-                        train = tbd.get(train_key, {}).get(train_id, {})
-                        stop = next((s for s in train.get("stops", []) if s.get("stop_idx") == row_def["stop_idx"]), None)
+                        # 停車駅(stops)は運行系統が持つマスタ列車情報を参照する
+                        m_train = route.get(train_key, {}).get(train_id, {})
+                        stop = next((s for s in m_train.get("stops", []) if s.get("stop_idx") == row_def["stop_idx"]), None)
                         if stop:
                             track_id = stop.get("track_id")
                             track_data = station_data.get("tracks", {}).get(track_id)
                             if track_data:
-                                short_track_number = track_data.get("short_track_number") or ""
+                                track_short_name = track_data.get("track_short_name") or ""
 
         # 描画用オプションの作成（番線ボックスがある場合は右にずらす）
         text_option = QStyleOptionViewItem(option)
@@ -154,7 +154,7 @@ class TimetableDelegate(QStyledItemDelegate):
             font = painter.font()
             font.setPointSize(10)
             painter.setFont(font)
-            painter.drawText(track_rect, Qt.AlignCenter, short_track_number)
+            painter.drawText(track_rect, Qt.AlignCenter, track_short_name)
             painter.restore()
             
             # 時刻テキストの描画範囲を右へオフセット
@@ -249,8 +249,9 @@ class TimetableDelegate(QStyledItemDelegate):
     def _show_train_type_menu(self, index, model, widget):
         train_id = model.train_ids[index.column()]
         route = model.project.routes.get(model.route_id)
-        trains = route.get("trains_by_diagram", {}).get(model.diagram_id, {}).get("inbound_trains" if model.direction == "inbound" else "outbound_trains", {})
-        current_id = trains.get(train_id, {}).get("train_type_id")
+        # 列車種別(train_type_id)は運行系統が持つマスタ列車情報を参照する
+        train_key = "inbound_trains" if model.direction == "inbound" else "outbound_trains"
+        current_id = route.get(train_key, {}).get(train_id, {}).get("train_type_id")
         picker = TrainTypePicker(widget, model.project, current_id)
         pos = widget.viewport().mapToGlobal(widget.visualRect(index).bottomLeft())
         picker.move(pos)
@@ -261,7 +262,7 @@ class TimetableDelegate(QStyledItemDelegate):
         row_def = model.station_rows[row_idx]
         config = model.full_stop_configs[row_def["stop_idx"]]
         station_data = model.project.stations.get(config["station_id"], {})
-        return station_data.get("show_track_number", False)
+        return station_data.get("show_track_name", False)
 
     def _show_track_menu(self, index, model, widget):
         from timetable.model import TrackIdRole
@@ -274,10 +275,10 @@ class TimetableDelegate(QStyledItemDelegate):
         # 現在の番線IDを取得
         train_id = model.train_ids[col]
         route = model.project.routes.get(model.route_id)
-        tbd = route.get("trains_by_diagram", {}).get(model.diagram_id, {})
         train_key = "inbound_trains" if model.direction == "inbound" else "outbound_trains"
-        train = tbd.get(train_key, {}).get(train_id, {})
-        stop = next((s for s in train.get("stops", []) if s.get("stop_idx") == row_def["stop_idx"]), None)
+        # 停車駅(stops)は運行系統が持つマスタ列車情報を参照する
+        m_train = route.get(train_key, {}).get(train_id, {})
+        stop = next((s for s in m_train.get("stops", []) if s.get("stop_idx") == row_def["stop_idx"]), None)
         current_track_id = stop.get("track_id") if stop else None
         
         picker = TrackPicker(widget, station_data, current_track_id)
@@ -338,12 +339,12 @@ class TimetableDelegate(QStyledItemDelegate):
         train_id = model.train_ids[col]
         route = model.project.routes.get(model.route_id)
         if not route: return None
-        tbd = route.get("trains_by_diagram", {}).get(model.diagram_id, {})
         train_key = "inbound_trains" if model.direction == "inbound" else "outbound_trains"
-        train = tbd.get(train_key, {}).get(train_id)
-        if not train: return None
+        # stops はマスタ情報を参照
+        m_train = route.get(train_key, {}).get(train_id)
+        if not m_train: return None
         
-        stops = train.get("stops", [])
+        stops = m_train.get("stops", [])
         # 時刻が入っている(未入力でない)stop_idxの集合を取得
         timed_indices = {s["stop_idx"] for s in stops if s.get("arrival_time") or s.get("departure_time")}
         

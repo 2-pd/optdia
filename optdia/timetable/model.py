@@ -153,25 +153,35 @@ class TimetableModel(QAbstractTableModel):
                             self.station_rows.append({"name": f"{name} [発]", "stop_idx": stop_idx, "type": "dep", "line_color": line_color})
                         else:
                             self.station_rows.append({"name": name, "stop_idx": stop_idx, "type": "dep", "line_color": line_color})
+                
                 tbd = route.get("trains_by_diagram", {}).get(diagram_id, {})
-                train_dict_key = "inbound_trains" if direction == "inbound" else "outbound_trains"
-                train_order_key = "inbound_trains_order" if direction == "inbound" else "outbound_trains_order"
-                trains = tbd.get(train_dict_key, {})
-                order = tbd.get(train_order_key, [])
+                train_key = "inbound_trains" if direction == "inbound" else "outbound_trains"
+                order_key = f"{train_key}_order"
+                
+                # ダイヤ側の列車情報(optdia_diagram_train_dict)
+                d_trains = tbd.get(train_key, {})
+                # 運行系統側の列車実体情報(optdia_train_dict)
+                m_trains = route.get(train_key, {})
+                order = tbd.get(order_key, [])
 
                 # 末尾に列車の空データを10本追加（これらの列車はプロジェクトデータの保存時に除去される）
-                unsaved_count = sum(1 for tid in order if trains.get(tid, {}).get("to_be_saved") is False)
-                needed = 10 - unsaved_count
+                unsaved_count = sum(1 for tid in order if d_trains.get(tid, {}).get("to_be_saved") is False)
+                needed = 20 - unsaved_count
                 if needed > 0:
                     chars = string.ascii_letters + string.digits
                     for _ in range(needed):
                         while True:
                             new_id = "".join(random.choices(chars, k=16)) # 16文字のランダムな英数字からなる列車IDを生成
-                            if new_id not in trains: break
-                        trains[new_id] = {
-                            "train_id": new_id, "train_number": "", "operations": [], "train_type_id": None,
-                            "named_train_number": None, "car_count": None, "destination": None,
-                            "subsequent_trains": [], "note": "", "stops": [], "to_be_saved": False
+                            if new_id not in d_trains: break
+                        # ダイヤ側に参照用オブジェクトを作成
+                        d_trains[new_id] = {
+                            "train_id": new_id, "operations": [], "car_count": None,
+                            "destination": None, "subsequent_trains": [], "to_be_saved": False
+                        }
+                        # 運行系統側に実体オブジェクトを作成
+                        m_trains[new_id] = {
+                            "train_number": "", "train_type_id": None,
+                            "named_train_number": None, "note": "", "stops": []
                         }
                         order.append(new_id)
                 self.train_ids = order
@@ -186,11 +196,10 @@ class TimetableModel(QAbstractTableModel):
         route = self.project.routes.get(self.route_id)
         if not route:
             return
-        tbd = route.get("trains_by_diagram", {}).get(self.diagram_id, {})
-        # 現在の方面に該当する列車のみを処理する
+        # 運行系統が持つマスタ列車のうち、現在の方面のものをすべて正規化する
         train_key = "inbound_trains" if self.direction == "inbound" else "outbound_trains"
-        trains = tbd.get(train_key, {})
-        for train in trains.values():
+        m_trains = route.get(train_key, {})
+        for train in m_trains.values():
             self._normalize_train_stops(train)
 
     def _normalize_train_stops(self, train):
@@ -256,36 +265,41 @@ class TimetableModel(QAbstractTableModel):
         route = self.project.routes.get(self.route_id)
         tbd = route.get("trains_by_diagram", {}).get(self.diagram_id, {})
         train_key = "inbound_trains" if self.direction == "inbound" else "outbound_trains"
-        trains = tbd.get(train_key, {})
+        
+        d_trains = tbd.get(train_key, {})
+        m_trains = route.get(train_key, {})
+        
         train_id = self.train_ids[col]
-        train = trains.get(train_id)
-        if not train: return False
+        d_train = d_trains.get(train_id)
+        m_train = m_trains.get(train_id)
+        if not d_train or not m_train: return False
+        
         changed = False
         if row == 0:
-            if train.get("train_number") != value:
-                train["train_number"] = value
+            if m_train.get("train_number") != value:
+                m_train["train_number"] = value
                 changed = True
         elif row == 2:
             try:
                 val = int(value) if value and value.strip() else None
-                if train.get("car_count") != val:
-                    train["car_count"] = val
+                if d_train.get("car_count") != val:
+                    d_train["car_count"] = val
                     changed = True
             except ValueError: return False
         elif row == 3:
-            if train.get("train_type_id") != value:
-                train["train_type_id"] = value
+            if m_train.get("train_type_id") != value:
+                m_train["train_type_id"] = value
                 changed = True
         elif row == 4:
             try:
                 val = int(value) if value and value.strip() else None
-                if train.get("named_train_number") != val:
-                    train["named_train_number"] = val
+                if m_train.get("named_train_number") != val:
+                    m_train["named_train_number"] = val
                     changed = True
             except ValueError: return False
         elif row == 5:
-            if train.get("destination") != value:
-                train["destination"] = value
+            if d_train.get("destination") != value:
+                d_train["destination"] = value
                 changed = True
         elif row >= len(self.row_headers):
             row_idx = row - len(self.row_headers)
@@ -299,7 +313,7 @@ class TimetableModel(QAbstractTableModel):
 
                 # 番線IDの更新処理
                 if role == TrackIdRole:
-                    stop = next((s for s in train.get("stops", []) if s.get("stop_idx") == stop_idx), None)
+                    stop = next((s for s in m_train.get("stops", []) if s.get("stop_idx") == stop_idx), None)
                     if not stop:
                         # 時刻未入力の状態で番線だけ選んだ場合、ストップデータを新規作成
                         config_for_stop = self.full_stop_configs[stop_idx]
@@ -311,21 +325,21 @@ class TimetableModel(QAbstractTableModel):
                             "arrival_time": initial_arr, "departure_time": initial_dep,
                             "stop_type": 1, "stop_idx": stop_idx
                         }
-                        train["stops"].append(stop)
+                        m_train["stops"].append(stop)
                         changed = True
                     elif stop.get("track_id") != value:
                         stop["track_id"] = value
                         changed = True
                     
                     if changed:
-                        self._trigger_update(col, trains, index)
+                        self._trigger_update(col, d_trains, index)
                     return changed
 
-                if "stops" not in train: train["stops"] = []
+                if "stops" not in m_train: m_train["stops"] = []
                 formatted_value = self._format_time(value)
                 
                 # 管理用インデックス stop_idx を使用して、該当する駅訪問データを特定
-                stop = next((s for s in train["stops"] if s.get("stop_idx") == stop_idx), None)
+                stop = next((s for s in m_train["stops"] if s.get("stop_idx") == stop_idx), None)
 
                 if not stop:
                     # 時刻が入力されていない場合は、新しいstopを作成しない
@@ -347,7 +361,7 @@ class TimetableModel(QAbstractTableModel):
                         "stop_type": 1,
                         "stop_idx": stop_idx
                     }
-                    train["stops"].append(stop)
+                    m_train["stops"].append(stop)
                 time_key = "arrival_time" if row_def["type"] == "arr" else "departure_time"
                 other_key = "departure_time" if row_def["type"] == "arr" else "arrival_time"
                 if stop.get(time_key) != formatted_value:
@@ -370,14 +384,14 @@ class TimetableModel(QAbstractTableModel):
                     stop["track_id"] = config["track_id"]
                     changed = True
         if changed:
-            self._trigger_update(col, trains, index)
+            self._trigger_update(col, d_trains, index)
             return True
         return False
 
-    def _trigger_update(self, col, trains, index):
+    def _trigger_update(self, col, d_trains, index):
         for i in range(col + 1):
             tid = self.train_ids[i]
-            t = trains.get(tid)
+            t = d_trains.get(tid)
             if t and t.get("to_be_saved") is False: t["to_be_saved"] = True
         QTimer.singleShot(0, lambda: self.update_data(self.route_id, self.diagram_id, self.direction))
         self.dataChanged.emit(index, index, [Qt.EditRole, Qt.DisplayRole])
@@ -396,10 +410,15 @@ class TimetableModel(QAbstractTableModel):
         if not route: return None
         tbd = route.get("trains_by_diagram", {}).get(self.diagram_id, {})
         train_key = "inbound_trains" if self.direction == "inbound" else "outbound_trains"
-        trains = tbd.get(train_key, {})
+        
+        d_trains = tbd.get(train_key, {})
+        m_trains = route.get(train_key, {})
+        
         if col >= len(self.train_ids): return None
         train_id = self.train_ids[col]
-        train = trains.get(train_id, {})
+        
+        d_train = d_trains.get(train_id, {})
+        m_train = m_trains.get(train_id, {})
 
         if role == Qt.TextAlignmentRole:
             # フッター行（ボタン行）は中央揃え
@@ -411,14 +430,14 @@ class TimetableModel(QAbstractTableModel):
             return Qt.AlignRight | Qt.AlignVCenter
 
         if role == Qt.BackgroundRole:
-            tt = self.project.train_types.get(train.get("train_type_id"))
+            tt = self.project.train_types.get(m_train.get("train_type_id"))
             return QColor(tt.get("background_color", "#ffffff")) if tt else None
         if role == Qt.ForegroundRole:
             if row in (0, 3):
-                tt = self.project.train_types.get(train.get("train_type_id"))
+                tt = self.project.train_types.get(m_train.get("train_type_id"))
                 if tt: return QColor(tt.get("main_color", "#333333"))
             if row == 5:
-                if not train.get("destination"):
+                if not d_train.get("destination"):
                     return QColor(Qt.gray)
             if row >= len(self.row_headers):
                 val = self.data(index, Qt.DisplayRole)
@@ -432,29 +451,29 @@ class TimetableModel(QAbstractTableModel):
                             break
             return None
         if role in (Qt.DisplayRole, Qt.EditRole):
-            if row == 0: return train.get("train_number", "")
+            if row == 0: return m_train.get("train_number", "")
             elif row == 1:
-                ops = [str(op.get("operation_id", "")) for op in train.get("operations", []) if op.get("operation_id")]
+                ops = [str(op.get("operation_id", "")) for op in d_train.get("operations", []) if op.get("operation_id")]
                 return ",".join(ops) if ops else ""
             elif row == 2:
-                cc = train.get("car_count")
+                cc = d_train.get("car_count")
                 return str(cc) if cc is not None else ""
             elif row == 3:
-                tt = self.project.train_types.get(train.get("train_type_id"))
+                tt = self.project.train_types.get(m_train.get("train_type_id"))
                 name = (tt.get("train_type_short_name") or tt.get("train_type_name", "")) if tt else ""
-                tname = train.get("train_name")
+                tname = m_train.get("train_name")
                 return f"{name} {tname}" if tname else name
             elif row == 4:
-                val = train.get("named_train_number")
+                val = m_train.get("named_train_number")
                 return str(val) if val is not None else ""
             elif row == 5:
-                raw_dest = train.get("destination")
+                raw_dest = d_train.get("destination")
                 if raw_dest:
                     # ユーザー入力がある場合: 8文字制限
                     return raw_dest[:8] + ".." if len(raw_dest) > 8 else raw_dest
                 
                 # 自動表示ロジック
-                dest, is_branched = self._resolve_destination(train, self.diagram_id)
+                dest, is_branched = self._resolve_destination(d_train, m_train, self.diagram_id)
                 if is_branched:
                     return dest
                 return dest[:8] + ".." if len(dest) > 8 else dest
@@ -462,8 +481,8 @@ class TimetableModel(QAbstractTableModel):
                 row_idx = row - len(self.row_headers)
                 if row_idx < len(self.station_rows):
                     row_def = self.station_rows[row_idx]
-                    # 管理用インデックス stop_idx を使用してデータを特定
-                    stop = next((s for s in train.get("stops", []) if s.get("stop_idx") == row_def["stop_idx"]), None)
+                    # マスタ列車の停車駅情報を参照
+                    stop = next((s for s in m_train.get("stops", []) if s.get("stop_idx") == row_def["stop_idx"]), None)
 
                     if stop:
                         full_time = stop.get("arrival_time" if row_def["type"] == "arr" else "departure_time", "")
@@ -512,46 +531,50 @@ class TimetableModel(QAbstractTableModel):
         station_data = self.project.stations.get(sid, {})
         return station_data.get("station_name", sid)
 
-    def _get_train_from_sub_info(self, sub_info, diagram_id):
-        """subsequent_trains の情報から列車オブジェクトを取得する"""
+    def _get_train_pair_from_sub_info(self, sub_info, diagram_id):
+        """subsequent_trains の情報から (diagram_train, master_train) を取得する"""
         rid = sub_info.get("route_id")
         direction = sub_info.get("direction")
         tid = sub_info.get("train_id")
         if not rid or not direction or not tid:
-            return None
+            return None, None
         route = self.project.routes.get(rid)
         if not route:
-            return None
+            return None, None
+        
         tbd = route.get("trains_by_diagram", {}).get(diagram_id, {})
         train_key = "inbound_trains" if direction == "inbound" else "outbound_trains"
-        return tbd.get(train_key, {}).get(tid)
+        
+        d_train = tbd.get(train_key, {}).get(tid)
+        m_train = route.get(train_key, {}).get(tid)
+        return d_train, m_train
 
-    def _resolve_destination(self, train, diagram_id, depth=0, force_single=False):
+    def _resolve_destination(self, d_train, m_train, diagram_id, depth=0, force_single=False):
         """行き先を再帰的に解決する。未入力なら終着駅を返す。
         Returns: (destination_string, is_branched)
         """
         if depth >= 5:
-            return self._get_terminal_station_name(train), False
+            return self._get_terminal_station_name(m_train), False
 
-        dest = train.get("destination")
+        dest = d_train.get("destination")
         if dest:
             return dest, False
 
-        subs = train.get("subsequent_trains", [])
+        subs = d_train.get("subsequent_trains", [])
         if not force_single and len(subs) >= 2:
             # 再帰探索の過程で初めて複数の連続する列車を検出した場合
             results = []
             for sub_info in subs[:2]:
-                st = self._get_train_from_sub_info(sub_info, diagram_id)
+                st_d, st_m = self._get_train_pair_from_sub_info(sub_info, diagram_id)
                 # 分岐後の探査では、さらなる分岐は追わず1つ目のみを辿る
-                res, _ = self._resolve_destination(st, diagram_id, depth + 1, force_single=True) if st else (self._get_terminal_station_name(train), False)
+                res, _ = self._resolve_destination(st_d, st_m, diagram_id, depth + 1, force_single=True) if st_d else (self._get_terminal_station_name(m_train), False)
                 # 分岐表示用の文字数制限を適用
                 results.append(res[:3] + ".." if len(res) > 4 else res)
             return "/".join(results), True
 
         if subs:
-            st = self._get_train_from_sub_info(subs[0], diagram_id)
-            if st:
-                return self._resolve_destination(st, diagram_id, depth + 1, force_single=force_single)
+            st_d, st_m = self._get_train_pair_from_sub_info(subs[0], diagram_id)
+            if st_d:
+                return self._resolve_destination(st_d, st_m, diagram_id, depth + 1, force_single=force_single)
 
-        return self._get_terminal_station_name(train), False
+        return self._get_terminal_station_name(m_train), False

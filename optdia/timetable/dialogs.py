@@ -38,23 +38,25 @@ class TrainPicker(QDialog):
         train_key = "inbound_trains" if direction == "inbound" else "outbound_trains"
         order_key = train_key + "_order"
         
-        trains = tbd.get(train_key, {})
+        d_trains = tbd.get(train_key, {})
+        m_trains = route.get(train_key, {})
         order = tbd.get(order_key, [])
         
         for tid in order:
             if tid in excluded_ids:
                 continue
             
-            train = trains[tid]
-            if not train.get("to_be_saved"):
+            d_train = d_trains[tid]
+            m_train = m_trains[tid]
+            if not d_train.get("to_be_saved"):
                 continue
 
             # 列車情報を構築 (列車番号、種別、始発駅時刻)
-            num = train.get("train_number") or "(番号なし)"
-            tt = project.train_types.get(train.get("train_type_id"))
+            num = m_train.get("train_number") or "(番号なし)"
+            tt = project.train_types.get(m_train.get("train_type_id"))
             tt_color = tt.get("main_color", "#333333") if tt else "#333333"
 
-            first_stop = next((s for s in train.get("stops", []) if s.get("departure_time")), None)
+            first_stop = next((s for s in m_train.get("stops", []) if s.get("departure_time")), None)
             # 始発時刻が編集対象列車の終着時刻より前の場合は除外
             if min_departure_time and first_stop and first_stop.get("departure_time"):
                 if first_stop["departure_time"] < min_departure_time:
@@ -110,11 +112,12 @@ class TrainPicker(QDialog):
 
 # 「連続する列車」を編集するダイアログ
 class SubsequentTrainDialog(QDialog):
-    def __init__(self, parent, project: OptDiaProject, train_data: dict, diagram_id: str, 
+    def __init__(self, parent, project: OptDiaProject, d_train: dict, m_train: dict, diagram_id: str, 
                  route_id: str, direction: str):
         super().__init__(parent)
         self.project = project
-        self.train_data = train_data
+        self.d_train = d_train # ダイヤ側の情報
+        self.m_train = m_train # マスタ側の情報
         self.diagram_id = diagram_id
         self.route_id = route_id
         self.direction = direction
@@ -124,7 +127,7 @@ class SubsequentTrainDialog(QDialog):
         main_layout = QVBoxLayout(self)
 
         # 説明文
-        train_no = self.train_data.get("train_number") or "(番号なし)"
+        train_no = self.m_train.get("train_number") or "(番号なし)"
         desc_label = QLabel(
             f"列車 {train_no} から直接連続乗車可能な列車を選択してください。\n"
             "編成が別々の列車に分割される場合は複数の列車を設定することもできます。"
@@ -155,13 +158,13 @@ class SubsequentTrainDialog(QDialog):
 
     def closeEvent(self, event):
         """ダイアログが閉じられる際に、train_idがNoneのエントリを削除する"""
-        if "subsequent_trains" in self.train_data and self.train_data["subsequent_trains"]:
-            original_count = len(self.train_data["subsequent_trains"])
-            self.train_data["subsequent_trains"] = [
-                item for item in self.train_data["subsequent_trains"]
+        if "subsequent_trains" in self.d_train and self.d_train["subsequent_trains"]:
+            original_count = len(self.d_train["subsequent_trains"])
+            self.d_train["subsequent_trains"] = [
+                item for item in self.d_train["subsequent_trains"]
                 if item.get("train_id") is not None
             ]
-            if len(self.train_data["subsequent_trains"]) != original_count:
+            if len(self.d_train["subsequent_trains"]) != original_count:
                 self._set_modified()
         super().closeEvent(event)
 
@@ -172,7 +175,7 @@ class SubsequentTrainDialog(QDialog):
             if item.widget():
                 item.widget().deleteLater()
 
-        subsequent_list = self.train_data.get("subsequent_trains") or []
+        subsequent_list = self.d_train.get("subsequent_trains") or []
         for i, item in enumerate(subsequent_list):
             group = self._create_subsequent_group(i + 1, item)
             self.scroll_layout.addWidget(group)
@@ -180,10 +183,10 @@ class SubsequentTrainDialog(QDialog):
 
     def _on_add_clicked(self):
         """新しい連続列車のエントリを追加して再描画する"""
-        if "subsequent_trains" not in self.train_data or self.train_data["subsequent_trains"] is None:
-            self.train_data["subsequent_trains"] = []
+        if "subsequent_trains" not in self.d_train or self.d_train["subsequent_trains"] is None:
+            self.d_train["subsequent_trains"] = []
         
-        self.train_data["subsequent_trains"].append({
+        self.d_train["subsequent_trains"].append({
             "route_id": self.route_id,
             "direction": self.direction,
             "train_id": None
@@ -248,7 +251,7 @@ class SubsequentTrainDialog(QDialog):
 
     def _on_route_changed(self, index, new_route_id):
         """運行系統が変更されたら、選択中の列車をクリアする"""
-        item = self.train_data["subsequent_trains"][index]
+        item = self.d_train["subsequent_trains"][index]
         if item["route_id"] != new_route_id:
             item["route_id"] = new_route_id
             item["train_id"] = None
@@ -257,7 +260,7 @@ class SubsequentTrainDialog(QDialog):
 
     def _on_direction_changed(self, index, new_direction):
         """方面が変更されたら、選択中の列車をクリアする"""
-        item = self.train_data["subsequent_trains"][index]
+        item = self.d_train["subsequent_trains"][index]
         if item["direction"] != new_direction:
             item["direction"] = new_direction
             item["train_id"] = None
@@ -266,18 +269,18 @@ class SubsequentTrainDialog(QDialog):
 
     def _on_train_picker_clicked(self, index, button):
         """列車選択ボタンが押されたら、候補リストを表示する"""
-        subsequent_list = self.train_data.get("subsequent_trains", [])
+        subsequent_list = self.d_train.get("subsequent_trains", [])
         item = subsequent_list[index]
         
         # 除外リストの作成: 編集中の列車自身 + 他のエントリで選択済みの列車
-        excluded_ids = {self.train_data.get("train_id")}
+        excluded_ids = {self.d_train.get("train_id")}
         for i, other_item in enumerate(subsequent_list):
             if i != index and other_item.get("train_id"):
                 excluded_ids.add(other_item["train_id"])
         
         # 編集対象の列車の終着時刻（最後に入力されている時刻）を取得
         min_dep_time = None
-        stops = self.train_data.get("stops", [])
+        stops = self.m_train.get("stops", [])
         timed_stops = [s for s in stops if s.get("arrival_time") or s.get("departure_time")]
         if timed_stops:
             last_stop = timed_stops[-1]
@@ -300,8 +303,8 @@ class SubsequentTrainDialog(QDialog):
 
     def _on_delete_subsequent(self, index):
         """指定されたインデックスの連続列車設定を削除して再描画する"""
-        if "subsequent_trains" in self.train_data:
-            self.train_data["subsequent_trains"].pop(index)
+        if "subsequent_trains" in self.d_train:
+            self.d_train["subsequent_trains"].pop(index)
             self._refresh_list()
             self._set_modified()
 
@@ -319,18 +322,20 @@ class SubsequentTrainDialog(QDialog):
         
         route = self.project.routes.get(route_id)
         if not route: return "不明な運行系統"
-        tbd = route.get("trains_by_diagram", {}).get(self.diagram_id, {})
-        train = tbd.get("inbound_trains" if direction == "inbound" else "outbound_trains", {}).get(train_id)
-        if not train: return "不明な列車"
+        
+        train_key = "inbound_trains" if direction == "inbound" else "outbound_trains"
+        # 表示情報はマスタ側から取得
+        m_train = route.get(train_key, {}).get(train_id)
+        if not m_train: return "不明な列車"
 
-        num = train.get("train_number") or "(番号なし)"
-        tt = self.project.train_types.get(train.get("train_type_id"))
+        num = m_train.get("train_number") or "(番号なし)"
+        tt = self.project.train_types.get(m_train.get("train_type_id"))
         tt_color = tt.get("main_color", "#333333") if tt else "#333333"
         tt_short = (tt.get("train_type_short_name") or tt.get("train_type_name") or "") if tt else ""
         tt_display = f"<font color='{tt_color}'>{tt_short}</font>"
         
         # 始発駅と時刻
-        first_stop = next((s for s in train.get("stops", []) if s.get("departure_time")), None)
+        first_stop = next((s for s in m_train.get("stops", []) if s.get("departure_time")), None)
         if first_stop:
             s_name = self.project.stations.get(first_stop["station_id"], {}).get("station_name", first_stop["station_id"])
             return f"{num} {tt_display} <font color='#666666'>({s_name} {first_stop['departure_time'][:5]}発)</font>"

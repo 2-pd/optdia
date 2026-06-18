@@ -65,7 +65,7 @@ interface optdia_station {
     is_major_station: boolean; // 主要駅か否か
     is_signal_station: boolean; // 信号場か否か
     show_arrival_time: boolean; // 時刻表で着時刻を表示するか否か
-    show_track_number: boolean; // 時刻表で発着番線を表示するか否か
+    show_track_name: boolean; // 時刻表で発着番線を表示するか否か
     tracks: optdia_station_track[]; // 発着番線情報(下記)を表示順に配列で
 }
 
@@ -73,8 +73,8 @@ interface optdia_station {
 // 発着番線情報を格納するオブジェクト
 interface optdia_station_track {
     track_id: string; // 発着番線ID(異なる駅との重複は制限されない)
-    track_number: string; // 発着番線番号(アルファベット等も使用可能)
-    short_track_number: string; // 発着番線番号の省略表記
+    track_name: string; // 発着番線名(アルファベット等も使用可能)
+    track_short_name: string; // 発着番線名の省略表記
 }
 
 
@@ -93,6 +93,8 @@ interface optdia_route {
     route_id: string; // 運行系統ID
     route_name: string; // 運行系統名
     line_segments: optdia_line_segment[]; // 路線の部分区間(下記)を下り列車の経由順に配列で
+    inbound_trains: optdia_train_dict; // 上り列車情報(下記)を連想配列で
+    outbound_trains: optdia_train_dict; // 下り列車情報(基本構造は上り列車と同じ)を連想配列で
     trains_by_diagram: optdia_route_diagram_dict; // ダイヤ別の上下列車情報(下記)
 }
 
@@ -105,6 +107,12 @@ interface optdia_line_segment {
 }
 
 
+// 列車IDと列車情報のペアを格納するオブジェクト
+interface optdia_train_dict {
+    [train_id: string]: optdia_train; // 各列車の情報(下記)
+}
+
+
 // 運転ダイヤIDとそのダイヤで運転される列車の情報のペアを格納するオブジェクト
 interface optdia_route_diagram_dict {
     [diagram_id: string]: optdia_route_diagram_trains; // 各ダイヤの上下列車情報(下記)
@@ -113,8 +121,8 @@ interface optdia_route_diagram_dict {
 
 // 運行系統・運転ダイヤ別の上下列車情報を格納するオブジェクト
 interface optdia_route_diagram_trains {
-    inbound_trains: optdia_train[]; // 上り列車の情報(下記)を表示順に配列で
-    outbound_trains: optdia_train[]; // 下り列車の情報(個々のオブジェクトの基本構造は上り列車と同じ)を表示順に配列で
+    inbound_trains: optdia_diagram_train[]; // 上り列車の情報(下記)を表示順に配列で
+    outbound_trains: optdia_diagram_train[]; // 下り列車の情報(個々のオブジェクトの構造は上り列車と同じ)を表示順に配列で
 }
 
 
@@ -136,22 +144,28 @@ interface optdia_train_type {
 interface optdia_diagram {
     diagram_id: string; // 運転ダイヤID
     diagram_name: string; // 運転ダイヤ名
+    diagram_initial: string; // 運転ダイヤ名の1文字表記
     background_color: string; // 駅時刻表等での運転ダイヤの背景色(デフォルト値は #cccccc)
 }
 
 
 // 列車情報を格納するオブジェクト
 interface optdia_train {
-    train_id: string; // 列車ID
     train_number: string; // 列車番号(アルファベット等も使用可能)
-    operations: optdia_train_operation[]; // 列車の担当運用情報(下記)を前位側(方反でない場合を基準とする)から順に配列で
     train_type_id: string | null; // 列車種別ID
     named_train_number: number | null; // 列車の号数
+    note: string; // 備考
+    stops: optdia_train_stop[]; // 経由駅情報(下記)を経由順に配列で
+}
+
+
+// 運転ダイヤ別の列車情報を格納するオブジェクト
+interface optdia_diagram_train {
+    train_id: string; // 列車ID
+    operations: optdia_train_operation[]; // 列車の担当運用情報(下記)を前位側(方反でない場合を基準とする)から順に配列で
     car_count: null | number; // 両数(nullの場合は担当運用の所定両数の合計値が指定されたものとみなす)
     destination: null | string; // 行き先表示(nullの場合は終着駅の駅名が指定されたものとみなす)
     subsequent_trains: optdia_subsequent_train_identifier[]; // 連続する列車の識別情報(下記)
-    note: string; // 備考
-    stops: optdia_train_stop[]; // 経由駅情報(下記)を経由順に配列で
 }
 
 

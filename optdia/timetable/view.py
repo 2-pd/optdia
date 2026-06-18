@@ -123,7 +123,10 @@ class TimetableView(QTableView):
         if not route: return
         tbd = route.get("trains_by_diagram", {}).get(model.diagram_id, {})
         train_key = "inbound_trains" if model.direction == "inbound" else "outbound_trains"
-        trains = tbd.get(train_key, {})
+        # 連続する列車情報はダイヤ側のオブジェクトを参照
+        d_trains = tbd.get(train_key, {})
+        # 列車番号や種別はマスタ側のオブジェクトを参照
+        m_trains = route.get(train_key, {})
 
         for col in range(model.columnCount()):
             index = model.index(footer_row, col)
@@ -154,8 +157,8 @@ class TimetableView(QTableView):
             # 連続する列車の列車番号を取得して表示（最大3つ）
             if col < len(model.train_ids):
                 train_id = model.train_ids[col]
-                train_data = trains.get(train_id, {})
-                subsequent_list = train_data.get("subsequent_trains") or []
+                d_train = d_trains.get(train_id, {})
+                subsequent_list = d_train.get("subsequent_trains") or []
                 
                 html_parts = []
                 for item in subsequent_list[:3]:
@@ -163,13 +166,13 @@ class TimetableView(QTableView):
                     if s_tid:
                         s_route = model.project.routes.get(s_rid)
                         if s_route:
-                            s_tbd = s_route.get("trains_by_diagram", {}).get(model.diagram_id, {})
                             s_train_key = "inbound_trains" if s_dir == "inbound" else "outbound_trains"
-                            s_train = s_tbd.get(s_train_key, {}).get(s_tid)
-                            if s_train:
-                                num = s_train.get("train_number") or "(番号なし)"
+                            # マスタ側から列車番号等を取得
+                            s_m_train = s_route.get(s_train_key, {}).get(s_tid)
+                            if s_m_train:
+                                num = s_m_train.get("train_number") or "(番号なし)"
                                 # 種別の基本色を取得
-                                tt_id = s_train.get("train_type_id")
+                                tt_id = s_m_train.get("train_type_id")
                                 tt = model.project.train_types.get(tt_id)
                                 color = tt.get("main_color", "#333333") if tt else "#333333"
                                 html_parts.append(f"<div style='color: {color};'>{num}</div>")
@@ -187,10 +190,13 @@ class TimetableView(QTableView):
         tbd = route.get("trains_by_diagram", {}).get(model.diagram_id, {})
         train_key = "inbound_trains" if model.direction == "inbound" else "outbound_trains"
         train_id = model.train_ids[col]
-        train_data = tbd.get(train_key, {}).get(train_id)
         
-        if train_data:
-            dialog = SubsequentTrainDialog(self, model.project, train_data, model.diagram_id,
+        d_train = tbd.get(train_key, {}).get(train_id)
+        m_train = route.get(train_key, {}).get(train_id)
+        
+        if d_train:
+            # ダイアログにはダイヤ側の情報とマスタ側の情報の両方が必要になる場合があるため
+            dialog = SubsequentTrainDialog(self, model.project, d_train, m_train, model.diagram_id,
                                           model.route_id, model.direction)
             dialog.exec()
 

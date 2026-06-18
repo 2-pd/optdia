@@ -862,6 +862,8 @@ class RouteEditorDialog(QDialog):
                 "route_id": route_id,
                 "route_name": route_name,
                 "line_segments" : [],
+                "inbound_trains" : {},
+                "outbound_trains" : {},
                 "trains_by_diagram": {}
             }
             self.project.routes_order.append(route_id)
@@ -977,53 +979,52 @@ class RouteEditorDialog(QDialog):
             new_end = new_data["end_station"]
             new_stations = self._get_stations_in_segment(new_line_id, new_start, new_end)
 
-            # 全ダイヤ・全列車のデータを走査して更新
-            tbd = route_data.get("trains_by_diagram", {})
+            # 停車駅(stops)は運行系統直下のマスタ情報(optdia_train)にあるため、
+            # ダイヤに関わらず運行系統内の全列車を1回だけ更新すればよい
             segments = route_data.get("line_segments", [])
 
-            for diag_data in tbd.values():
-                for train_key in ["inbound_trains", "outbound_trains"]:
-                    is_inbound = (train_key == "inbound_trains")
-                    
-                    # 期待されるシーケンスと、編集対象区間のインデックス範囲を取得
-                    route_stations = self._get_expected_route_sequence(segments, is_inbound)
-                    r_start_idx, r_end_idx = self._get_segment_range_in_sequence(segments, index, is_inbound)
+            for train_key in ["inbound_trains", "outbound_trains"]:
+                is_inbound = (train_key == "inbound_trains")
+                
+                # 期待されるシーケンスと、編集対象区間のインデックス範囲を取得
+                route_stations = self._get_expected_route_sequence(segments, is_inbound)
+                r_start_idx, r_end_idx = self._get_segment_range_in_sequence(segments, index, is_inbound)
 
-                    # 走行方向に応じた新しい区間の末端（起点・終点）を特定
-                    seg_start = new_end if is_inbound else new_start
-                    seg_end = new_start if is_inbound else new_end
+                # 走行方向に応じた新しい区間の末端（起点・終点）を特定
+                seg_start = new_end if is_inbound else new_start
+                seg_end = new_start if is_inbound else new_end
+                
+                for train in route_data.get(train_key, {}).values():
+                    stops = train.get("stops", [])
+                    new_stops = []
                     
-                    for train in diag_data.get(train_key, {}).values():
-                        stops = train.get("stops", [])
-                        new_stops = []
-                        
-                        r_ptr = 0
-                        for stop in stops:
-                            matched_r_idx = -1
-                            temp_r_ptr = r_ptr
-                            while temp_r_ptr < len(route_stations):
-                                if (stop.get("line_id") == route_stations[temp_r_ptr][0] and 
-                                    stop.get("station_id") == route_stations[temp_r_ptr][1]):
-                                    matched_r_idx = temp_r_ptr
-                                    r_ptr = temp_r_ptr + 1
-                                    break
-                                temp_r_ptr += 1
+                    r_ptr = 0
+                    for stop in stops:
+                        matched_r_idx = -1
+                        temp_r_ptr = r_ptr
+                        while temp_r_ptr < len(route_stations):
+                            if (stop.get("line_id") == route_stations[temp_r_ptr][0] and 
+                                stop.get("station_id") == route_stations[temp_r_ptr][1]):
+                                matched_r_idx = temp_r_ptr
+                                r_ptr = temp_r_ptr + 1
+                                break
+                            temp_r_ptr += 1
 
-                            # この停車駅が、編集対象の区間に属するかを判定
-                            if matched_r_idx != -1 and r_start_idx <= matched_r_idx <= r_end_idx:
-                                # 1. 除外されたかどうかの判定 (路線変更 or 駅削除)
-                                if old_line_id != new_line_id or stop.get("station_id") not in new_stations:
-                                    continue # 削除（リストに追加しない）
-                                
-                                # 2. 新しい区間の末端に対するNone設定の適用
-                                if stop.get("line_id") == new_line_id:
-                                    if stop.get("station_id") == seg_start:
-                                        stop["arrival_time"] = None
-                                    if stop.get("station_id") == seg_end:
-                                        stop["departure_time"] = None
+                        # この停車駅が、編集対象の区間に属するかを判定
+                        if matched_r_idx != -1 and r_start_idx <= matched_r_idx <= r_end_idx:
+                            # 1. 除外されたかどうかの判定 (路線変更 or 駅削除)
+                            if old_line_id != new_line_id or stop.get("station_id") not in new_stations:
+                                continue # 削除（リストに追加しない）
                             
-                            new_stops.append(stop)
-                        train["stops"] = new_stops
+                            # 2. 新しい区間の末端に対するNone設定の適用
+                            if stop.get("line_id") == new_line_id:
+                                if stop.get("station_id") == seg_start:
+                                    stop["arrival_time"] = None
+                                if stop.get("station_id") == seg_end:
+                                    stop["departure_time"] = None
+                        
+                        new_stops.append(stop)
+                    train["stops"] = new_stops
 
             route_data["line_segments"][index] = new_data
             self._populate_segment_list(route_data)
@@ -1062,56 +1063,54 @@ class RouteEditorDialog(QDialog):
 
             segments = route_data.get("line_segments", [])
 
-            # 全ダイヤ・全列車のデータを走査して更新
-            tbd = route_data.get("trains_by_diagram", {})
+            # 停車駅(stops)は運行系統直下のマスタ情報にあるため、ダイヤに関わらず1回だけ更新
             stations_in_this_segment = self._get_stations_in_segment(line_id, start_sid, end_sid)
             rel_idx = stations_in_this_segment.index(split_sid)
 
-            for diag_data in tbd.values():
-                for train_key in ["inbound_trains", "outbound_trains"]:
-                    is_inbound = (train_key == "inbound_trains")
-                    
-                    # 期待されるシーケンスと、分割駅が属するセグメントの開始位置を取得
-                    route_stations = self._get_expected_route_sequence(segments, is_inbound)
-                    r_start_idx, _ = self._get_segment_range_in_sequence(segments, index, is_inbound)
+            for train_key in ["inbound_trains", "outbound_trains"]:
+                is_inbound = (train_key == "inbound_trains")
+                
+                # 期待されるシーケンスと、分割駅が属するセグメントの開始位置を取得
+                route_stations = self._get_expected_route_sequence(segments, is_inbound)
+                r_start_idx, _ = self._get_segment_range_in_sequence(segments, index, is_inbound)
 
-                    # 期待されるリスト内での分割駅の正確な位置を特定
-                    if not is_inbound:
-                        target_route_idx = r_start_idx + rel_idx
-                    else:
-                        target_route_idx = r_start_idx + (len(stations_in_this_segment) - 1 - rel_idx)
+                # 期待されるリスト内での分割駅の正確な位置を特定
+                if not is_inbound:
+                    target_route_idx = r_start_idx + rel_idx
+                else:
+                    target_route_idx = r_start_idx + (len(stations_in_this_segment) - 1 - rel_idx)
 
-                    for train in diag_data.get(train_key, {}).values():
-                        stops = train.get("stops", [])
+                for train in route_data.get(train_key, {}).values():
+                    stops = train.get("stops", [])
 
-                        # 列車が持つ停車駅リスト(stops)と、運行系統が定義する期待される駅リスト(route_stations)を突き合わせ、
-                        # target_route_idx に対応する stops 内のインデックス(split_idx)を探す
-                        split_idx = -1
-                        r_ptr = 0
-                        for s_idx, stop in enumerate(stops):
-                            while r_ptr < len(route_stations):
-                                if (stop.get("line_id") == route_stations[r_ptr][0] and 
-                                    stop.get("station_id") == route_stations[r_ptr][1]):
-                                    if r_ptr == target_route_idx:
-                                        split_idx = s_idx
-                                    r_ptr += 1
-                                    break
+                    # 列車が持つ停車駅リスト(stops)と、運行系統が定義する期待される駅リスト(route_stations)を突き合わせ、
+                    # target_route_idx に対応する stops 内のインデックス(split_idx)を探す
+                    split_idx = -1
+                    r_ptr = 0
+                    for s_idx, stop in enumerate(stops):
+                        while r_ptr < len(route_stations):
+                            if (stop.get("line_id") == route_stations[r_ptr][0] and 
+                                stop.get("station_id") == route_stations[r_ptr][1]):
+                                if r_ptr == target_route_idx:
+                                    split_idx = s_idx
                                 r_ptr += 1
-                            if split_idx != -1: break
+                                break
+                            r_ptr += 1
+                        if split_idx != -1: break
 
-                        if split_idx != -1:
-                            orig_stop = stops[split_idx]
-                            
-                            # 進行方向における前段区間の「終点」としてのデータ（発時刻をNoneに設定）
-                            stop_terminal = orig_stop.copy()
-                            stop_terminal["departure_time"] = None
-                            
-                            # 進行方向における後段区間の「起点」としてのデータ（着時刻をNoneに設定）
-                            stop_origin = orig_stop.copy()
-                            stop_origin["arrival_time"] = None
-                            
-                            # 1つの停車駅データを、境界を跨ぐ2つのデータに分割して挿入
-                            stops[split_idx : split_idx+1] = [stop_terminal, stop_origin]
+                    if split_idx != -1:
+                        orig_stop = stops[split_idx]
+                        
+                        # 進行方向における前段区間の「終点」としてのデータ（発時刻をNoneに設定）
+                        stop_terminal = orig_stop.copy()
+                        stop_terminal["departure_time"] = None
+                        
+                        # 進行方向における後段区間の「起点」としてのデータ（着時刻をNoneに設定）
+                        stop_origin = orig_stop.copy()
+                        stop_origin["arrival_time"] = None
+                        
+                        # 1つの停車駅データを、境界を跨ぐ2つのデータに分割して挿入
+                        stops[split_idx : split_idx+1] = [stop_terminal, stop_origin]
             
             # 分割処理：元の要素を削除し、新しい2つの区間を挿入
             route_data["line_segments"].pop(index)
@@ -1136,50 +1135,48 @@ class RouteEditorDialog(QDialog):
             start_sid = segment_data.get("start_station")
             end_sid = segment_data.get("end_station")
 
-            # 全ダイヤ・全列車のデータを走査して更新
-            tbd = route_data.get("trains_by_diagram", {})
+            # 停車駅(stops)は運行系統直下のマスタ情報にあるため、ダイヤに関わらず1回だけ更新
             segments = route_data.get("line_segments", [])
 
-            for diag_data in tbd.values():
-                for train_key in ["inbound_trains", "outbound_trains"]:
-                    is_inbound = (train_key == "inbound_trains")
-                    
-                    # 期待されるシーケンスと、削除対象区間のインデックス範囲を取得
-                    route_stations = self._get_expected_route_sequence(segments, is_inbound)
-                    r_start_idx, r_end_idx = self._get_segment_range_in_sequence(segments, index, is_inbound)
+            for train_key in ["inbound_trains", "outbound_trains"]:
+                is_inbound = (train_key == "inbound_trains")
+                
+                # 期待されるシーケンスと、削除対象区間のインデックス範囲を取得
+                route_stations = self._get_expected_route_sequence(segments, is_inbound)
+                r_start_idx, r_end_idx = self._get_segment_range_in_sequence(segments, index, is_inbound)
 
-                    # 走行方向における起点と終点（境界判定用）
-                    seg_start_sid = end_sid if is_inbound else start_sid
-                    seg_end_sid = start_sid if is_inbound else end_sid
+                # 走行方向における起点と終点（境界判定用）
+                seg_start_sid = end_sid if is_inbound else start_sid
+                seg_end_sid = start_sid if is_inbound else end_sid
 
-                    for train in diag_data.get(train_key, {}).values():
-                        stops = train.get("stops", [])
-                        new_stops = []
-                        r_ptr = 0
-                        for stop in stops:
-                            matched_r_idx = -1
-                            temp_r_ptr = r_ptr
-                            while temp_r_ptr < len(route_stations):
-                                if (stop.get("line_id") == route_stations[temp_r_ptr][0] and 
-                                    stop.get("station_id") == route_stations[temp_r_ptr][1]):
-                                    matched_r_idx = temp_r_ptr
-                                    r_ptr = temp_r_ptr + 1
-                                    break
-                                temp_r_ptr += 1
+                for train in route_data.get(train_key, {}).values():
+                    stops = train.get("stops", [])
+                    new_stops = []
+                    r_ptr = 0
+                    for stop in stops:
+                        matched_r_idx = -1
+                        temp_r_ptr = r_ptr
+                        while temp_r_ptr < len(route_stations):
+                            if (stop.get("line_id") == route_stations[temp_r_ptr][0] and 
+                                stop.get("station_id") == route_stations[temp_r_ptr][1]):
+                                matched_r_idx = temp_r_ptr
+                                r_ptr = temp_r_ptr + 1
+                                break
+                            temp_r_ptr += 1
 
-                            # この停車駅が、削除対象の区間に属するかを判定
-                            if matched_r_idx != -1 and r_start_idx <= matched_r_idx <= r_end_idx:
-                                sid = stop.get("station_id")
-                                # 境界駅において、隣接する残る区間のためのデータ（着時刻or発時刻がある）なら保持
-                                if sid == seg_start_sid and stop.get("arrival_time") is not None:
-                                    pass # 他の区間の終了点としての役割があるため保持
-                                elif sid == seg_end_sid and stop.get("departure_time") is not None:
-                                    pass # 他の区間の開始点としての役割があるため保持
-                                else:
-                                    continue # 削除（リストに追加しない）
+                        # この停車駅が、削除対象の区間に属するかを判定
+                        if matched_r_idx != -1 and r_start_idx <= matched_r_idx <= r_end_idx:
+                            sid = stop.get("station_id")
+                            # 境界駅において、隣接する残る区間のためのデータ（着時刻or発時刻がある）なら保持
+                            if sid == seg_start_sid and stop.get("arrival_time") is not None:
+                                pass # 他の区間の終了点としての役割があるため保持
+                            elif sid == seg_end_sid and stop.get("departure_time") is not None:
+                                pass # 他の区間の開始点としての役割があるため保持
+                            else:
+                                continue # 削除（リストに追加しない）
 
-                            new_stops.append(stop)
-                        train["stops"] = new_stops
+                        new_stops.append(stop)
+                    train["stops"] = new_stops
 
             route_data["line_segments"].pop(index)
             self._populate_segment_list(route_data)

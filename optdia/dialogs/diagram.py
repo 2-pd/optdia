@@ -14,8 +14,9 @@ class AddDiagramDialog(QDialog):
     def __init__(self, parent, project: OptDiaProject):
         super().__init__(parent)
         self.project = project
+        self._is_initial_manually_edited = False
         self.setWindowTitle("運転ダイヤの追加")
-        self.setFixedSize(400, 240)
+        self.setFixedSize(480, 320)
 
         layout = QVBoxLayout(self)
 
@@ -35,7 +36,17 @@ class AddDiagramDialog(QDialog):
         layout.addWidget(QLabel("ダイヤ名:"))
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText("例) 平日ダイヤ")
+        self.name_edit.textChanged.connect(self._on_name_changed)
         layout.addWidget(self.name_edit)
+
+        # ダイヤ名の1文字表記
+        layout.addWidget(QLabel("ダイヤ名の1文字表記:"))
+        self.initial_edit = QLineEdit()
+        self.initial_edit.setPlaceholderText("例) 平")
+        self.initial_edit.setFixedWidth(80)
+        self.initial_edit.textEdited.connect(self._on_initial_edited)
+        self.initial_edit.editingFinished.connect(self._on_initial_editing_finished)
+        layout.addWidget(self.initial_edit)
 
         layout.addStretch()
 
@@ -57,9 +68,28 @@ class AddDiagramDialog(QDialog):
         self.id_edit.setStyleSheet("")
         self.warning_label.setText("")
 
+    def _on_name_changed(self, text: str):
+        """ダイヤ名が変更されたとき、未編集なら1文字表記を自動更新する"""
+        if not self._is_initial_manually_edited:
+            if text:
+                self.initial_edit.setText(text[0])
+            else:
+                self.initial_edit.clear()
+
+    def _on_initial_edited(self):
+        """ユーザーが手動で1文字表記を編集したことを記録する"""
+        self._is_initial_manually_edited = True
+
+    def _on_initial_editing_finished(self):
+        """1文字表記の入力欄のフォーカスが外れたときに、2文字目以降を削除する"""
+        text = self.initial_edit.text()
+        if len(text) > 1:
+            self.initial_edit.setText(text[0])
+
     def _on_add_clicked(self):
         """入力内容を検証し、問題なければ accept する"""
         diagram_id = self.id_edit.text().strip()
+        diagram_initial = self.initial_edit.text().strip()
 
         self.id_edit.setStyleSheet("")
 
@@ -74,6 +104,11 @@ class AddDiagramDialog(QDialog):
         if diagram_id in self.project.diagrams:
             self.warning_label.setText("既に使用されているIDです")
             self.id_edit.setStyleSheet("background-color: #ffeeee;")
+            return
+
+        if not diagram_initial:
+            self.warning_label.setText("1文字表記を指定してください")
+            self.initial_edit.setStyleSheet("background-color: #ffeeee;")
             return
 
         self.accept()
@@ -149,6 +184,14 @@ class DiagramEditorDialog(QDialog):
         self.diagram_name_edit.textChanged.connect(self._on_diagram_name_changed)
         edit_form_layout.addWidget(self.diagram_name_edit)
 
+        # ダイヤ名の1文字表記
+        edit_form_layout.addWidget(QLabel("ダイヤ名の1文字表記:"))
+        self.diagram_initial_edit = QLineEdit()
+        self.diagram_initial_edit.setFixedWidth(80)
+        self.diagram_initial_edit.textChanged.connect(self._on_diagram_initial_changed)
+        self.diagram_initial_edit.editingFinished.connect(self._on_diagram_initial_editing_finished)
+        edit_form_layout.addWidget(self.diagram_initial_edit)
+
         # 背景色
         edit_form_layout.addSpacing(10)
         edit_form_layout.addWidget(QLabel("背景色:"))
@@ -184,6 +227,7 @@ class DiagramEditorDialog(QDialog):
             self.right_stack.setCurrentWidget(self.placeholder_page)
 
         self.diagram_name_edit.setEnabled(enabled)
+        self.diagram_initial_edit.setEnabled(enabled)
         self.background_color_button.setEnabled(enabled)
         self.delete_diagram_button.setEnabled(enabled)
 
@@ -226,6 +270,7 @@ class DiagramEditorDialog(QDialog):
             self._set_editing_enabled(False)
             self.diagram_id_display.clear()
             self.diagram_name_edit.clear()
+            self.diagram_initial_edit.clear()
             self.background_color_button.setText("#cccccc")
             self.background_color_square.setPixmap(create_color_square_pixmap("#cccccc"))
             return
@@ -240,14 +285,17 @@ class DiagramEditorDialog(QDialog):
         
         # シグナルをブロックして更新
         self.diagram_name_edit.blockSignals(True)
+        self.diagram_initial_edit.blockSignals(True)
         self.diagram_id_display.setText(diagram_id)
         self.diagram_name_edit.setText(diagram_data.get("diagram_name", ""))
+        self.diagram_initial_edit.setText(diagram_data.get("diagram_initial", ""))
         
         current_color = diagram_data.get("background_color", "#cccccc")
         self.background_color_button.setText(current_color)
         self.background_color_square.setPixmap(create_color_square_pixmap(current_color))
         
         self.diagram_name_edit.blockSignals(False)
+        self.diagram_initial_edit.blockSignals(False)
 
     def _on_diagram_name_changed(self, text: str):
         """ダイヤ名が変更されたときにプロジェクトデータとリスト表示を更新する"""
@@ -262,6 +310,24 @@ class DiagramEditorDialog(QDialog):
         
         if hasattr(self.parent(), "set_modified"):
             self.parent().set_modified(True)
+
+    def _on_diagram_initial_changed(self, text: str):
+        """ダイヤ名の1文字表記が変更されたときにプロジェクトデータを更新する"""
+        selected_items = self.diagram_list_widget.selectedItems()
+        if not selected_items: return
+        diagram_id = selected_items[0].data(Qt.UserRole)
+        diagram_data = self.project.diagrams.get(diagram_id)
+        if not diagram_data: return
+        
+        diagram_data["diagram_initial"] = text
+        if hasattr(self.parent(), "set_modified"):
+            self.parent().set_modified(True)
+
+    def _on_diagram_initial_editing_finished(self):
+        """1文字表記の入力欄のフォーカスが外れたときに、2文字目以降を削除する"""
+        text = self.diagram_initial_edit.text()
+        if len(text) > 1:
+            self.diagram_initial_edit.setText(text[0])
 
     def _on_pick_background_color(self):
         """背景色選択ダイアログを表示し、選択された色をプロジェクトデータに反映する"""
@@ -288,11 +354,13 @@ class DiagramEditorDialog(QDialog):
         if dialog.exec() == QDialog.Accepted:
             diagram_id = dialog.id_edit.text().strip()
             diagram_name = dialog.name_edit.text().strip()
+            diagram_initial = dialog.initial_edit.text().strip()
 
             # プロジェクトデータに新規運転ダイヤを追加
             self.project.diagrams[diagram_id] = {
                 "diagram_id": diagram_id,
                 "diagram_name": diagram_name,
+                "diagram_initial": diagram_initial,
                 "background_color": "#cccccc" # デフォルトの背景色
             }
             self.project.diagrams_order.append(diagram_id)
@@ -335,7 +403,7 @@ class DiagramEditorDialog(QDialog):
             self,
             "運転ダイヤの削除",
             f"「{diagram_name}」を削除しますか？\n"
-            "このダイヤを削除すると、このダイヤに登録されている列車も全て削除されます。\n"
+            "このダイヤを削除すると、このダイヤのみに登録されている列車も全て削除されます。\n"
             "本当にダイヤを削除しますか？",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No

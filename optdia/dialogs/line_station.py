@@ -273,8 +273,8 @@ class AddTrackDialog(QDialog):
         self.station_data = station_data
         self.setWindowTitle("発着番線の追加")
         self.setFixedSize(400, 300)
-        self._is_track_number_manually_edited = False
-        self._is_short_track_number_manually_edited = False
+        self._is_track_name_manually_edited = False
+        self._is_track_short_name_manually_edited = False
 
         layout = QVBoxLayout(self)
 
@@ -290,15 +290,15 @@ class AddTrackDialog(QDialog):
         self.warning_label.setStyleSheet("color: red; padding-left: 5px;")
         layout.addWidget(self.warning_label)
 
-        # 発着番線番号
-        layout.addWidget(QLabel("発着番線番号:"))
+        # 発着番線名
+        layout.addWidget(QLabel("発着番線名:"))
         self.number_edit = QLineEdit()
         self.number_edit.setPlaceholderText("例) 1番")
         self.number_edit.textEdited.connect(self._on_number_edited)
         layout.addWidget(self.number_edit)
 
-        # 発着番線番号の省略表記
-        layout.addWidget(QLabel("発着番線番号の省略表記(2文字以内):"))
+        # 発着番線名の省略表記
+        layout.addWidget(QLabel("発着番線名の省略表記(2文字以内):"))
         self.short_number_edit = QLineEdit()
         self.short_number_edit.setPlaceholderText("例) 1")
         self.short_number_edit.textEdited.connect(self._on_short_number_edited)
@@ -323,19 +323,19 @@ class AddTrackDialog(QDialog):
         """IDが変更されたとき、番号が未編集なら同期させる"""
         self.id_edit.setStyleSheet("")
         self.warning_label.setText("")
-        if not self._is_track_number_manually_edited:
+        if not self._is_track_name_manually_edited:
             self.number_edit.setText(text)
-        if not self._is_short_track_number_manually_edited:
+        if not self._is_track_short_name_manually_edited:
             truncated_text = text[:2] if len(text) > 2 else text
             self.short_number_edit.setText(truncated_text)
 
     def _on_number_edited(self):
         """ユーザーが手動で番号を編集したことを記録する"""
-        self._is_track_number_manually_edited = True
+        self._is_track_name_manually_edited = True
 
     def _on_short_number_edited(self):
         """ユーザーが手動で省略表記を編集したことを記録する"""
-        self._is_short_track_number_manually_edited = True
+        self._is_track_short_name_manually_edited = True
 
     def _on_short_number_editing_finished(self):
         """省略表記の入力欄のフォーカスが外れたときに、3文字目以降を削除する"""
@@ -350,8 +350,8 @@ class AddTrackDialog(QDialog):
             self.short_number_edit.setText(self.short_number_edit.text()[:2])
 
         track_id = self.id_edit.text().strip()
-        track_number = self.number_edit.text().strip()
-        short_track_number = self.short_number_edit.text().strip()
+        track_name = self.number_edit.text().strip()
+        track_short_name = self.short_number_edit.text().strip()
 
         if not track_id:
             self.warning_label.setText("発着番線IDを入力してください")
@@ -370,13 +370,13 @@ class AddTrackDialog(QDialog):
             self.id_edit.setStyleSheet("background-color: #ffeeee;")
             return
         
-        if not track_number:
-            self.warning_label.setText("発着番線番号を入力してください")
+        if not track_name:
+            self.warning_label.setText("発着番線名を入力してください")
             self.number_edit.setStyleSheet("background-color: #ffeeee;")
             return
 
-        if not short_track_number:
-            self.warning_label.setText("発着番線番号の省略表記を入力してください")
+        if not track_short_name:
+            self.warning_label.setText("発着番線名の省略表記を入力してください")
             self.short_number_edit.setStyleSheet("background-color: #ffeeee;")
             return
 
@@ -385,7 +385,7 @@ class AddTrackDialog(QDialog):
 
 # 発着番線の編集ダイアログ
 class EditTrackDialog(QDialog):
-    def __init__(self, parent, track_id: str, track_number: str, short_track_number: str):
+    def __init__(self, parent, track_id: str, track_name: str, track_short_name: str):
         super().__init__(parent)
         self.setWindowTitle("発着番線の編集")
         self.setFixedSize(400, 280)
@@ -399,14 +399,14 @@ class EditTrackDialog(QDialog):
         self.id_edit.setStyleSheet("background-color: #eeeeee; color: #888888;")
         layout.addWidget(self.id_edit)
 
-        # 発着番線番号
-        layout.addWidget(QLabel("発着番線番号:"))
-        self.number_edit = QLineEdit(track_number)
+        # 発着番線名
+        layout.addWidget(QLabel("発着番線名:"))
+        self.number_edit = QLineEdit(track_name)
         layout.addWidget(self.number_edit)
 
-        # 発着番線番号の省略表記
-        layout.addWidget(QLabel("発着番線番号の省略表記(2文字以内):"))
-        self.short_number_edit = QLineEdit(short_track_number)
+        # 発着番線名の省略表記
+        layout.addWidget(QLabel("発着番線名の省略表記(2文字以内):"))
+        self.short_number_edit = QLineEdit(track_short_name)
         self.short_number_edit.editingFinished.connect(self._on_short_number_editing_finished)
         layout.addWidget(self.short_number_edit)
 
@@ -436,14 +436,14 @@ class EditTrackDialog(QDialog):
         if len(self.short_number_edit.text()) > 2:
             self.short_number_edit.setText(self.short_number_edit.text()[:2])
 
-        track_number = self.number_edit.text().strip()
-        short_track_number = self.short_number_edit.text().strip()
+        track_name = self.number_edit.text().strip()
+        track_short_name = self.short_number_edit.text().strip()
 
-        if not track_number:
-            QMessageBox.warning(self, "エラー", "発着番線番号を入力してください。")
+        if not track_name:
+            QMessageBox.warning(self, "エラー", "発着番線名を入力してください。")
             return
-        if not short_track_number:
-            QMessageBox.warning(self, "エラー", "発着番線番号の省略表記を入力してください。")
+        if not track_short_name:
+            QMessageBox.warning(self, "エラー", "発着番線名の省略表記を入力してください。")
             return
         
         super().accept()
@@ -602,9 +602,9 @@ class LineStationEditorDialog(QDialog):
         self.show_arrival_time_checkbox = QCheckBox("着時刻を表示")
         self.show_arrival_time_checkbox.stateChanged.connect(self._on_station_base_info_changed)
         left_vertical_layout.addWidget(self.show_arrival_time_checkbox)
-        self.show_track_number_checkbox = QCheckBox("発着番線を表示")
-        self.show_track_number_checkbox.stateChanged.connect(self._on_station_base_info_changed)
-        left_vertical_layout.addWidget(self.show_track_number_checkbox)
+        self.show_track_name_checkbox = QCheckBox("発着番線を表示")
+        self.show_track_name_checkbox.stateChanged.connect(self._on_station_base_info_changed)
+        left_vertical_layout.addWidget(self.show_track_name_checkbox)
         left_vertical_layout.addStretch()
         bottom_base_info_layout.addLayout(left_vertical_layout)
 
@@ -822,7 +822,7 @@ class LineStationEditorDialog(QDialog):
             self.is_major_station_checkbox.setChecked(False)
             self.is_signal_station_checkbox.setChecked(False)
             self.show_arrival_time_checkbox.setChecked(False)
-            self.show_track_number_checkbox.setChecked(False)
+            self.show_track_name_checkbox.setChecked(False)
             self.station_number_edit.clear()
             self.running_time_spin.setValue(-1)
             self.inbound_track_combo.clear()
@@ -836,7 +836,7 @@ class LineStationEditorDialog(QDialog):
         self.is_major_station_checkbox.blockSignals(False)
         self.is_signal_station_checkbox.blockSignals(False)
         self.show_arrival_time_checkbox.blockSignals(False)
-        self.show_track_number_checkbox.blockSignals(False)
+        self.show_track_name_checkbox.blockSignals(False)
         self.inbound_track_combo.blockSignals(False)
         self.outbound_track_combo.blockSignals(False)
 
@@ -1087,7 +1087,7 @@ class LineStationEditorDialog(QDialog):
         self.is_major_station_checkbox.blockSignals(True)
         self.is_signal_station_checkbox.blockSignals(True)
         self.show_arrival_time_checkbox.blockSignals(True)
-        self.show_track_number_checkbox.blockSignals(True)
+        self.show_track_name_checkbox.blockSignals(True)
 
         self.station_name_edit.setText(station_data.get("station_name", ""))
         self.station_kana_edit.setText(station_data.get("station_name_kana", ""))
@@ -1108,7 +1108,7 @@ class LineStationEditorDialog(QDialog):
         for tid in tracks_order:
             t_data = tracks.get(tid)
             if t_data:
-                t_name = t_data.get("track_number") or tid
+                t_name = t_data.get("track_name") or tid
                 self.inbound_track_combo.addItem(t_name, tid)
                 self.outbound_track_combo.addItem(t_name, tid)
 
@@ -1125,7 +1125,7 @@ class LineStationEditorDialog(QDialog):
         self.is_major_station_checkbox.setChecked(station_data.get("is_major_station", False))
         self.is_signal_station_checkbox.setChecked(station_data.get("is_signal_station", False))
         self.show_arrival_time_checkbox.setChecked(station_data.get("show_arrival_time", False))
-        self.show_track_number_checkbox.setChecked(station_data.get("show_track_number", False))
+        self.show_track_name_checkbox.setChecked(station_data.get("show_track_name", False))
 
         self._populate_track_list(station_data)
 
@@ -1137,7 +1137,7 @@ class LineStationEditorDialog(QDialog):
         self.is_major_station_checkbox.blockSignals(False)
         self.is_signal_station_checkbox.blockSignals(False)
         self.show_arrival_time_checkbox.blockSignals(False)
-        self.show_track_number_checkbox.blockSignals(False)
+        self.show_track_name_checkbox.blockSignals(False)
 
     def _on_station_initial_editing_finished(self):
         # _on_station_base_info_changed が呼ばれるため、ここでは modified フラグは立てない
@@ -1164,7 +1164,7 @@ class LineStationEditorDialog(QDialog):
         station_data["is_major_station"] = self.is_major_station_checkbox.isChecked()
         station_data["is_signal_station"] = self.is_signal_station_checkbox.isChecked()
         station_data["show_arrival_time"] = self.show_arrival_time_checkbox.isChecked()
-        station_data["show_track_number"] = self.show_track_number_checkbox.isChecked()
+        station_data["show_track_name"] = self.show_track_name_checkbox.isChecked()
         
         # リストの表示更新は、該当する項目が選択されている場合のみ行う
         selected_items = self.station_list_widget.selectedItems()
@@ -1207,7 +1207,7 @@ class LineStationEditorDialog(QDialog):
         for tid in tracks_order:
             track = tracks.get(tid)
             if track:
-                display_name = track.get("track_number") or tid
+                display_name = track.get("track_name") or tid
                 item = QListWidgetItem(display_name)
                 item.setData(Qt.UserRole, tid)
                 self.track_list_widget.addItem(item)
@@ -1224,16 +1224,16 @@ class LineStationEditorDialog(QDialog):
         dialog = AddTrackDialog(self, station_data)
         if dialog.exec() == QDialog.Accepted:
             track_id = dialog.id_edit.text().strip()
-            track_number = dialog.number_edit.text().strip()
-            short_track_number = dialog.short_number_edit.text().strip() # Get short_track_number
+            track_name = dialog.number_edit.text().strip()
+            track_short_name = dialog.short_number_edit.text().strip()
 
             if "tracks" not in station_data: station_data["tracks"] = {}
             if "tracks_order" not in station_data: station_data["tracks_order"] = []
 
             station_data["tracks"][track_id] = {
                 "track_id": track_id,
-                "track_number": track_number,
-                "short_track_number": short_track_number # Add short_track_number
+                "track_name": track_name,
+                "track_short_name": track_short_name
             }
             station_data["tracks_order"].append(track_id)
 
@@ -1259,11 +1259,11 @@ class LineStationEditorDialog(QDialog):
             return
 
         dialog = EditTrackDialog(self, track_id, 
-                                 track_data.get("track_number", ""), 
-                                 track_data.get("short_track_number", "")) # Pass short_track_number
+                                 track_data.get("track_name", ""), 
+                                 track_data.get("track_short_name", ""))
         if dialog.exec() == QDialog.Accepted:
-            track_data["track_number"] = dialog.number_edit.text().strip()
-            track_data["short_track_number"] = dialog.short_number_edit.text().strip() # Update short_track_number
+            track_data["track_name"] = dialog.number_edit.text().strip()
+            track_data["track_short_name"] = dialog.short_number_edit.text().strip()
             
             self._populate_track_list(station_data)
             self._on_station_selected()
@@ -1306,13 +1306,11 @@ class LineStationEditorDialog(QDialog):
 
         # 3. 全ての列車の経由駅情報（stops）から削除対象路線のデータを削除
         for route in self.project.routes.values():
-            tbd = route.get("trains_by_diagram", {})
-            for diagram_data in tbd.values():
-                for direction_key in ["inbound_trains", "outbound_trains"]:
-                    trains_dict = diagram_data.get(direction_key, {})
-                    for train in trains_dict.values():
-                        if "stops" in train:
-                            train["stops"] = [stop for stop in train["stops"] if stop.get("line_id") != line_id]
+            for train_key in ["inbound_trains", "outbound_trains"]:
+                trains_dict = route.get(train_key, {})
+                for train in trains_dict.values():
+                    if "stops" in train:
+                        train["stops"] = [stop for stop in train["stops"] if stop.get("line_id") != line_id]
 
         # 4. プロジェクトの路線データ本体から削除
         del self.project.lines[line_id]
@@ -1409,16 +1407,14 @@ class LineStationEditorDialog(QDialog):
 
         # B. 全ての列車の発着情報を検査し、削除対象の駅・路線ペアの経由駅データを削除
         for route in self.project.routes.values():
-            tbd = route.get("trains_by_diagram", {})
-            for diagram_data in tbd.values():
-                for direction_key in ["inbound_trains", "outbound_trains"]:
-                    trains_dict = diagram_data.get(direction_key, {})
-                    for train in trains_dict.values():
-                        if "stops" in train:
-                            train["stops"] = [
-                                stop for stop in train["stops"]
-                                if not (stop.get("station_id") == station_id and stop.get("line_id") == self.current_selected_line_id)
-                            ]
+            for train_key in ["inbound_trains", "outbound_trains"]:
+                trains_dict = route.get(train_key, {})
+                for train in trains_dict.values():
+                    if "stops" in train:
+                        train["stops"] = [
+                            stop for stop in train["stops"]
+                            if not (stop.get("station_id") == station_id and stop.get("line_id") == self.current_selected_line_id)
+                        ]
 
         # C. 他の路線で使用されていない場合は、プロジェクト全体の駅情報からも削除
         if not other_lines_using:
@@ -1461,14 +1457,12 @@ class LineStationEditorDialog(QDialog):
 
             # 2. 全ての列車の発着情報を検査し、削除した番線設定を解除
             for route in self.project.routes.values():
-                tbd = route.get("trains_by_diagram", {})
-                for diagram_data in tbd.values():
-                    for direction_key in ["inbound_trains", "outbound_trains"]:
-                        trains_dict = diagram_data.get(direction_key, {})
-                        for train in trains_dict.values():
-                            for stop in train.get("stops", []):
-                                if stop.get("station_id") == station_id and stop.get("track_id") == track_id:
-                                    stop["track_id"] = None
+                for train_key in ["inbound_trains", "outbound_trains"]:
+                    trains_dict = route.get(train_key, {})
+                    for train in trains_dict.values():
+                        for stop in train.get("stops", []):
+                            if stop.get("station_id") == station_id and stop.get("track_id") == track_id:
+                                stop["track_id"] = None
 
             # UIの更新
             self._populate_track_list(station_data)
@@ -1549,7 +1543,7 @@ class LineStationEditorDialog(QDialog):
                     "is_major_station": False,
                     "is_signal_station": False,
                     "show_arrival_time": False,
-                    "show_track_number": False,
+                    "show_track_name": False,
                     "tracks": {},
                     "tracks_order": []
                 }
@@ -1564,8 +1558,8 @@ class LineStationEditorDialog(QDialog):
                             tid = str(i)
                             self.project.stations[station_id]["tracks"][tid] = {
                                 "track_id": tid,
-                                "track_number": f"{i}{suffix}",
-                                "short_track_number": str(i)
+                                "track_name": f"{i}{suffix}",
+                                "track_short_name": str(i)
                             }
                             self.project.stations[station_id]["tracks_order"].append(tid)
 

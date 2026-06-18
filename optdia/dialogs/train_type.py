@@ -206,7 +206,7 @@ class TrainTypeEditorDialog(QDialog):
         self.delete_tt_button = QPushButton("この種別を削除")
         self.delete_tt_button.setFixedSize(120, 30)
         self.delete_tt_button.clicked.connect(self._on_delete_train_type)
-        self.delete_tt_button.setStyleSheet("QPushButton { color: #ee3333; border: none; text-decoration: underline; background-color: transparent; }")
+        self.delete_tt_button.setStyleSheet("QPushButton { color: #cc3333; border: none; text-decoration: underline; background-color: transparent; }")
         bottom_button_layout.addWidget(self.delete_tt_button)
         
         self.tt_editor_layout.addLayout(bottom_button_layout)
@@ -499,15 +499,13 @@ class TrainTypeEditorDialog(QDialog):
             if tt_id in self.project.train_types_order:
                 self.project.train_types_order.remove(tt_id)
 
-            # 全ての運行系統の全てのダイヤから全ての列車を走査して種別設定を解除
+            # 全ての運行系統の全ての列車（マスタデータ）を走査して種別設定を解除
             for route in self.project.routes.values():
-                tbd_dict = route.get("trains_by_diagram", {})
-                for diagram_trains in tbd_dict.values():
-                    for key in ["inbound_trains", "outbound_trains"]:
-                        trains_dict = diagram_trains.get(key, {})
-                        for train in trains_dict.values():
-                            if train.get("train_type_id") == tt_id:
-                                train["train_type_id"] = None
+                for key in ["inbound_trains", "outbound_trains"]:
+                    master_trains_dict = route.get(key, {})
+                    for m_train in master_trains_dict.values():
+                        if m_train.get("train_type_id") == tt_id:
+                            m_train["train_type_id"] = None
 
             # UIの更新
             self._populate_train_type_list()
