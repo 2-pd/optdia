@@ -1,90 +1,9 @@
 from PySide6.QtCore import Qt, QEvent, QTimer, QRect
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QStyledItemDelegate, QStyleOptionViewItem, QApplication, QStyle,
-    QDialog, QLineEdit, QAbstractItemDelegate, QVBoxLayout, QListWidget, QListWidgetItem,
-    QWidget, QHBoxLayout, QPushButton
+    QStyledItemDelegate, QStyleOptionViewItem, QApplication, QStyle, QLineEdit, QAbstractItemDelegate, QDialog
 )
-from common.gui_utils import HtmlDelegate
-from project import OptDiaProject
-
-class TrainTypePicker(QDialog):
-    def __init__(self, parent, project: OptDiaProject, current_id=None):
-        super().__init__(parent, Qt.Popup)
-        self.project = project
-        self.selected_id = None
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.list_widget = QListWidget(self)
-        self.list_widget.setStyleSheet("border: 1px solid #dddddd;")
-        self.list_widget.setItemDelegate(HtmlDelegate(self))
-
-        # 「設定しない」アイテムの追加
-        none_item = QListWidgetItem("<font color='#888888'>設定しない</font>")
-        none_item.setData(Qt.UserRole, None)
-        self.list_widget.addItem(none_item)
-
-        for tt_id in self.project.train_types_order:
-            tt = self.project.train_types[tt_id]
-            name, train_name = tt.get("train_type_name", ""), tt.get("train_name")
-            color, bg_color = tt.get("main_color", "#333333"), tt.get("background_color", "#ffffff")
-            display_name = f"{name} {train_name}" if train_name else name
-            item = QListWidgetItem(f"<font color='{color}'>{display_name}</font>")
-            item.setData(Qt.UserRole, tt_id)
-            item.setBackground(QColor(bg_color))
-            self.list_widget.addItem(item)
-
-        if current_id is None:
-            self.list_widget.setCurrentItem(none_item)
-        else:
-            for i in range(self.list_widget.count()):
-                if self.list_widget.item(i).data(Qt.UserRole) == current_id:
-                    self.list_widget.setCurrentItem(self.list_widget.item(i))
-                    self.list_widget.scrollToItem(self.list_widget.item(i))
-                    break
-        self.list_widget.itemClicked.connect(self._on_item_clicked)
-        layout.addWidget(self.list_widget)
-        self.setFixedSize(200, min(400, self.list_widget.count() * 32 + 2))
-
-    def _on_item_clicked(self, item):
-        self.selected_id = item.data(Qt.UserRole)
-        self.accept()
-
-class TrackPicker(QDialog):
-    def __init__(self, parent, station_data, current_track_id=None):
-        super().__init__(parent, Qt.Popup)
-        self.selected_id = None
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.list_widget = QListWidget(self)
-        self.list_widget.setStyleSheet("border: 1px solid #dddddd;")
-        
-        # 「設定しない」アイテムの追加
-        none_item = QListWidgetItem("設定しない")
-        none_item.setData(Qt.UserRole, None)
-        self.list_widget.addItem(none_item)
-        if current_track_id is None:
-            self.list_widget.setCurrentItem(none_item)
-
-        tracks = station_data.get("tracks", {})
-        order = station_data.get("tracks_order", [])
-        for tid in order:
-            track = tracks.get(tid, {})
-            track_name = track.get("track_name") or tid
-            item = QListWidgetItem(track_name)
-            item.setData(Qt.UserRole, tid)
-            self.list_widget.addItem(item)
-            if tid == current_track_id:
-                self.list_widget.setCurrentItem(item)
-                self.list_widget.scrollToItem(item)
-        
-        self.list_widget.itemClicked.connect(self._on_item_clicked)
-        layout.addWidget(self.list_widget)
-        self.setFixedSize(150, min(300, self.list_widget.count() * 28 + 2))
-
-    def _on_item_clicked(self, item):
-        self.selected_id = item.data(Qt.UserRole)
-        self.accept()
+from timetable.dialogs import TrainTypePicker, TrackPicker
 
 # メインウィンドウの時刻表テーブルで使用するデリゲート
 class TimetableDelegate(QStyledItemDelegate):
@@ -97,9 +16,27 @@ class TimetableDelegate(QStyledItemDelegate):
         track_short_name = ""
         track_box_width = 15
         
+        # 描画用オプションの作成（番線ボックスがある場合は右にずらす）
+        text_option = QStyleOptionViewItem(option)
+        self.initStyleOption(text_option, index)
+
         # フッター行（連続する列車）の判定
         num_stations = len(model.station_rows) if hasattr(model, 'station_rows') else 0
         footer_row_idx = num_headers + num_stations
+
+        # フッター行はウィジェットが配置されるため、デリゲートでは描画しない
+        if row == footer_row_idx:
+            painter.save()
+            # 背景の描画 (選択状態など)
+            style = text_option.widget.style() if text_option.widget else QApplication.style()
+            text_option.text = "" # テキストはウィジェットが描画するため、デリゲートでは描画しない
+            style.drawControl(QStyle.CE_ItemViewItem, text_option, painter)
+            painter.setPen(QColor("#dddddd")) # 右側の境界線
+            painter.drawLine(option.rect.right(), option.rect.top(), option.rect.right(), option.rect.bottom())
+            # 下部の境界線も描画
+            painter.drawLine(option.rect.left(), option.rect.bottom(), option.rect.right(), option.rect.bottom())
+            painter.restore()
+            return
 
         # 未入力セルの記号判定
         placeholder_symbol = None
@@ -110,15 +47,6 @@ class TimetableDelegate(QStyledItemDelegate):
                 if not (option.state & (QStyle.State_HasFocus | QStyle.State_Selected)):
                     placeholder_symbol = self._get_placeholder_symbol(index)
         
-        if row == footer_row_idx:
-            # セル内のボタンは TimetableView で setIndexWidget により配置されるため、
-            # デリゲートでは境界線のみ描画する
-            painter.save()
-            painter.setPen(QColor("#dddddd"))
-            painter.drawLine(option.rect.right(), option.rect.top(), option.rect.right(), option.rect.bottom())
-            painter.restore()
-            return
-
         if row >= num_headers:
             row_idx = row - num_headers
             if 0 <= row_idx < len(model.station_rows):
@@ -141,9 +69,6 @@ class TimetableDelegate(QStyledItemDelegate):
                             if track_data:
                                 track_short_name = track_data.get("track_short_name") or ""
 
-        # 描画用オプションの作成（番線ボックスがある場合は右にずらす）
-        text_option = QStyleOptionViewItem(option)
-        self.initStyleOption(text_option, index)
         if draw_track_box:
             # 番線ボックスの描画（編集時のボタンと同じ外観）
             track_rect = QRect(option.rect.left(), option.rect.top(), track_box_width, option.rect.height())
@@ -168,7 +93,7 @@ class TimetableDelegate(QStyledItemDelegate):
             color = index.data(Qt.ForegroundRole)
             if not isinstance(color, QColor): color = text_option.palette.text().color()
             alignment = index.data(Qt.TextAlignmentRole) or Qt.AlignCenter
-            if row == 5:
+            if row == 6:
                 alignment |= Qt.TextWordWrap
             painter.save()
             painter.setPen(color)
@@ -216,9 +141,9 @@ class TimetableDelegate(QStyledItemDelegate):
         size = super().sizeHint(option, index)
         row = index.row()
 
-        if row in (1, 3):
+        if row == 3: # 両数
             size.setHeight(max(line_height, 32))
-        elif row == 5:
+        elif row == 6: # 行き先
             # 入力内容（折り返し数）に関わらず、高さを1行分の2倍に固定します
             size.setHeight(line_height * 2)
         
@@ -241,7 +166,11 @@ class TimetableDelegate(QStyledItemDelegate):
                     self._show_track_menu(index, model, option.widget)
                     return True
 
-        if event.type() == QEvent.MouseButtonRelease and index.row() == 3:
+        if event.type() == QEvent.MouseButtonRelease and index.row() == 1: # 運転日行
+            self._show_diagram_picker_menu(index, model, option.widget)
+            return True
+
+        if event.type() == QEvent.MouseButtonRelease and index.row() == 4: # 種別・愛称行
             self._show_train_type_menu(index, model, option.widget)
             return True
         return super().editorEvent(event, model, option, index)
@@ -256,6 +185,23 @@ class TimetableDelegate(QStyledItemDelegate):
         pos = widget.viewport().mapToGlobal(widget.visualRect(index).bottomLeft())
         picker.move(pos)
         if picker.exec() == QDialog.Accepted: model.setData(index, picker.selected_id, Qt.EditRole)
+
+    def _show_diagram_picker_menu(self, index, model, widget):
+        from timetable.dialogs import DiagramPicker
+        train_id = model.train_ids[index.column()]
+        route_id = model.route_id
+        diagram_id = model.diagram_id
+        direction = model.direction
+
+        picker = DiagramPicker(widget, model.project, train_id, diagram_id, route_id, direction)
+        # 表示位置をセルの左下に合わせる
+        rect = widget.visualRect(index)
+        pos = widget.viewport().mapToGlobal(rect.bottomLeft())
+        picker.move(pos)
+        if picker.exec() == QDialog.Accepted:
+            # DiagramPickerがモデルを直接更新するため、ここではmodel.update_dataを呼び出す
+            # model.update_dataはbeginResetModel/endResetModelを呼び出し、テーブル全体を再描画する
+            model.update_data(route_id, diagram_id, direction)
 
     def _is_track_editable(self, index, model):
         row_idx = index.row() - len(model.row_headers)
@@ -299,6 +245,12 @@ class TimetableDelegate(QStyledItemDelegate):
 
     def createEditor(self, parent, option, index):
         editor = super().createEditor(parent, option, index)
+        # 「運転日」行 (index 1) はクリックでダイアログを開くためエディタ不要
+        # 「運用番号」行 (index 2) はデリゲートで処理するためエディタ不要
+        # 上記の行は編集不可
+        if index.row() == 1 or index.row() == 2: 
+            return None
+
         if isinstance(editor, QLineEdit):
             # モデルに定義されたアライメントをエディタにも適用
             alignment = index.data(Qt.TextAlignmentRole)

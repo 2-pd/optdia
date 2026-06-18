@@ -67,6 +67,24 @@ class OptDiaProject:
         # 運用 (operations) は TS 上で既に連想配列として定義されているためそのまま保持
         self.operations = entities.get("operations", {})
 
+        # 各マスタ列車 (optdia_train) に、その列車が運転されるダイヤのIDを配列として保持する一時キーを追加
+        # このキーは保存時には除去される
+        for route_id in self.routes_order:
+            route = self.routes[route_id]
+            for train_key in ["inbound_trains", "outbound_trains"]:
+                for train_id, m_train in route.get(train_key, {}).items():
+                    m_train["_diagram_ids"] = [] # 一時キーを初期化
+
+            # 各ダイヤを走査し、マスタ列車にダイヤIDを紐付ける
+            for diagram_id in self.diagrams_order:
+                tbd_for_diagram = route.get("trains_by_diagram", {}).get(diagram_id, {})
+                for train_key in ["inbound_trains", "outbound_trains"]:
+                    d_trains_for_diagram = tbd_for_diagram.get(train_key, {})
+                    for d_train_id in d_trains_for_diagram:
+                        m_train = route.get(train_key, {}).get(d_train_id)
+                        if m_train is not None and diagram_id not in m_train["_diagram_ids"]:
+                            m_train["_diagram_ids"].append(diagram_id)
+
         # 読込時に部分区間境界での分割処理を行い、発着時刻データが2つの部分区間に跨っている可能性を排除する
         self._split_all_boundary_stops()
 
@@ -153,7 +171,7 @@ class OptDiaProject:
 
     def _clean_train_for_export(self, train_data: dict):
         """保存用に列車データから一時的な管理用フラグやインデックスを削除する"""
-        clean_train = {k: v for k, v in train_data.items() if k != "to_be_saved"}
+        clean_train = {k: v for k, v in train_data.items() if k not in ["to_be_saved", "_diagram_ids", "_stop_map"]}
         if "stops" in clean_train:
             # 保存直前に、不要なデータの削除と、同一駅・路線の連続するデータの統合を行う
             stops = self._normalize_train_stops_for_save(clean_train["stops"])
@@ -242,8 +260,12 @@ class OptDiaProject:
         open_func = gzip.open if is_compressed else open
 
         with open_func(filepath, "wt", encoding="utf-8") as f:
-            # 日本語がエスケープされないよう ensure_ascii=False を指定し、インデント付きで保存します
-            json.dump(data, f, ensure_ascii=False, indent=4)
+            if is_compressed:
+                # 圧縮保存 (.optd) の場合は、ファイルサイズを最小化するためインデントと余分な空白を削除
+                json.dump(data, f, ensure_ascii=False, separators=(',', ':'))
+            else:
+                # 非圧縮保存 (.optdia) の場合は、テキストエディタ等での可読性を考慮してインデント付きで保存
+                json.dump(data, f, ensure_ascii=False, indent=4)
 
 
 def load_project(filepath: str) -> OptDiaProject:

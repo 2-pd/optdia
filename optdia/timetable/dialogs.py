@@ -1,7 +1,9 @@
 from PySide6.QtCore import Qt, QModelIndex
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QGroupBox, QLineEdit,
-    QComboBox, QLabel, QScrollArea, QWidget, QListWidget, QListWidgetItem
+    QComboBox, QLabel, QScrollArea, QWidget, QListWidget, QListWidgetItem,
+    QCheckBox,
 )
 from common.gui_utils import HtmlDelegate
 from project import OptDiaProject
@@ -108,6 +110,218 @@ class TrainPicker(QDialog):
 
     def _on_item_clicked(self, item):
         self.selected_train_id = item.data(Qt.UserRole)
+        self.accept()
+
+# 列車に割り当てる運転ダイヤを選択するためのダイアログ
+class DiagramPicker(QDialog):
+    def __init__(self, parent, project: OptDiaProject, train_id: str, current_diagram_id: str, route_id: str, direction: str):
+        super().__init__(parent)
+        self.project = project
+        self.train_id = train_id
+        self.current_diagram_id = current_diagram_id
+        self.route_id = route_id
+        self.direction = direction
+        
+        self._initial_checkbox_states = {} # 初期チェック状態を保持
+        self.setWindowTitle("運転ダイヤの選択")
+        self.setFixedSize(320, 480)
+        
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("この列車が運転されるダイヤを選択してください:"))
+        
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; }")
+        scroll_content = QWidget()
+        self.scroll_layout = QVBoxLayout(scroll_content)
+        self.scroll_layout.setAlignment(Qt.AlignTop)
+        
+        self.checkboxes = {} # diagram_id -> QCheckBox
+        
+        # 現在の方面のマスタ列車情報を取得して、既に割り当てられているダイヤを特定
+        route = project.routes.get(route_id)
+        train_key = "inbound_trains" if direction == "inbound" else "outbound_trains"
+        m_train = route.get(train_key, {}).get(train_id, {})
+        active_diagram_ids = m_train.get("_diagram_ids", [])
+        
+        # プロジェクトのダイヤ定義順にチェックボックスを並べる
+        for did in project.diagrams_order:
+            diag = project.diagrams[did]
+            bg_color = diag.get("background_color", "#ffffff")
+            cb = QCheckBox(diag.get("diagram_name", did))
+            if did in active_diagram_ids:
+                cb.setChecked(True)
+            
+            # 現在表示中のダイヤは解除不可
+            if did == current_diagram_id:
+                cb.setEnabled(False)
+                cb.setChecked(True)
+            self._initial_checkbox_states[did] = cb.isChecked() # 初期状態を記録
+            cb.setStyleSheet(f"QCheckBox {{ font-size: 14px; background-color: {bg_color}; }}")
+            
+            self.checkboxes[did] = cb
+            self.scroll_layout.addWidget(cb)
+            
+        scroll.setWidget(scroll_content)
+        layout.addWidget(scroll)
+        
+        buttons = QHBoxLayout()
+        select_all_btn = QPushButton("すべて選択")
+        buttons.addWidget(select_all_btn)
+        ok_btn = QPushButton("OK")
+        cancel_btn = QPushButton("キャンセル")
+        buttons.addStretch()
+        buttons.addWidget(ok_btn)
+        buttons.addWidget(cancel_btn)
+        layout.addLayout(buttons)
+        
+        select_all_btn.clicked.connect(self._on_select_all)
+        ok_btn.clicked.connect(self._on_ok)
+        cancel_btn.clicked.connect(self.reject)
+
+    def _on_select_all(self):
+        """すべてのチェックボックスを選択状態にする（ただし、無効化されているものは除く）"""
+        for cb in self.checkboxes.values():
+            if cb.isEnabled():
+                cb.setChecked(True)
+
+    def _on_ok(self):
+        has_changed = False
+        route = self.project.routes.get(self.route_id)
+        train_key = "inbound_trains" if self.direction == "inbound" else "outbound_trains"
+        order_key = train_key + "_order"
+        m_train = route.get(train_key, {}).get(self.train_id)
+        
+        # 現在のダイヤでダミー列車（未保存）だった場合、他のダイヤへの割り当て等により保存対象へ昇格させる
+        current_tbd = route.get("trains_by_diagram", {}).get(self.current_diagram_id, {})
+        current_d_train = current_tbd.get(train_key, {}).get(self.train_id)
+        if current_d_train and not current_d_train.get("to_be_saved"):
+            current_d_train["to_be_saved"] = True
+            has_changed = True
+        elif current_d_train and current_d_train.get("to_be_saved") and not self._initial_checkbox_states.get(self.current_diagram_id, False):
+            has_changed = True # 現在のダイヤが元々to_be_saved=Falseだったが、今回to_be_saved=Trueになった場合
+
+        for did, cb in self.checkboxes.items():
+            if did == self.current_diagram_id: continue # 現在のダイヤはスキップ
+                
+            tbd = route.get("trains_by_diagram", {}).get(did, {})
+            d_trains, order = tbd.get(train_key), tbd.get(order_key)
+            
+            # チェック状態が変更されたか、または初期状態と異なるかを確認
+            if cb.isChecked() and self.train_id not in d_trains:
+                # ダイヤへの追加: 列車ID以外のキーはNoneまたは空配列で初期化
+                d_trains[self.train_id] = {
+                    "train_id": self.train_id, "operations": [], "car_count": None,
+                    "destination": None, "subsequent_trains": [], "to_be_saved": True
+                }
+                # 挿入位置の決定: 末尾のダミー列車(to_be_saved=False)より前に挿入
+                insert_idx = len(order)
+                for i, tid in enumerate(order):
+                    if not d_trains.get(tid, {}).get("to_be_saved", True):
+                        insert_idx = i
+                        break
+                order.insert(insert_idx, self.train_id)
+                if did not in m_train["_diagram_ids"]: m_train["_diagram_ids"].append(did)
+                has_changed = True
+            elif not cb.isChecked() and self.train_id in d_trains:
+                # ダイヤからの削除
+                if self.train_id in order: order.remove(self.train_id)
+                del d_trains[self.train_id]
+                if did in m_train["_diagram_ids"]: m_train["_diagram_ids"].remove(did)
+                has_changed = True
+
+        # 逆引き用ダイヤIDリストをプロジェクト順でソート
+        m_train["_diagram_ids"].sort(key=lambda x: self.project.diagrams_order.index(x) if x in self.project.diagrams_order else 999)
+        
+        if has_changed:
+            self._set_modified()
+        self.accept()
+
+    def _set_modified(self):
+        """メインウィンドウに変更を通知する"""
+        view = self.parent()
+        if view and hasattr(view, "model"):
+            # モデルのデータが変更されたことを通知し、MainWindow の set_modified(True) を発火させる
+            view.model().dataChanged.emit(QModelIndex(), QModelIndex(), [])
+
+# 列車種別を選択するためのポップアップダイアログ
+class TrainTypePicker(QDialog):
+    def __init__(self, parent, project: OptDiaProject, current_id=None):
+        super().__init__(parent, Qt.Popup)
+        self.project = project
+        self.selected_id = None
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.list_widget = QListWidget(self)
+        self.list_widget.setStyleSheet("border: 1px solid #dddddd;")
+        self.list_widget.setItemDelegate(HtmlDelegate(self))
+
+        # 「設定しない」アイテムの追加
+        none_item = QListWidgetItem("<font color='#888888'>設定しない</font>")
+        none_item.setData(Qt.UserRole, None)
+        self.list_widget.addItem(none_item)
+
+        for tt_id in self.project.train_types_order:
+            tt = self.project.train_types[tt_id]
+            name, train_name = tt.get("train_type_name", ""), tt.get("train_name")
+            color, bg_color = tt.get("main_color", "#333333"), tt.get("background_color", "#ffffff")
+            display_name = f"{name} {train_name}" if train_name else name
+            item = QListWidgetItem(f"<font color='{color}'>{display_name}</font>")
+            item.setData(Qt.UserRole, tt_id)
+            item.setBackground(QColor(bg_color))
+            self.list_widget.addItem(item)
+
+        if current_id is None:
+            self.list_widget.setCurrentItem(none_item)
+        else:
+            for i in range(self.list_widget.count()):
+                if self.list_widget.item(i).data(Qt.UserRole) == current_id:
+                    self.list_widget.setCurrentItem(self.list_widget.item(i))
+                    self.list_widget.scrollToItem(self.list_widget.item(i))
+                    break
+        self.list_widget.itemClicked.connect(self._on_item_clicked)
+        layout.addWidget(self.list_widget)
+        self.setFixedSize(200, min(400, self.list_widget.count() * 32 + 2))
+
+    def _on_item_clicked(self, item):
+        self.selected_id = item.data(Qt.UserRole)
+        self.accept()
+
+# 番線を選択するためのポップアップダイアログ
+class TrackPicker(QDialog):
+    def __init__(self, parent, station_data, current_track_id=None):
+        super().__init__(parent, Qt.Popup)
+        self.selected_id = None
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.list_widget = QListWidget(self)
+        self.list_widget.setStyleSheet("border: 1px solid #dddddd;")
+        
+        # 「設定しない」アイテムの追加
+        none_item = QListWidgetItem("設定しない")
+        none_item.setData(Qt.UserRole, None)
+        self.list_widget.addItem(none_item)
+        if current_track_id is None:
+            self.list_widget.setCurrentItem(none_item)
+
+        tracks = station_data.get("tracks", {})
+        order = station_data.get("tracks_order", [])
+        for tid in order:
+            track = tracks.get(tid, {})
+            track_name = track.get("track_name") or tid
+            item = QListWidgetItem(track_name)
+            item.setData(Qt.UserRole, tid)
+            self.list_widget.addItem(item)
+            if tid == current_track_id:
+                self.list_widget.setCurrentItem(item)
+                self.list_widget.scrollToItem(item)
+        
+        self.list_widget.itemClicked.connect(self._on_item_clicked)
+        layout.addWidget(self.list_widget)
+        self.setFixedSize(150, min(300, self.list_widget.count() * 28 + 2))
+
+    def _on_item_clicked(self, item):
+        self.selected_id = item.data(Qt.UserRole)
         self.accept()
 
 # 「連続する列車」を編集するダイアログ
@@ -312,7 +526,11 @@ class SubsequentTrainDialog(QDialog):
         """メインウィンドウに変更を通知する"""
         view = self.parent()
         if view and hasattr(view, "model"):
-            view.model().dataChanged.emit(QModelIndex(), QModelIndex(), [])
+            model = view.model()
+            # 連続する列車が変更されると行き先の自動解決結果が変わるため、キャッシュをクリアする
+            if hasattr(model, "clear_destination_cache"):
+                model.clear_destination_cache()
+            model.dataChanged.emit(QModelIndex(), QModelIndex(), [])
 
     def _get_train_display_info(self, identifier):
         """列車IDに基づき、ボタンに表示する情報を取得する"""

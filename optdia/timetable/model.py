@@ -15,11 +15,13 @@ class TimetableModel(QAbstractTableModel):
         self.route_id = None
         self.diagram_id = None
         self.direction = "outbound"
-        self.row_headers = ["列車番号", "運用番号", "両数", "種別・愛称", "号数", "行き先"]
+        self.row_headers = ["列車番号", "運転日", "運用番号", "両数", "種別・愛称", "号数", "行き先"]
         self.train_ids = []
         self.station_rows = []
         self.full_stop_sequence = []
         self.full_stop_configs = []
+        self._stop_lookup = {}  # normalization 高速化用
+        self._dest_cache = {}    # 行き先表示高速化用
 
     def _get_stations_in_segment(self, line_id, start_station_id, end_station_id):
         line_data = self.project.lines.get(line_id)
@@ -93,6 +95,7 @@ class TimetableModel(QAbstractTableModel):
         self.station_rows = []
         self.full_stop_sequence = []
         self.full_stop_configs = []
+        self._dest_cache = {}
 
         if route_id and diagram_id:
             route = self.project.routes.get(route_id)
@@ -154,6 +157,13 @@ class TimetableModel(QAbstractTableModel):
                         else:
                             self.station_rows.append({"name": name, "stop_idx": stop_idx, "type": "dep", "line_color": line_color})
                 
+                # 駅情報の逆引き用マップ（normalizationの高速化用）
+                self._stop_lookup = {}
+                for i, cfg in enumerate(self.full_stop_configs):
+                    key = (cfg["station_id"], cfg["line_id"], cfg["direction"])
+                    if key not in self._stop_lookup: self._stop_lookup[key] = []
+                    self._stop_lookup[key].append(i)
+
                 tbd = route.get("trains_by_diagram", {}).get(diagram_id, {})
                 train_key = "inbound_trains" if direction == "inbound" else "outbound_trains"
                 order_key = f"{train_key}_order"
@@ -162,9 +172,9 @@ class TimetableModel(QAbstractTableModel):
                 d_trains = tbd.get(train_key, {})
                 # 運行系統側の列車実体情報(optdia_train_dict)
                 m_trains = route.get(train_key, {})
-                order = tbd.get(order_key, [])
+                order = tbd.get(order_key, []) # 列車IDの順序リスト
 
-                # 末尾に列車の空データを10本追加（これらの列車はプロジェクトデータの保存時に除去される）
+                # 末尾に列車の空データを20本追加（これらの列車はプロジェクトデータの保存時に除去される）
                 unsaved_count = sum(1 for tid in order if d_trains.get(tid, {}).get("to_be_saved") is False)
                 needed = 20 - unsaved_count
                 if needed > 0:
@@ -181,7 +191,7 @@ class TimetableModel(QAbstractTableModel):
                         # 運行系統側に実体オブジェクトを作成
                         m_trains[new_id] = {
                             "train_number": "", "train_type_id": None,
-                            "named_train_number": None, "note": "", "stops": []
+                            "named_train_number": None, "note": "", "stops": [], "_diagram_ids": [self.diagram_id]
                         }
                         order.append(new_id)
                 self.train_ids = order
@@ -196,8 +206,17 @@ class TimetableModel(QAbstractTableModel):
         route = self.project.routes.get(self.route_id)
         if not route:
             return
-        # 運行系統が持つマスタ列車のうち、現在の方面のものをすべて正規化する
+
+        tbd = route.get("trains_by_diagram", {}).get(self.diagram_id, {})
         train_key = "inbound_trains" if self.direction == "inbound" else "outbound_trains"
+
+        # ダイヤ側の列車属性を正規化（空文字列を行き先未設定として扱う）
+        d_trains = tbd.get(train_key, {})
+        for d_train in d_trains.values():
+            if d_train.get("destination") == "":
+                d_train["destination"] = None
+
+        # 運行系統が持つマスタ列車のうち、現在の方面のものをすべて正規化する
         m_trains = route.get(train_key, {})
         for train in m_trains.values():
             self._normalize_train_stops(train)
@@ -219,14 +238,12 @@ class TimetableModel(QAbstractTableModel):
 
         for s in train["stops"]:
             sid, lid, ldir = s["station_id"], s["line_id"], s["direction"]
-            # 一致する設定を full_stop_configs 全体から探す（順序に依存しないように）
-            for i in range(len(self.full_stop_configs)):
+            # 高速な逆引きを使用して stop_idx を特定
+            key = (sid, lid, ldir)
+            for i in self._stop_lookup.get(key, []):
                 cfg = self.full_stop_configs[i]
-                if (cfg["station_id"] == sid and cfg["line_id"] == lid and cfg["direction"] == ldir and
-                    (not cfg.get("is_segment_start") or s.get("arrival_time") is None) and
+                if ((not cfg.get("is_segment_start") or s.get("arrival_time") is None) and
                     (not cfg.get("is_segment_end") or s.get("departure_time") is None)):
-                    # 境界駅の整合性を保ちつつ、中間駅での欠損（ユーザーによる削除）を許容する
-
                     s["stop_idx"] = i
                     stops_with_idx.append(s)
                     break
@@ -235,6 +252,8 @@ class TimetableModel(QAbstractTableModel):
         train["stops"].sort(key=lambda x: x.get("stop_idx", 0))
         # stop_idx が割り当てられなかった stops はここで除外される
         train["stops"] = sorted(stops_with_idx, key=lambda x: x["stop_idx"])
+        # 表示・編集時の高速アクセス用マップを作成
+        train["_stop_map"] = {s["stop_idx"]: s for s in train["stops"]}
 
         # セグメントの境界フラグに基づいて None 値を補正
         for s in train["stops"]:
@@ -253,6 +272,10 @@ class TimetableModel(QAbstractTableModel):
         # フッター行（ボタン行）はテキスト編集を無効にする
         num_rows_before_footer = len(self.row_headers) + len(self.station_rows)
         if index.row() == num_rows_before_footer:
+            return Qt.ItemIsEnabled | Qt.ItemIsSelectable
+
+        # 「運転日」行 (index 1) と「運用番号」行 (index 2) は編集不可
+        if index.row() == 2: # 運用番号行のみ編集不可
             return Qt.ItemIsEnabled | Qt.ItemIsSelectable
 
         return Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable
@@ -275,31 +298,36 @@ class TimetableModel(QAbstractTableModel):
         if not d_train or not m_train: return False
         
         changed = False
-        if row == 0:
+        if row == 0: # 列車番号
             if m_train.get("train_number") != value:
                 m_train["train_number"] = value
                 changed = True
-        elif row == 2:
+        elif row == 1 or row == 2: # 運転日または運用番号 (ボタンなので直接編集不可)
+            # 運用番号はデリゲートで処理されるため、直接のテキスト入力は受け付けない
+            return False
+        elif row == 3: # 両数
             try:
                 val = int(value) if value and value.strip() else None
                 if d_train.get("car_count") != val:
                     d_train["car_count"] = val
                     changed = True
             except ValueError: return False
-        elif row == 3:
+        elif row == 4: # 種別・愛称
             if m_train.get("train_type_id") != value:
                 m_train["train_type_id"] = value
                 changed = True
-        elif row == 4:
+        elif row == 5: # 号数
             try:
                 val = int(value) if value and value.strip() else None
                 if m_train.get("named_train_number") != val:
                     m_train["named_train_number"] = val
                     changed = True
             except ValueError: return False
-        elif row == 5:
-            if d_train.get("destination") != value:
-                d_train["destination"] = value
+        elif row == 6: # 行き先
+            # 空文字列の場合は None に置き換えて保持する
+            val = value if value else None
+            if d_train.get("destination") != val:
+                d_train["destination"] = val
                 changed = True
         elif row >= len(self.row_headers):
             row_idx = row - len(self.row_headers)
@@ -388,13 +416,36 @@ class TimetableModel(QAbstractTableModel):
             return True
         return False
 
+    def clear_destination_cache(self):
+        """行き先の表示キャッシュをクリアする"""
+        self._dest_cache = {}
+
     def _trigger_update(self, col, d_trains, index):
+        converted = False
+        # 行き先表示（自動解決）は列車間の参照を含むため、時刻や属性の変更時はキャッシュをクリアする。
+        # 影響範囲が広いため、安全のため全キャッシュをクリアする。
+        self.clear_destination_cache()
+
         for i in range(col + 1):
             tid = self.train_ids[i]
             t = d_trains.get(tid)
-            if t and t.get("to_be_saved") is False: t["to_be_saved"] = True
-        QTimer.singleShot(0, lambda: self.update_data(self.route_id, self.diagram_id, self.direction))
-        self.dataChanged.emit(index, index, [Qt.EditRole, Qt.DisplayRole])
+            if t and not t.get("to_be_saved"):
+                t["to_be_saved"] = True
+                converted = True
+        
+        train_id = self.train_ids[col]
+        route = self.project.routes.get(self.route_id)
+        train_key = "inbound_trains" if self.direction == "inbound" else "outbound_trains"
+        m_train = route.get(train_key, {}).get(train_id)
+        if m_train:
+            self._normalize_train_stops(m_train)
+
+        if converted:
+            # ダミー列車が実体化し、新しい空き枠を追加する必要がある場合は全体更新
+            QTimer.singleShot(0, lambda: self.update_data(self.route_id, self.diagram_id, self.direction))
+        else:
+            # 単なるデータの更新であれば、その列全体の再描画通知のみ行う（Resetを避ける）
+            self.dataChanged.emit(self.index(0, col), self.index(self.rowCount() - 1, col), [Qt.DisplayRole, Qt.ForegroundRole])
 
     def rowCount(self, parent=QModelIndex()):
         return len(self.row_headers) + len(self.station_rows) + 1
@@ -421,9 +472,9 @@ class TimetableModel(QAbstractTableModel):
         m_train = m_trains.get(train_id, {})
 
         if role == Qt.TextAlignmentRole:
-            # フッター行（ボタン行）は中央揃え
+            # フッター行と「運転日」行は中央揃え
             num_rows_before_footer = len(self.row_headers) + len(self.station_rows)
-            if row == num_rows_before_footer:
+            if row == num_rows_before_footer or row == 1:
                 return Qt.AlignCenter
             if row < len(self.row_headers):
                 return Qt.AlignCenter
@@ -433,56 +484,92 @@ class TimetableModel(QAbstractTableModel):
             tt = self.project.train_types.get(m_train.get("train_type_id"))
             return QColor(tt.get("background_color", "#ffffff")) if tt else None
         if role == Qt.ForegroundRole:
-            if row in (0, 3):
+            if row == 0: # 列車番号
                 tt = self.project.train_types.get(m_train.get("train_type_id"))
                 if tt: return QColor(tt.get("main_color", "#333333"))
-            if row == 5:
+            elif row == 1: # 運転日
+                return None # デフォルトのテキスト色を使用
+            elif row == 4: # 種別・愛称
+                tt = self.project.train_types.get(m_train.get("train_type_id"))
+                if tt: return QColor(tt.get("main_color", "#333333"))
+            elif row == 6: # 行き先
                 if not d_train.get("destination"):
                     return QColor(Qt.gray)
             if row >= len(self.row_headers):
-                val = self.data(index, Qt.DisplayRole)
+                val = self.data(index, Qt.EditRole) # 秒を含む正確な時刻で比較
                 secs = self._time_to_seconds(val)
                 if secs is not None:
-                    for r in range(row - 1, len(self.row_headers) - 1, -1):
-                        p_val = self.data(self.index(r, col), Qt.DisplayRole)
+                    # 運転日行と運用番号行をスキップして前の時刻を探す
+                    # row_headersの長さが7になったので、時刻行の開始は7から
+                    # 列車番号(0), 運転日(1), 運用番号(2), 両数(3), 種別・愛称(4), 号数(5), 行き先(6)
+                    for r in range(row - 1, len(self.row_headers) - 1, -1): # 列車番号(0)より下は時刻行
+                        p_val = self.data(self.index(r, col), Qt.EditRole)
                         p_secs = self._time_to_seconds(p_val)
                         if p_secs is not None:
                             if secs < p_secs: return QColor(Qt.red)
                             break
             return None
         if role in (Qt.DisplayRole, Qt.EditRole):
-            if row == 0: return m_train.get("train_number", "")
-            elif row == 1:
+            if row == 0: return m_train.get("train_number", "") # 列車番号
+            elif row == 1: # 運転日 (新しく追加された行)
+                diagram_ids = m_train.get("_diagram_ids", [])
+                all_diagram_ids = self.project.diagrams_order
+
+                if len(diagram_ids) == len(all_diagram_ids) and all(did in diagram_ids for did in all_diagram_ids):
+                    return "(毎日)"
+
+                diagram_initials = []
+                for did in diagram_ids:
+                    diagram_data = self.project.diagrams.get(did)
+                    if diagram_data:
+                        diagram_initials.append(diagram_data.get("diagram_initial", ""))
+                
+                if len(diagram_initials) > 4:
+                    return "".join(diagram_initials[:3]) + ".."
+                else:
+                    return "".join(diagram_initials)
+            elif row == 2: # 運用番号 (旧row 1)
                 ops = [str(op.get("operation_id", "")) for op in d_train.get("operations", []) if op.get("operation_id")]
                 return ",".join(ops) if ops else ""
-            elif row == 2:
+            elif row == 3: # 両数 (旧row 2)
                 cc = d_train.get("car_count")
                 return str(cc) if cc is not None else ""
-            elif row == 3:
+            elif row == 4: # 種別・愛称 (旧row 3)
                 tt = self.project.train_types.get(m_train.get("train_type_id"))
                 name = (tt.get("train_type_short_name") or tt.get("train_type_name", "")) if tt else ""
                 tname = m_train.get("train_name")
                 return f"{name} {tname}" if tname else name
-            elif row == 4:
+            elif row == 5: # 号数 (旧row 4)
                 val = m_train.get("named_train_number")
                 return str(val) if val is not None else ""
-            elif row == 5:
+            elif row == 6: # 行き先 (旧row 5)
+                if train_id in self._dest_cache:
+                    return self._dest_cache[train_id]
+
                 raw_dest = d_train.get("destination")
                 if raw_dest:
-                    # ユーザー入力がある場合: 8文字制限
-                    return raw_dest[:8] + ".." if len(raw_dest) > 8 else raw_dest
+                    res = raw_dest[:8] + ".." if len(raw_dest) > 8 else raw_dest
+                else:
+                    # 自動表示ロジック（再帰探索が含まれるためキャッシュが有効）
+                    dest, is_branched = self._resolve_destination(d_train, m_train, self.diagram_id)
+                    if is_branched:
+                        res = dest
+                    else:
+                        res = dest[:8] + ".." if len(dest) > 8 else dest
                 
-                # 自動表示ロジック
-                dest, is_branched = self._resolve_destination(d_train, m_train, self.diagram_id)
-                if is_branched:
-                    return dest
-                return dest[:8] + ".." if len(dest) > 8 else dest
-            elif row >= len(self.row_headers):
+                self._dest_cache[train_id] = res
+                return res
+            elif row >= len(self.row_headers): # 駅時刻行
                 row_idx = row - len(self.row_headers)
                 if row_idx < len(self.station_rows):
                     row_def = self.station_rows[row_idx]
-                    # マスタ列車の停車駅情報を参照
-                    stop = next((s for s in m_train.get("stops", []) if s.get("stop_idx") == row_def["stop_idx"]), None)
+
+                    # stop_map を使用して O(1) でアクセス（next(...) による走査を回避）
+                    stop_map = m_train.get("_stop_map")
+                    if stop_map is not None:
+                        stop = stop_map.get(row_def["stop_idx"])
+                    else:
+                        stop = next((s for s in m_train.get("stops", []) if s.get("stop_idx") == row_def["stop_idx"]), None)
 
                     if stop:
                         full_time = stop.get("arrival_time" if row_def["type"] == "arr" else "departure_time", "")
