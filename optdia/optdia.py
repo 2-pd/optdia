@@ -27,6 +27,7 @@ from dialogs.about import AboutDialog
 from timetable.model import TimetableModel
 from timetable.view import TimetableView, TimetableVerticalHeader
 from timetable.delegate import TimetableDelegate
+from timeline.view import TimelineView
 
 # メインウィンドウ
 class MainWindow(QMainWindow):
@@ -165,6 +166,7 @@ class MainWindow(QMainWindow):
         self.direction_tab_bar = QTabBar()
         self.direction_tab_bar.addTab("下り時刻表")
         self.direction_tab_bar.addTab("上り時刻表")
+        self.direction_tab_bar.addTab("運用表")
         self.direction_tab_bar.currentChanged.connect(self._on_timetable_settings_changed)
         self.timetable_layout.addWidget(self.direction_tab_bar)
 
@@ -193,7 +195,15 @@ class MainWindow(QMainWindow):
         self.timetable_delegate = TimetableDelegate(self.timetable_view)
         self.timetable_view.setItemDelegate(self.timetable_delegate)
 
-        self.timetable_layout.addWidget(self.timetable_view)
+        # 時刻表テーブルと運用表表示エリアを切り替えるスタックドウィジェット
+        self.timetable_content_stack = QStackedWidget()
+        self.timetable_content_stack.addWidget(self.timetable_view)
+
+        # 運用表表示エリア
+        self.timeline_view = TimelineView()
+        self.timetable_content_stack.addWidget(self.timeline_view)
+
+        self.timetable_layout.addWidget(self.timetable_content_stack)
         
         self.right_stack.addWidget(self.timetable_page)
 
@@ -503,12 +513,21 @@ class MainWindow(QMainWindow):
         else:
             self.right_stack.setCurrentIndex(0)
 
+        # タブのインデックスに基づいて表示エリア（スタックドウィジェット）を切り替える
+        tab_index = self.direction_tab_bar.currentIndex()
+        if tab_index == 2:
+            self.timetable_content_stack.setCurrentIndex(1)
+        else:
+            self.timetable_content_stack.setCurrentIndex(0)
+
         route_item = self.route_list_widget.currentItem()
         diagram_item = self.diagram_list_widget.currentItem()
         
         route_id = route_item.data(Qt.UserRole) if route_item else None
         diagram_id = diagram_item.data(Qt.UserRole) if diagram_item else None
-        direction = "inbound" if self.direction_tab_bar.currentIndex() == 1 else "outbound"
+        
+        # 方面の切り替え（「運用表」タブ選択時は一旦 outbound と扱う）
+        direction = "inbound" if tab_index == 1 else "outbound"
         
         self.timetable_model.update_data(route_id, diagram_id, direction)
 
