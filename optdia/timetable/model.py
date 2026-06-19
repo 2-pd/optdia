@@ -1,7 +1,7 @@
 import random
 import string
 import re
-from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QTimer
+from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QTimer, Signal
 from PySide6.QtGui import QColor
 from project import OptDiaProject
 
@@ -9,6 +9,8 @@ TrackIdRole = Qt.UserRole + 100
 
 # メインウィンドウの時刻表テーブルに紐付けられるモデル
 class TimetableModel(QAbstractTableModel):
+    trainsReordered = Signal()
+
     def __init__(self, project: OptDiaProject):
         super().__init__()
         self.project = project
@@ -22,6 +24,48 @@ class TimetableModel(QAbstractTableModel):
         self.full_stop_configs = []
         self._stop_lookup = {}  # normalization 高速化用
         self._dest_cache = {}    # 行き先表示高速化用
+
+    def move_train(self, from_idx, to_idx):
+        if from_idx == to_idx:
+            return
+
+        item = self.train_ids.pop(from_idx)
+        self.train_ids.insert(to_idx, item)
+
+        converted = False
+        if self.route_id and self.diagram_id:
+            route = self.project.routes.get(self.route_id)
+            if route:
+                tbd = route.get("trains_by_diagram", {}).get(self.diagram_id, {})
+                train_key = "inbound_trains" if self.direction == "inbound" else "outbound_trains"
+                order_key = f"{train_key}_order"
+                if order_key in tbd:
+                    tbd[order_key][:] = self.train_ids
+
+                    d_trains = tbd.get(train_key, {})
+                    last_saved_idx = -1
+                    for i in range(len(self.train_ids) - 1, -1, -1):
+                        tid = self.train_ids[i]
+                        t = d_trains.get(tid, {})
+                        if t.get("to_be_saved"):
+                            last_saved_idx = i
+                            break
+
+                    if last_saved_idx != -1:
+                        for i in range(last_saved_idx):
+                            tid = self.train_ids[i]
+                            t = d_trains.get(tid)
+                            if t and not t.get("to_be_saved"):
+                                t["to_be_saved"] = True
+                                converted = True
+
+        if converted:
+            self.update_data(self.route_id, self.diagram_id, self.direction)
+        else:
+            self.beginResetModel()
+            self.endResetModel()
+
+        self.trainsReordered.emit()
 
     def _get_stations_in_segment(self, line_id, start_station_id, end_station_id):
         line_data = self.project.lines.get(line_id)

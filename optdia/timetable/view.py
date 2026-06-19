@@ -93,6 +93,23 @@ class TimetableVerticalHeader(QHeaderView):
             painter.drawText(text_draw_rect, text_alignment, display_text)
         painter.restore()
 
+# 時刻表テーブルの水平ヘッダーのビュー
+class TimetableHorizontalHeader(QHeaderView):
+    def __init__(self, parent=None):
+        super().__init__(Qt.Horizontal, parent)
+        self.setFixedHeight(12)
+        self.setDefaultSectionSize(60)
+        self.setSectionResizeMode(QHeaderView.Fixed)
+        self.setSectionsMovable(True)
+
+    def paintSection(self, painter, rect, logicalIndex):
+        painter.save()
+        bg_color = QColor("#eeeeee")
+        painter.fillRect(rect, bg_color)
+        painter.setPen(QColor("#dddddd"))
+        painter.drawLine(rect.right(), rect.top(), rect.right(), rect.bottom())
+        painter.restore()
+
 # メインウィンドウの時刻表テーブルのビュー
 class TimetableView(QTableView):
     def setModel(self, model):
@@ -109,6 +126,28 @@ class TimetableView(QTableView):
         model.dataChanged.connect(self._update_footer_widgets)
         
         self._update_footer_widgets()
+        self.setup_horizontal_header()
+
+    def setup_horizontal_header(self):
+        h_header = TimetableHorizontalHeader(self)
+        h_header.sectionMoved.connect(self._on_section_moved)
+        self.setHorizontalHeader(h_header)
+        h_header.setVisible(True)
+
+    def _on_section_moved(self, logicalIndex, oldVisualIndex, newVisualIndex):
+        if oldVisualIndex == newVisualIndex:
+            return
+            
+        from PySide6.QtCore import QTimer
+        # sectionMovedイベントハンドラ実行中のオブジェクト自己破壊によるSegfaultを防ぐため遅延実行する
+        QTimer.singleShot(0, lambda: self._perform_reorder(oldVisualIndex, newVisualIndex))
+
+    def _perform_reorder(self, old_idx, new_idx):
+        model = self.model()
+        if not model:
+            return
+        model.move_train(old_idx, new_idx)
+        self.setup_horizontal_header()
 
     def _update_footer_widgets(self):
         model = self.model()

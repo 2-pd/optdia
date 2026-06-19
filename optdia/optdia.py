@@ -173,16 +173,13 @@ class MainWindow(QMainWindow):
         # 時刻表テーブル
         self.timetable_model = TimetableModel(self.project)
         self.timetable_model.dataChanged.connect(lambda: self.set_modified(True))
+        self.timetable_model.trainsReordered.connect(lambda: self.set_modified(True))
         self.timetable_view = TimetableView()
         self.timetable_view.setModel(self.timetable_model)
         
         # テーブルの外観設定
         self.timetable_view.setStyleSheet("QTableView, QHeaderView { font-size: 12px; }")
         self.timetable_view.setShowGrid(False)
-        h_header = self.timetable_view.horizontalHeader()
-        h_header.setVisible(False)
-        h_header.setDefaultSectionSize(60)
-        h_header.setSectionResizeMode(QHeaderView.Fixed)
         
         v_header = TimetableVerticalHeader(self.timetable_view)
         # padding: top right bottom left (左8px = 縦線6px + 余白2px、右4px)
