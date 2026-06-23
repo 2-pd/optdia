@@ -6,6 +6,8 @@ from PySide6.QtGui import QColor
 from project import OptDiaProject
 
 TrackIdRole = Qt.UserRole + 100
+StopTypeRole = Qt.UserRole + 101
+
 
 # メインウィンドウの時刻表テーブルに紐付けられるモデル
 class TimetableModel(QAbstractTableModel):
@@ -325,7 +327,7 @@ class TimetableModel(QAbstractTableModel):
         return Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable
 
     def setData(self, index, value, role=Qt.EditRole):
-        if not index.isValid() or role not in (Qt.EditRole, TrackIdRole): return False
+        if not index.isValid() or role not in (Qt.EditRole, TrackIdRole, StopTypeRole): return False
         col = index.column()
         row = index.row()
         if not self.route_id or not self.diagram_id or col >= len(self.train_ids): return False
@@ -341,6 +343,56 @@ class TimetableModel(QAbstractTableModel):
         m_train = m_trains.get(train_id)
         if not d_train or not m_train: return False
         
+        changed = False
+        if role == StopTypeRole:
+            if row >= len(self.row_headers):
+                row_idx = row - len(self.row_headers)
+                if row_idx < len(self.station_rows):
+                    row_def = self.station_rows[row_idx]
+                    stop_idx = row_def["stop_idx"]
+                    config = self.full_stop_configs[stop_idx]
+                    sid = config["station_id"]
+                    lid = config["line_id"]
+                    ldir = config["direction"]
+                    
+                    if "stops" not in m_train: m_train["stops"] = []
+                    stop = next((s for s in m_train["stops"] if s.get("stop_idx") == stop_idx), None)
+                    if not stop:
+                        stop = {
+                            "station_id": sid,
+                            "line_id": lid,
+                            "direction": ldir,
+                            "track_id": config["track_id"],
+                            "arrival_time": None,
+                            "departure_time": None,
+                            "stop_type": value,
+                            "stop_idx": stop_idx
+                        }
+                        m_train["stops"].append(stop)
+                        changed = True
+                    elif stop.get("stop_type") != value:
+                        stop["stop_type"] = value
+                        changed = True
+                        
+                    if changed:
+                        m_train["stops"].sort(key=lambda x: x.get("stop_idx", 0))
+                        try:
+                            curr_idx = m_train["stops"].index(stop)
+                            if curr_idx > 0:
+                                prev_stop = m_train["stops"][curr_idx - 1]
+                                if prev_stop.get("station_id") == stop.get("station_id"):
+                                    prev_stop["stop_type"] = value
+                            if curr_idx < len(m_train["stops"]) - 1:
+                                next_stop = m_train["stops"][curr_idx + 1]
+                                if next_stop.get("station_id") == stop.get("station_id"):
+                                    next_stop["stop_type"] = value
+                        except ValueError:
+                            pass
+                        
+                        self._trigger_update(col, d_trains, index)
+                    return changed
+            return False
+
         changed = False
         if row == 0: # 列車番号
             if m_train.get("train_number") != value:
@@ -434,6 +486,19 @@ class TimetableModel(QAbstractTableModel):
                         "stop_idx": stop_idx
                     }
                     m_train["stops"].append(stop)
+                    m_train["stops"].sort(key=lambda x: x.get("stop_idx", 0))
+                    try:
+                        curr_idx = m_train["stops"].index(stop)
+                        if curr_idx > 0:
+                            prev_stop = m_train["stops"][curr_idx - 1]
+                            if prev_stop.get("station_id") == stop["station_id"]:
+                                stop["stop_type"] = prev_stop.get("stop_type", 1)
+                        if curr_idx < len(m_train["stops"]) - 1:
+                            next_stop = m_train["stops"][curr_idx + 1]
+                            if next_stop.get("station_id") == stop["station_id"]:
+                                stop["stop_type"] = next_stop.get("stop_type", 1)
+                    except ValueError:
+                        pass
                 time_key = "arrival_time" if row_def["type"] == "arr" else "departure_time"
                 other_key = "departure_time" if row_def["type"] == "arr" else "arrival_time"
                 if stop.get(time_key) != formatted_value:
@@ -515,6 +580,20 @@ class TimetableModel(QAbstractTableModel):
         d_train = d_trains.get(train_id, {})
         m_train = m_trains.get(train_id, {})
 
+        if role == StopTypeRole:
+            if row >= len(self.row_headers):
+                row_idx = row - len(self.row_headers)
+                if row_idx < len(self.station_rows):
+                    row_def = self.station_rows[row_idx]
+                    stop_map = m_train.get("_stop_map")
+                    if stop_map is not None:
+                        stop = stop_map.get(row_def["stop_idx"])
+                    else:
+                        stop = next((s for s in m_train.get("stops", []) if s.get("stop_idx") == row_def["stop_idx"]), None)
+                    if stop:
+                        return stop.get("stop_type", 1)
+            return None
+
         if role == Qt.TextAlignmentRole:
             # フッター行と「運転日」行は中央揃え
             num_rows_before_footer = len(self.row_headers) + len(self.station_rows)
@@ -539,6 +618,18 @@ class TimetableModel(QAbstractTableModel):
             elif row == 6: # 行き先
                 if not d_train.get("destination"):
                     return QColor(Qt.gray)
+            if row >= len(self.row_headers):
+                row_idx = row - len(self.row_headers)
+                if row_idx < len(self.station_rows):
+                    row_def = self.station_rows[row_idx]
+                    stop_map = m_train.get("_stop_map")
+                    if stop_map is not None:
+                        stop = stop_map.get(row_def["stop_idx"])
+                    else:
+                        stop = next((s for s in m_train.get("stops", []) if s.get("stop_idx") == row_def["stop_idx"]), None)
+                    if stop and stop.get("stop_type", 1) in (0, -1):
+                        return QColor(Qt.gray)
+
             if row >= len(self.row_headers):
                 val = self.data(index, Qt.EditRole) # 秒を含む正確な時刻で比較
                 secs = self._time_to_seconds(val)

@@ -4,6 +4,7 @@ from PySide6.QtWidgets import (
     QStyledItemDelegate, QStyleOptionViewItem, QApplication, QStyle, QLineEdit, QAbstractItemDelegate, QDialog
 )
 from timetable.dialogs import TrainTypePicker, TrackPicker
+from timetable.model import StopTypeRole
 
 # メインウィンドウの時刻表テーブルで使用するデリゲート
 class TimetableDelegate(QStyledItemDelegate):
@@ -122,6 +123,15 @@ class TimetableDelegate(QStyledItemDelegate):
                     painter.setFont(text_option.font)
                     painter.drawText(text_option.rect, alignment, text)
             painter.restore()
+
+        # 通過の縦線描画
+        if row >= num_headers and row < footer_row_idx:
+            stop_type = index.data(StopTypeRole)
+            if stop_type == 0:  # 通過
+                if not (option.state & QStyle.State_HasFocus):
+                    painter.save()
+                    painter.fillRect(option.rect.left() + 18, option.rect.top(), 2, option.rect.height(), QColor(Qt.gray))
+                    painter.restore()
 
         painter.save()
         painter.setPen(QColor("#dddddd"))

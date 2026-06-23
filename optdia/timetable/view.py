@@ -1,7 +1,9 @@
 import re
 from PySide6.QtCore import Qt, QRect, QModelIndex
 from PySide6.QtGui import QColor, QPainter, QFont, QFontMetrics
-from PySide6.QtWidgets import QHeaderView, QStyleOptionHeader, QStyle, QTableView, QPushButton, QSizePolicy, QVBoxLayout, QLabel
+from PySide6.QtWidgets import QHeaderView, QStyleOptionHeader, QStyle, QTableView, QPushButton, QSizePolicy, QVBoxLayout, QLabel, QMenu
+from PySide6.QtGui import QActionGroup
+from .model import StopTypeRole
 
 # 時刻表テーブルの垂直ヘッダーのビュー
 class TimetableVerticalHeader(QHeaderView):
@@ -259,3 +261,59 @@ class TimetableView(QTableView):
         if event.key() in (Qt.Key_Return, Qt.Key_Enter):
             if self.move_to_next_cell_and_edit(): return
         super().keyPressEvent(event)
+
+    def contextMenuEvent(self, event):
+        index = self.indexAt(event.pos())
+        if not index.isValid():
+            super().contextMenuEvent(event)
+            return
+
+        model = self.model()
+        if not model or not hasattr(model, 'row_headers') or not hasattr(model, 'station_rows'):
+            super().contextMenuEvent(event)
+            return
+
+        row, col = index.row(), index.column()
+        # 各駅停車時刻のセル
+        if row >= len(model.row_headers) and row < len(model.row_headers) + len(model.station_rows):
+            menu = QMenu(self)
+            
+            # 客扱い情報 サブメニュー
+            passenger_menu = QMenu("客扱い情報", menu)
+            
+            group = QActionGroup(self)
+            
+            current_value = index.data(StopTypeRole)
+            if current_value is None:
+                current_value = 1  # デフォルトは停車
+                
+            stop_action = passenger_menu.addAction("停車")
+            stop_action.setCheckable(True)
+            stop_action.setData(1)
+            group.addAction(stop_action)
+            if current_value == 1:
+                stop_action.setChecked(True)
+                
+            pass_action = passenger_menu.addAction("通過")
+            pass_action.setCheckable(True)
+            pass_action.setData(0)
+            group.addAction(pass_action)
+            if current_value == 0:
+                pass_action.setChecked(True)
+                
+            op_stop_action = passenger_menu.addAction("運転停車")
+            op_stop_action.setCheckable(True)
+            op_stop_action.setData(-1)
+            group.addAction(op_stop_action)
+            if current_value == -1:
+                op_stop_action.setChecked(True)
+                
+            menu.addMenu(passenger_menu)
+            
+            selected_action = menu.exec(event.globalPos())
+            if selected_action and selected_action in (stop_action, pass_action, op_stop_action):
+                new_val = selected_action.data()
+                model.setData(index, new_val, StopTypeRole)
+        else:
+            super().contextMenuEvent(event)
+
