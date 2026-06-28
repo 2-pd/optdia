@@ -287,6 +287,41 @@ class TrainTypePicker(QDialog):
         self.selected_id = item.data(Qt.UserRole)
         self.accept()
 
+# 担当運用選択ポップアップ
+class OperationPickerDialog(QDialog):
+    def __init__(self, parent, project):
+        super().__init__(parent, Qt.Popup)
+        self.project = project
+        self.setWindowTitle("担当運用選択")
+        self.setFixedSize(300, 360)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(5,5,5,5)
+        layout.setSpacing(4)
+        # ラベル
+        label = QLabel("列車の担当運用(編成の前位側から)")
+        layout.addWidget(label)
+        # リストウィジェット (枠線なし)
+        list_widget = QListWidget(self)
+        list_widget.setStyleSheet("border: none;")
+        layout.addWidget(list_widget)
+        # 「担当運用の追加」ボタン
+        add_btn = QPushButton("担当運用の追加")
+        layout.addWidget(add_btn)
+        # 「運用の追加・編集」ボタン (枠線なし、下線)
+        edit_btn = QPushButton("運用の追加・編集")
+        edit_btn.setStyleSheet("QPushButton { border: none; text-decoration: underline; background: transparent; }")
+        edit_btn.clicked.connect(self._on_edit_clicked)
+        layout.addWidget(edit_btn)
+        self.list_widget = list_widget
+        self.add_btn = add_btn
+        self.edit_btn = edit_btn
+
+    def _on_edit_clicked(self):
+        self.close()
+        from dialogs.operation import VehicleOperationEditorDialog
+        dialog = VehicleOperationEditorDialog(self.parent(), self.project)
+        dialog.exec()
+
 # 番線を選択するためのポップアップダイアログ
 class TrackPicker(QDialog):
     def __init__(self, parent, station_data, current_track_id=None):

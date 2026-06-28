@@ -3,7 +3,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QStyledItemDelegate, QStyleOptionViewItem, QApplication, QStyle, QLineEdit, QAbstractItemDelegate, QDialog
 )
-from timetable.dialogs import TrainTypePicker, TrackPicker
+from timetable.dialogs import TrainTypePicker, TrackPicker, OperationPickerDialog
 from timetable.model import StopTypeRole
 
 # メインウィンドウの時刻表テーブルで使用するデリゲート
@@ -179,7 +179,9 @@ class TimetableDelegate(QStyledItemDelegate):
         if event.type() == QEvent.MouseButtonRelease and index.row() == 1: # 運転日行
             self._show_diagram_picker_menu(index, model, option.widget)
             return True
-
+        if event.type() == QEvent.MouseButtonRelease and index.row() == 2: # 運用番号行
+            self._show_operation_picker_menu(index, model, option.widget)
+            return True
         if event.type() == QEvent.MouseButtonRelease and index.row() == 4: # 種別・愛称行
             self._show_train_type_menu(index, model, option.widget)
             return True
@@ -195,6 +197,13 @@ class TimetableDelegate(QStyledItemDelegate):
         pos = widget.viewport().mapToGlobal(widget.visualRect(index).bottomLeft())
         picker.move(pos)
         if picker.exec() == QDialog.Accepted: model.setData(index, picker.selected_id, Qt.EditRole)
+
+    def _show_operation_picker_menu(self, index, model, widget):
+        # Show the operation selection popup
+        picker = OperationPickerDialog(widget, model.project)
+        pos = widget.viewport().mapToGlobal(widget.visualRect(index).bottomLeft())
+        picker.move(pos)
+        picker.exec()
 
     def _show_diagram_picker_menu(self, index, model, widget):
         from timetable.dialogs import DiagramPicker
