@@ -60,12 +60,11 @@ class OptDiaProject:
 
         # 運転ダイヤ (diagrams: optdia_diagram[])
         self.diagrams, self.diagrams_order = self._split_collection(entities.get("diagrams", []), "diagram_id")
-
-        # 車両運用グループ (operation_groups: optdia_operation_group[])
-        self.operation_groups, self.operation_groups_order = self._split_collection(entities.get("operation_groups", []), "operation_group_id")
-
-        # 運用 (operations) は TS 上で既に連想配列として定義されているためそのまま保持
-        self.operations = entities.get("operations", {})
+        for diag in self.diagrams.values():
+            diag["operations"] = diag.get("operations", {})
+            diag["operation_groups"], diag["operation_groups_order"] = self._split_collection(
+                diag.get("operation_groups", []), "operation_group_id"
+            )
 
         # 各マスタ列車 (optdia_train) に、その列車が運転されるダイヤのIDを配列として保持する一時キーを追加
         # このキーは保存時には除去される
@@ -237,6 +236,18 @@ class OptDiaProject:
                 r_copy["trains_by_diagram"] = new_tbd
             routes_export.append(r_copy)
 
+        diagrams_export = []
+        for did in self.diagrams_order:
+            diag = self.diagrams[did]
+            diag_copy = diag.copy()
+            if "operation_groups" in diag and "operation_groups_order" in diag:
+                diag_copy["operation_groups"] = [
+                    diag["operation_groups"][ogid]
+                    for ogid in diag["operation_groups_order"]
+                ]
+                del diag_copy["operation_groups_order"]
+            diagrams_export.append(diag_copy)
+
         return {
             "metadata": self.metadata,
             "entities": {
@@ -244,9 +255,7 @@ class OptDiaProject:
                 "stations": stations_export,
                 "routes": routes_export,
                 "train_types": [self.train_types[ttid] for ttid in self.train_types_order],
-                "diagrams": [self.diagrams[did] for did in self.diagrams_order],
-                "operations": self.operations,
-                "operation_groups": [self.operation_groups[ogid] for ogid in self.operation_groups_order]
+                "diagrams": diagrams_export
             }
         }
 

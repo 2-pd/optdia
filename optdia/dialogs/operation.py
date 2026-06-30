@@ -4,15 +4,18 @@ from PySide6.QtWidgets import (
 )
 from project import OptDiaProject
 
+# 車両運用情報編集ダイアログ
 class VehicleOperationEditorDialog(QDialog):
-    def __init__(self, parent, project: OptDiaProject):
+    def __init__(self, parent, project: OptDiaProject, diagram_id: str):
         super().__init__(parent)
         self.project = project
+        self.diagram_id = diagram_id
         self.setWindowTitle("車両運用情報")
         self.resize(960, 640)
 
         # 水平レイアウト
         main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
 
         # 左側の垂直レイアウト (幅240px固定)
         left_panel = QWidget()
@@ -28,14 +31,18 @@ class VehicleOperationEditorDialog(QDialog):
         self.group_list = QListWidget()
         left_layout.addWidget(self.group_list)
         
+        diagram = self.project.diagrams.get(diagram_id, {})
+        operation_groups = diagram.get("operation_groups", {})
+        operation_groups_order = diagram.get("operation_groups_order", [])
+
         # Populate list widget with operation group names
-        for og_id in self.project.operation_groups_order:
-            og = self.project.operation_groups[og_id]
+        for og_id in operation_groups_order:
+            og = operation_groups[og_id]
             self.group_list.addItem(og.get("operation_group_name", ""))
             
         main_layout.addWidget(left_panel, stretch=1)
 
-        # 右側: スタックドウィジェット
+        # 右側のスタックドウィジェット
         self.stacked_widget = QStackedWidget()
         
         # 1. 運用グループが登録されているときに表示するタブウィジェット
@@ -58,7 +65,7 @@ class VehicleOperationEditorDialog(QDialog):
         main_layout.addWidget(self.stacked_widget, stretch=3)
 
         # 表示の切り替え
-        if len(self.project.operation_groups_order) > 0:
+        if len(operation_groups_order) > 0:
             self.stacked_widget.setCurrentIndex(0)
             self.group_list.setCurrentRow(0)
         else:

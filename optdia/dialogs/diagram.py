@@ -361,7 +361,10 @@ class DiagramEditorDialog(QDialog):
                 "diagram_id": diagram_id,
                 "diagram_name": diagram_name,
                 "diagram_initial": diagram_initial,
-                "background_color": "#cccccc" # デフォルトの背景色
+                "background_color": "#cccccc", # デフォルトの背景色
+                "operations": {},
+                "operation_groups": {},
+                "operation_groups_order": []
             }
             self.project.diagrams_order.append(diagram_id)
 

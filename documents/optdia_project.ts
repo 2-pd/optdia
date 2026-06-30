@@ -35,8 +35,6 @@ interface optdia_project_entities {
     routes: optdia_route[]; // 運行系統の情報(下記)を表示順に配列で
     train_types: optdia_train_type[]; // 各列車種別の情報(下記)を表示順に配列で
     diagrams: optdia_diagram[]; // 運転ダイヤの情報(下記)を表示順に配列で
-    operations: optdia_operation_dict; // 各車両運用の情報(下記)を連想配列で
-    operation_groups: optdia_operation_group[]; // 各車両運用グループの情報(下記)を表示順に配列で
 }
 
 
@@ -146,6 +144,8 @@ interface optdia_diagram {
     diagram_name: string; // 運転ダイヤ名
     diagram_initial: string; // 運転ダイヤ名の1文字表記
     background_color: string; // 駅時刻表等での運転ダイヤの背景色(デフォルト値は #cccccc)
+    operations: optdia_operation_dict; // 各車両運用の情報(下記)を連想配列で
+    operation_groups: optdia_operation_group[]; // 各車両運用グループの情報(下記)を表示順に配列で
 }
 
 

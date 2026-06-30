@@ -200,7 +200,7 @@ class TimetableDelegate(QStyledItemDelegate):
 
     def _show_operation_picker_menu(self, index, model, widget):
         # Show the operation selection popup
-        picker = OperationPickerDialog(widget, model.project)
+        picker = OperationPickerDialog(widget, model.project, model.diagram_id)
         pos = widget.viewport().mapToGlobal(widget.visualRect(index).bottomLeft())
         picker.move(pos)
         picker.exec()

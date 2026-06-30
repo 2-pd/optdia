@@ -289,9 +289,10 @@ class TrainTypePicker(QDialog):
 
 # 担当運用選択ポップアップ
 class OperationPickerDialog(QDialog):
-    def __init__(self, parent, project):
+    def __init__(self, parent, project, diagram_id):
         super().__init__(parent, Qt.Popup)
         self.project = project
+        self.diagram_id = diagram_id
         self.setWindowTitle("担当運用選択")
         self.setFixedSize(300, 360)
         layout = QVBoxLayout(self)
@@ -319,7 +320,7 @@ class OperationPickerDialog(QDialog):
     def _on_edit_clicked(self):
         self.close()
         from dialogs.operation import VehicleOperationEditorDialog
-        dialog = VehicleOperationEditorDialog(self.parent(), self.project)
+        dialog = VehicleOperationEditorDialog(self.parent(), self.project, self.diagram_id)
         dialog.exec()
 
 # 番線を選択するためのポップアップダイアログ
