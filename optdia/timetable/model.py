@@ -646,7 +646,7 @@ class TimetableModel(QAbstractTableModel):
             return None
         if role in (Qt.DisplayRole, Qt.EditRole):
             if row == 0: return m_train.get("train_number", "") # 列車番号
-            elif row == 1: # 運転日 (新しく追加された行)
+            elif row == 1: # 運転日
                 diagram_ids = m_train.get("_diagram_ids", [])
                 all_diagram_ids = self.project.diagrams_order
 
@@ -663,21 +663,28 @@ class TimetableModel(QAbstractTableModel):
                     return "".join(diagram_initials[:3]) + ".."
                 else:
                     return "".join(diagram_initials)
-            elif row == 2: # 運用番号 (旧row 1)
-                ops = [str(op.get("operation_id", "")) for op in d_train.get("operations", []) if op.get("operation_id")]
-                return ",".join(ops) if ops else ""
-            elif row == 3: # 両数 (旧row 2)
+            elif row == 2: # 運用番号
+                ops = []
+                operations_dict = self.project.diagrams.get(self.diagram_id, {}).get("operations", {})
+                for op in d_train.get("operations", []):
+                    op_id = op.get("operation_id")
+                    if op_id:
+                        op_data = operations_dict.get(op_id)
+                        op_num = op_data.get("operation_number") if op_data else op_id
+                        ops.append(str(op_num))
+                return "+".join(ops) if ops else ""
+            elif row == 3: # 両数
                 cc = d_train.get("car_count")
                 return str(cc) if cc is not None else ""
-            elif row == 4: # 種別・愛称 (旧row 3)
+            elif row == 4: # 種別・愛称
                 tt = self.project.train_types.get(m_train.get("train_type_id"))
                 name = (tt.get("train_type_short_name") or tt.get("train_type_name", "")) if tt else ""
                 tname = m_train.get("train_name")
                 return f"{name} {tname}" if tname else name
-            elif row == 5: # 号数 (旧row 4)
+            elif row == 5: # 号数
                 val = m_train.get("named_train_number")
                 return str(val) if val is not None else ""
-            elif row == 6: # 行き先 (旧row 5)
+            elif row == 6: # 行き先
                 if train_id in self._dest_cache:
                     return self._dest_cache[train_id]
 

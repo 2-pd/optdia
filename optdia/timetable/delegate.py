@@ -199,8 +199,12 @@ class TimetableDelegate(QStyledItemDelegate):
         if picker.exec() == QDialog.Accepted: model.setData(index, picker.selected_id, Qt.EditRole)
 
     def _show_operation_picker_menu(self, index, model, widget):
-        # Show the operation selection popup
-        picker = OperationPickerDialog(widget, model.project, model.diagram_id)
+        # 担当運用選択ポップアップを表示
+        train_id = model.train_ids[index.column()]
+        route_id = model.route_id
+        diagram_id = model.diagram_id
+        direction = model.direction
+        picker = OperationPickerDialog(widget, model.project, diagram_id, route_id, direction, train_id)
         pos = widget.viewport().mapToGlobal(widget.visualRect(index).bottomLeft())
         picker.move(pos)
         picker.exec()

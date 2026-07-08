@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt, QModelIndex
+from PySide6.QtCore import Qt, QModelIndex, QSize
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QGroupBox, QLineEdit,
@@ -287,35 +287,307 @@ class TrainTypePicker(QDialog):
         self.selected_id = item.data(Qt.UserRole)
         self.accept()
 
+# 担当運用選択用のリストウィジェット
+class DragDropListWidget(QListWidget):
+    def __init__(self, parent_dialog):
+        super().__init__(parent_dialog)
+        self.parent_dialog = parent_dialog
+        self.setDragDropMode(QListWidget.InternalMove)
+        self.setDefaultDropAction(Qt.MoveAction)
+        self.setStyleSheet("border: none;")
+
+    def dropEvent(self, event):
+        # ドラッグ＆ドロップでアイテムが移動される前に、現在のウィジェットの状態を保存
+        self.parent_dialog.sync_operations_to_project()
+        super().dropEvent(event)
+        # 移動後、カスタムウィジェットが再構築される
+        self.parent_dialog.rebuild_item_widgets()
+        self.parent_dialog.sync_operations_to_project()
+
+# リストウィジェット内のカスタムアイテム用ウィジェット
+class OperationItemWidget(QWidget):
+    def __init__(self, parent_dialog, index_1based, operation_id=None, formation_is_reversed=False):
+        super().__init__()
+        self.dialog = parent_dialog
+        self.operation_id = operation_id
+        self.formation_is_reversed = formation_is_reversed
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 2, 0, 2)
+
+        self.group_box = QGroupBox(f"{index_1based}つ目の運用")
+        self.group_box.setStyleSheet("QGroupBox { border: 1px solid #aaa; border-radius: 4px; margin-top: 8px; background-color: #ffffff; padding-top: 2px; } QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 5px; background-color: #f7f7f7; }")
+        group_layout = QVBoxLayout(self.group_box)
+        group_layout.setContentsMargins(5, 10, 5, 0)
+
+        # 1行目: 「運用グループ」を選択するコンボボックス
+        self.group_combo = QComboBox()
+        self.group_combo.setStyleSheet("QComboBox { border: 1px solid #aaa; border-radius: 3px; padding: 2px; min-height: 24px; }")
+        self.group_combo.addItem("運用グループを選択", None)
+        diagram = self.dialog.project.diagrams.get(self.dialog.diagram_id, {})
+        operation_groups = diagram.get("operation_groups", {})
+        operation_groups_order = diagram.get("operation_groups_order", [])
+        for og_id in operation_groups_order:
+            og = operation_groups[og_id]
+            self.group_combo.addItem(og.get("operation_group_name", og_id), og_id)
+        group_layout.addWidget(self.group_combo)
+
+        # 2行目: 「運用」を選択するコンボボックス
+        self.op_combo = QComboBox()
+        self.op_combo.setStyleSheet("QComboBox { border: 1px solid #aaa; border-radius: 3px; padding: 2px; min-height: 24px; }")
+        self.op_combo.addItem("運用を選択", None)
+        group_layout.addWidget(self.op_combo)
+
+        # 3行目: 「方反」チェックボックスと「削除」ボタン
+        row3_layout = QHBoxLayout()
+        row3_layout.setContentsMargins(0, 0, 0, 0)
+        self.reversed_cb = QCheckBox("方反")
+        self.reversed_cb.setChecked(formation_is_reversed)
+        row3_layout.addWidget(self.reversed_cb)
+
+        row3_layout.addStretch()
+
+        self.del_btn = QPushButton("削除")
+        self.del_btn.setStyleSheet("QPushButton { border: none; text-decoration: underline; background: transparent; color: #cc3333; }")
+        self.del_btn.setCursor(Qt.PointingHandCursor)
+        row3_layout.addWidget(self.del_btn)
+
+        group_layout.addLayout(row3_layout)
+        layout.addWidget(self.group_box)
+
+        # 接続設定
+        self.group_combo.currentIndexChanged.connect(self._on_group_changed)
+        self.op_combo.currentIndexChanged.connect(self._on_op_changed)
+        self.reversed_cb.toggled.connect(self._on_reversed_toggled)
+        self.del_btn.clicked.connect(self._on_delete_clicked)
+
+        # 初期値の反映
+        self._init_combos()
+
+    def _init_combos(self):
+        diagram = self.dialog.project.diagrams.get(self.dialog.diagram_id, {})
+        operation_groups = diagram.get("operation_groups", {})
+        operation_groups_order = diagram.get("operation_groups_order", [])
+
+        found_group_id = None
+        if self.operation_id:
+            for og_id in operation_groups_order:
+                og = operation_groups[og_id]
+                if self.operation_id in og.get("operations", []):
+                    found_group_id = og_id
+                    break
+
+        self.group_combo.blockSignals(True)
+        if found_group_id:
+            idx = self.group_combo.findData(found_group_id)
+            if idx >= 0:
+                self.group_combo.setCurrentIndex(idx)
+        else:
+            self.group_combo.setCurrentIndex(0)
+        self.group_combo.blockSignals(False)
+
+        self._repopulate_ops(found_group_id)
+
+        self.op_combo.blockSignals(True)
+        if self.operation_id:
+            idx = self.op_combo.findData(self.operation_id)
+            if idx >= 0:
+                self.op_combo.setCurrentIndex(idx)
+        else:
+            self.op_combo.setCurrentIndex(0)
+        self.op_combo.blockSignals(False)
+
+    def _repopulate_ops(self, group_id):
+        self.op_combo.blockSignals(True)
+        self.op_combo.clear()
+        self.op_combo.addItem("運用を選択", None)
+
+        diagram = self.dialog.project.diagrams.get(self.dialog.diagram_id, {})
+        operations = diagram.get("operations", {})
+
+        if group_id:
+            og = diagram.get("operation_groups", {}).get(group_id, {})
+            for op_id in og.get("operations", []):
+                op = operations.get(op_id)
+                if op:
+                    self.op_combo.addItem(op.get("operation_number", op_id), op_id)
+        else:
+            for op_id, op in operations.items():
+                self.op_combo.addItem(op.get("operation_number", op_id), op_id)
+
+        self.op_combo.blockSignals(False)
+
+    def _on_group_changed(self, index):
+        group_id = self.group_combo.currentData()
+        self._repopulate_ops(group_id)
+        self.operation_id = None
+        self.dialog.sync_operations_to_project()
+
+    def _on_op_changed(self, index):
+        self.operation_id = self.op_combo.currentData()
+
+        # 運用が選択されたら、その運用が所属するグループに自動で切り替える
+        if self.operation_id:
+            diagram = self.dialog.project.diagrams.get(self.dialog.diagram_id, {})
+            operation_groups = diagram.get("operation_groups", {})
+            operation_groups_order = diagram.get("operation_groups_order", [])
+
+            found_group_id = None
+            for og_id in operation_groups_order:
+                og = operation_groups[og_id]
+                if self.operation_id in og.get("operations", []):
+                    found_group_id = og_id
+                    break
+
+            if found_group_id:
+                self.group_combo.blockSignals(True)
+                idx = self.group_combo.findData(found_group_id)
+                if idx >= 0 and idx != self.group_combo.currentIndex():
+                    self.group_combo.setCurrentIndex(idx)
+                self.group_combo.blockSignals(False)
+
+        self.dialog.sync_operations_to_project()
+
+    def _on_reversed_toggled(self, checked):
+        self.formation_is_reversed = checked
+        self.dialog.sync_operations_to_project()
+
+    def _on_delete_clicked(self):
+        self.dialog.delete_item_widget(self)
+
+
 # 担当運用選択ポップアップ
 class OperationPickerDialog(QDialog):
-    def __init__(self, parent, project, diagram_id):
+    def __init__(self, parent, project, diagram_id, route_id, direction, train_id):
         super().__init__(parent, Qt.Popup)
         self.project = project
         self.diagram_id = diagram_id
+        self.route_id = route_id
+        self.direction = direction
+        self.train_id = train_id
+
+        # 現在編集中の列車のダイヤデータを取得
+        route = self.project.routes.get(self.route_id, {})
+        train_key = "inbound_trains" if self.direction == "inbound" else "outbound_trains"
+        self.d_train = route.get("trains_by_diagram", {}).get(self.diagram_id, {}).get(train_key, {}).get(self.train_id)
+
         self.setWindowTitle("担当運用選択")
         self.setFixedSize(300, 360)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(5,5,5,5)
+        layout.setContentsMargins(5, 5, 5, 5)
         layout.setSpacing(4)
+
         # ラベル
         label = QLabel("列車の担当運用(編成の前位側から)")
         layout.addWidget(label)
-        # リストウィジェット (枠線なし)
-        list_widget = QListWidget(self)
-        list_widget.setStyleSheet("border: none;")
-        layout.addWidget(list_widget)
+
+        # リストウィジェット
+        self.list_widget = DragDropListWidget(self)
+        layout.addWidget(self.list_widget)
+
         # 「担当運用の追加」ボタン
-        add_btn = QPushButton("担当運用の追加")
-        layout.addWidget(add_btn)
+        self.add_btn = QPushButton("担当運用の追加")
+        self.add_btn.clicked.connect(self._on_add_clicked)
+        layout.addWidget(self.add_btn)
+
         # 「運用の追加・編集」ボタン (枠線なし、下線)
-        edit_btn = QPushButton("運用の追加・編集")
-        edit_btn.setStyleSheet("QPushButton { border: none; text-decoration: underline; background: transparent; }")
-        edit_btn.clicked.connect(self._on_edit_clicked)
-        layout.addWidget(edit_btn)
-        self.list_widget = list_widget
-        self.add_btn = add_btn
-        self.edit_btn = edit_btn
+        self.edit_btn = QPushButton("運用の追加・編集")
+        self.edit_btn.setStyleSheet("QPushButton { border: none; text-decoration: underline; background: transparent; }")
+        self.edit_btn.clicked.connect(self._on_edit_clicked)
+        layout.addWidget(self.edit_btn)
+
+        # 既存の担当運用をリストにロード
+        if self.d_train:
+            ops = self.d_train.get("operations", [])
+            for op in ops:
+                op_id = op.get("operation_id")
+                is_rev = op.get("formation_is_reversed", False)
+                self.add_item(op_id, is_rev)
+
+    def add_item(self, operation_id=None, formation_is_reversed=False):
+        item = QListWidgetItem()
+        item.setSizeHint(QSize(280, 120))
+        item.setData(Qt.UserRole, operation_id)
+        item.setData(Qt.UserRole + 1, formation_is_reversed)
+        self.list_widget.addItem(item)
+
+        idx = self.list_widget.count()
+        widget = OperationItemWidget(self, idx, operation_id, formation_is_reversed)
+        self.list_widget.setItemWidget(item, widget)
+
+    def _on_add_clicked(self):
+        self.add_item()
+        self.sync_operations_to_project()
+
+    def delete_item_widget(self, widget):
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if self.list_widget.itemWidget(item) == widget:
+                self.list_widget.takeItem(i)
+                break
+        self.rebuild_item_widgets()
+        self.sync_operations_to_project()
+
+    def rebuild_item_widgets(self):
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            widget = self.list_widget.itemWidget(item)
+            idx = i + 1
+            if widget:
+                widget.group_box.setTitle(f"{idx}つ目の運用")
+            else:
+                op_id = item.data(Qt.UserRole)
+                is_rev = item.data(Qt.UserRole + 1) or False
+                item.setSizeHint(QSize(280, 110))
+                widget = OperationItemWidget(self, idx, op_id, is_rev)
+                self.list_widget.setItemWidget(item, widget)
+
+    def sync_operations_to_project(self):
+        if not self.d_train:
+            return
+
+        ops = []
+        has_valid = False
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            widget = self.list_widget.itemWidget(item)
+            if widget:
+                op_id = widget.operation_id
+                is_rev = widget.formation_is_reversed
+                item.setData(Qt.UserRole, op_id)
+                item.setData(Qt.UserRole + 1, is_rev)
+            else:
+                op_id = item.data(Qt.UserRole)
+                is_rev = item.data(Qt.UserRole + 1) or False
+
+            ops.append({
+                "operation_id": op_id,
+                "formation_is_reversed": is_rev
+            })
+            if op_id:
+                has_valid = True
+
+        self.d_train["operations"] = ops
+        if has_valid:
+            self.d_train["to_be_saved"] = True
+
+        # メインウィンドウに変更を通知
+        view = self.parent()
+        if view and hasattr(view, "model"):
+            view.model().dataChanged.emit(QModelIndex(), QModelIndex(), [])
+
+    def closeEvent(self, event):
+        # 運用が選択されていない項目を破棄
+        if self.d_train and "operations" in self.d_train:
+            original_ops = self.d_train["operations"]
+            self.d_train["operations"] = [
+                op for op in original_ops if op.get("operation_id")
+            ]
+            if len(self.d_train["operations"]) != len(original_ops):
+                view = self.parent()
+                if view and hasattr(view, "model"):
+                    view.model().dataChanged.emit(QModelIndex(), QModelIndex(), [])
+        super().closeEvent(event)
 
     def _on_edit_clicked(self):
         self.close()
