@@ -320,6 +320,10 @@ class TimetableModel(QAbstractTableModel):
         if index.row() == num_rows_before_footer:
             return Qt.ItemIsEnabled | Qt.ItemIsSelectable
 
+        # 備考行 (num_rows_before_footer + 1) はクリックでポップアップを開くため標準の編集は無効化
+        if index.row() == num_rows_before_footer + 1:
+            return Qt.ItemIsEnabled | Qt.ItemIsSelectable
+
         # 「運転日」行 (index 1) と「運用番号」行 (index 2) は編集不可
         if index.row() == 2: # 運用番号行のみ編集不可
             return Qt.ItemIsEnabled | Qt.ItemIsSelectable
@@ -424,6 +428,10 @@ class TimetableModel(QAbstractTableModel):
             val = value if value else None
             if d_train.get("destination") != val:
                 d_train["destination"] = val
+                changed = True
+        elif row == len(self.row_headers) + len(self.station_rows) + 1: # 備考
+            if m_train.get("note") != value:
+                m_train["note"] = value
                 changed = True
         elif row >= len(self.row_headers):
             row_idx = row - len(self.row_headers)
@@ -557,7 +565,7 @@ class TimetableModel(QAbstractTableModel):
             self.dataChanged.emit(self.index(0, col), self.index(self.rowCount() - 1, col), [Qt.DisplayRole, Qt.ForegroundRole])
 
     def rowCount(self, parent=QModelIndex()):
-        return len(self.row_headers) + len(self.station_rows) + 1
+        return len(self.row_headers) + len(self.station_rows) + 2
 
     def columnCount(self, parent=QModelIndex()):
         return len(self.train_ids)
@@ -599,6 +607,8 @@ class TimetableModel(QAbstractTableModel):
             num_rows_before_footer = len(self.row_headers) + len(self.station_rows)
             if row == num_rows_before_footer or row == 1:
                 return Qt.AlignCenter
+            if row == num_rows_before_footer + 1:  # 備考行 (テキストを上寄せ表示)
+                return Qt.AlignLeft | Qt.AlignTop
             if row < len(self.row_headers):
                 return Qt.AlignCenter
             return Qt.AlignRight | Qt.AlignVCenter
@@ -612,6 +622,12 @@ class TimetableModel(QAbstractTableModel):
                 if tt: return QColor(tt.get("main_color", "#333333"))
             elif row == 1: # 運転日
                 return None # デフォルトのテキスト色を使用
+            elif row == 3: # 両数
+                # 両数が指定されていない場合は灰色、そうでなければデフォルト色でテキストを表示
+                if d_train.get("car_count") is None:
+                    return QColor(Qt.darkGray)
+                else:
+                    return None
             elif row == 4: # 種別・愛称
                 tt = self.project.train_types.get(m_train.get("train_type_id"))
                 if tt: return QColor(tt.get("main_color", "#333333"))
@@ -635,7 +651,7 @@ class TimetableModel(QAbstractTableModel):
                 secs = self._time_to_seconds(val)
                 if secs is not None:
                     # 運転日行と運用番号行をスキップして前の時刻を探す
-                    # row_headersの長さが7になったので、時刻行の開始は7から
+                    # row_headersの長さが7なので、時刻行の開始は7から
                     # 列車番号(0), 運転日(1), 運用番号(2), 両数(3), 種別・愛称(4), 号数(5), 行き先(6)
                     for r in range(row - 1, len(self.row_headers) - 1, -1): # 列車番号(0)より下は時刻行
                         p_val = self.data(self.index(r, col), Qt.EditRole)
@@ -675,7 +691,17 @@ class TimetableModel(QAbstractTableModel):
                 return "+".join(ops) if ops else ""
             elif row == 3: # 両数
                 cc = d_train.get("car_count")
-                return str(cc) if cc is not None else ""
+                if cc is None:
+                    # 運用内の所定両数を合計する
+                    total = 0
+                    for op in d_train.get("operations", []):
+                        op_data = self.project.diagrams.get(self.diagram_id, {}).get("operations", {}).get(op.get("operation_id"), {})
+                        total += op_data.get("car_count", 0)
+                    cc = total if total > 0 else None
+                if role == Qt.DisplayRole:
+                    return f"{cc}両" if cc is not None else ""
+                else:
+                    return str(cc) if cc is not None else ""
             elif row == 4: # 種別・愛称
                 tt = self.project.train_types.get(m_train.get("train_type_id"))
                 name = (tt.get("train_type_short_name") or tt.get("train_type_name", "")) if tt else ""
@@ -683,7 +709,10 @@ class TimetableModel(QAbstractTableModel):
                 return f"{name} {tname}" if tname else name
             elif row == 5: # 号数
                 val = m_train.get("named_train_number")
-                return str(val) if val is not None else ""
+                if role == Qt.DisplayRole:
+                    return f"{val}号" if val is not None else ""
+                else:
+                    return str(val) if val is not None else ""
             elif row == 6: # 行き先
                 if train_id in self._dest_cache:
                     return self._dest_cache[train_id]
@@ -724,6 +753,11 @@ class TimetableModel(QAbstractTableModel):
                             # 編集時は秒まで含めた完全な時刻を表示 (HH:MM:SS)
                             return full_time
         
+        if role in (Qt.DisplayRole, Qt.EditRole):
+            num_rows_before_footer = len(self.row_headers) + len(self.station_rows)
+            if row == num_rows_before_footer + 1:
+                return m_train.get("note", "")
+
         if role == Qt.DisplayRole:
             # フッター行のセルにはデータは返さない（デリゲートでボタンを描画するため）
             num_rows_before_footer = len(self.row_headers) + len(self.station_rows)
@@ -737,10 +771,13 @@ class TimetableModel(QAbstractTableModel):
                 if 0 <= section < len(self.row_headers): return self.row_headers[section]
                 row_idx = section - len(self.row_headers)
                 if 0 <= row_idx < len(self.station_rows): return self.station_rows[row_idx]["name"]
-                if section == len(self.row_headers) + len(self.station_rows): return "連続する列車"
+                num_rows_before_footer = len(self.row_headers) + len(self.station_rows)
+                if section == num_rows_before_footer: return "連続する列車"
+                if section == num_rows_before_footer + 1: return "備考"
             elif role == Qt.TextAlignmentRole:
                 if 0 <= section < len(self.row_headers): return Qt.AlignCenter
-                if section == len(self.row_headers) + len(self.station_rows): return Qt.AlignCenter
+                num_rows_before_footer = len(self.row_headers) + len(self.station_rows)
+                if section == num_rows_before_footer or section == num_rows_before_footer + 1: return Qt.AlignCenter
                 return Qt.AlignRight | Qt.AlignVCenter
         return None
 

@@ -3,7 +3,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QGroupBox, QLineEdit,
     QComboBox, QLabel, QScrollArea, QWidget, QListWidget, QListWidgetItem,
-    QCheckBox,
+    QCheckBox, QPlainTextEdit,
 )
 from common.gui_utils import HtmlDelegate
 from project import OptDiaProject
@@ -866,3 +866,76 @@ class SubsequentTrainDialog(QDialog):
             s_name = self.project.stations.get(first_stop["station_id"], {}).get("station_name", first_stop["station_id"])
             return f"{num} {tt_display} <font color='#666666'>({s_name} {first_stop['departure_time'][:5]}発)</font>"
         return f"{num} {tt_display}"
+
+
+# 備考編集用ポップアップ
+class NotePopup(QDialog):
+    def __init__(self, parent, initial_text):
+        super().__init__(parent, Qt.Popup)
+        self.setFixedSize(200, 200)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #fcfcfc;
+                border: 1px solid #cccccc;
+                border-radius: 4px;
+            }
+            QLabel {
+                font-weight: bold;
+                font-size: 12px;
+                color: #333333;
+            }
+            QPlainTextEdit {
+                background-color: #ffffff;
+                border: 1px solid #cccccc;
+                border-radius: 2px;
+                padding: 4px;
+                font-size: 14px;
+            }
+            QPushButton {
+                background-color: #f0f0f0;
+                border: 1px solid #cccccc;
+                border-radius: 2px;
+                padding: 4px 8px;
+                min-width: 60px;
+            }
+            QPushButton:hover {
+                background-color: #e0e0e0;
+            }
+            QPushButton#saveBtn {
+                background-color: #0078d4;
+                color: white;
+                border: 1px solid #006cc1;
+            }
+            QPushButton#saveBtn:hover {
+                background-color: #006cc1;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        label = QLabel("備考", self)
+        layout.addWidget(label)
+
+        self.text_edit = QPlainTextEdit(self)
+        self.text_edit.setPlainText(initial_text)
+        layout.addWidget(self.text_edit)
+
+        # OK / Cancel ボタン
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        
+        self.cancel_btn = QPushButton("キャンセル", self)
+        self.cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(self.cancel_btn)
+
+        self.save_btn = QPushButton("OK", self)
+        self.save_btn.setObjectName("saveBtn")
+        self.save_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(self.save_btn)
+
+        layout.addLayout(btn_layout)
+
+    def get_text(self):
+        return self.text_edit.toPlainText()

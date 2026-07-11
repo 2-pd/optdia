@@ -3,7 +3,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QStyledItemDelegate, QStyleOptionViewItem, QApplication, QStyle, QLineEdit, QAbstractItemDelegate, QDialog
 )
-from timetable.dialogs import TrainTypePicker, TrackPicker, OperationPickerDialog
+from timetable.dialogs import TrainTypePicker, TrackPicker, OperationPickerDialog, NotePopup
 from timetable.model import StopTypeRole
 
 # メインウィンドウの時刻表テーブルで使用するデリゲート
@@ -119,6 +119,8 @@ class TimetableDelegate(QStyledItemDelegate):
                     color = index.data(Qt.ForegroundRole)
                     if not isinstance(color, QColor): color = text_option.palette.text().color()
                     alignment = index.data(Qt.TextAlignmentRole) or (Qt.AlignRight | Qt.AlignVCenter)
+                    if row == footer_row_idx + 1:
+                        alignment |= Qt.TextWordWrap
                     painter.setPen(color)
                     painter.setFont(text_option.font)
                     painter.drawText(text_option.rect, alignment, text)
@@ -138,8 +140,8 @@ class TimetableDelegate(QStyledItemDelegate):
         rect = option.rect
         painter.drawLine(rect.right(), rect.top(), rect.right(), rect.bottom())
         # 下部の枠線を描画
-        if row == num_headers - 1 or row == footer_row_idx - 1:
-            painter.setPen(QColor("#999999")) # 境界（行き先の下、または最後の駅の下）を少し濃い色で強調
+        if row == num_headers - 1 or row == footer_row_idx - 1 or row == footer_row_idx + 1:
+            painter.setPen(QColor("#999999")) # 境界（行き先の下、または最後の駅の下、または備考の下）を少し濃い色で強調
             painter.drawLine(rect.left(), rect.bottom(), rect.right(), rect.bottom())
         elif row < num_headers:
             painter.drawLine(rect.left(), rect.bottom(), rect.right(), rect.bottom())
@@ -163,6 +165,9 @@ class TimetableDelegate(QStyledItemDelegate):
         if row == num_headers + num_stations:
             # フッターも同様に3行分に固定します
             size.setHeight(line_height * 3)
+        elif row == num_headers + num_stations + 1:
+            # 備考は4行分に固定
+            size.setHeight(line_height * 4)
         return size
 
     def editorEvent(self, event, model, option, index):
@@ -184,6 +189,11 @@ class TimetableDelegate(QStyledItemDelegate):
             return True
         if event.type() == QEvent.MouseButtonRelease and index.row() == 4: # 種別・愛称行
             self._show_train_type_menu(index, model, option.widget)
+            return True
+        
+        num_stations = len(model.station_rows) if hasattr(model, 'station_rows') else 0
+        if event.type() == QEvent.MouseButtonRelease and index.row() == num_headers + num_stations + 1: # 備考行
+            self._show_note_popup(index, model, option.widget)
             return True
         return super().editorEvent(event, model, option, index)
 
@@ -225,6 +235,23 @@ class TimetableDelegate(QStyledItemDelegate):
             # DiagramPickerがモデルを直接更新するため、ここではmodel.update_dataを呼び出す
             # model.update_dataはbeginResetModel/endResetModelを呼び出し、テーブル全体を再描画する
             model.update_data(route_id, diagram_id, direction)
+
+    def _show_note_popup(self, index, model, widget):
+        train_id = model.train_ids[index.column()]
+        route = model.project.routes.get(model.route_id)
+        train_key = "inbound_trains" if model.direction == "inbound" else "outbound_trains"
+        m_train = route.get(train_key, {}).get(train_id, {})
+        current_note = m_train.get("note", "")
+
+        picker = NotePopup(widget, current_note)
+        rect = widget.visualRect(index)
+        pos = widget.viewport().mapToGlobal(rect.topLeft())
+        # セルの上側に表示されるよう、ポップアップの高さ(200px)分Y座標を引く
+        picker.move(pos.x(), pos.y() - 200)
+        
+        if picker.exec() == QDialog.Accepted:
+            new_note = picker.get_text()
+            model.setData(index, new_note, Qt.EditRole)
 
     def _is_track_editable(self, index, model):
         row_idx = index.row() - len(model.row_headers)
