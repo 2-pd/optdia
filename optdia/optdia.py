@@ -172,6 +172,8 @@ class MainWindow(QMainWindow):
 
         # 時刻表テーブル
         self.timetable_model = TimetableModel(self.project)
+        self.timetable_model.set_auto_fill_enabled(self.auto_fill_action.isChecked())
+        self.timetable_model.set_adjust_later_enabled(self.adjust_later_action.isChecked())
         self.timetable_model.dataChanged.connect(lambda: self.set_modified(True))
         self.timetable_model.trainsReordered.connect(lambda: self.set_modified(True))
         self.timetable_view = TimetableView()
@@ -324,12 +326,35 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
 
         # 編集(E)
-        menu_bar.addMenu("編集(&E)")
+        edit_menu = menu_bar.addMenu("編集(&E)")
+
+        # 「同じ種別の列車から時刻を補完」チェックボックス
+        self.auto_fill_action = QAction("同じ種別の列車から時刻を補完", self, checkable=True)
+        self.auto_fill_action.setChecked(self.app_settings.load_auto_fill_enabled())
+        self.auto_fill_action.triggered.connect(self._on_auto_fill_triggered)
+        edit_menu.addAction(self.auto_fill_action)
+        edit_menu.addSeparator()
+
+        # 「発着時刻の変更時に後の駅の発着時刻も増減」チェックボックス
+        self.adjust_later_action = QAction("発着時刻の変更時に後の駅の発着時刻も増減", self, checkable=True)
+        self.adjust_later_action.setChecked(self.app_settings.load_adjust_later_enabled())
+        self.adjust_later_action.triggered.connect(self._on_adjust_later_triggered)
+        edit_menu.addAction(self.adjust_later_action)
 
         # ヘルプ(H)
         help_menu = menu_bar.addMenu("ヘルプ(&H)")
         about_action = help_menu.addAction(f"{APP_NAME}について(&A)")
         about_action.triggered.connect(self._on_about)
+
+    def _on_auto_fill_triggered(self, checked: bool):
+        """「同じ種別の列車から時刻を補完」チェックボックスのトリガーハンドラ"""
+        self.timetable_model.set_auto_fill_enabled(checked)
+        self.app_settings.save_auto_fill_enabled(checked)
+
+    def _on_adjust_later_triggered(self, checked: bool):
+        """「発着時刻の変更時に後の駅の発着時刻も増減」チェックボックスのトリガーハンドラ"""
+        self.timetable_model.set_adjust_later_enabled(checked)
+        self.app_settings.save_adjust_later_enabled(checked)
 
     def _update_recent_files_menu(self):
         """最近開いたプロジェクトメニューを更新する"""

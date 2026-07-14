@@ -44,3 +44,25 @@ class AppSettings:
         if isinstance(files, str):
             return [files]
         return files if files is not None else []
+
+    def save_auto_fill_enabled(self, enabled: bool):
+        """同じ種別の列車から時刻を補完する設定を保存する"""
+        self.settings.setValue("edit/auto_fill", enabled)
+
+    def load_auto_fill_enabled(self) -> bool:
+        """同じ種別の列車から時刻を補完する設定を読み込む"""
+        val = self.settings.value("edit/auto_fill", False)
+        if isinstance(val, str):
+            return val.lower() in ("true", "1")
+        return bool(val)
+
+    def save_adjust_later_enabled(self, enabled: bool):
+        """発着時刻の変更時に後の駅の発着時刻も増減する設定を保存する"""
+        self.settings.setValue("edit/adjust_later", enabled)
+
+    def load_adjust_later_enabled(self) -> bool:
+        """発着時刻の変更時に後の駅の発着時刻も増減する設定を読み込む"""
+        val = self.settings.value("edit/adjust_later", False)
+        if isinstance(val, str):
+            return val.lower() in ("true", "1")
+        return bool(val)

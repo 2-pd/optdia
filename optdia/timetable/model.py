@@ -26,6 +26,23 @@ class TimetableModel(QAbstractTableModel):
         self.full_stop_configs = []
         self._stop_lookup = {}  # normalization 高速化用
         self._dest_cache = {}    # 行き先表示高速化用
+        self.auto_fill_enabled = False
+        self.adjust_later_enabled = False
+
+    def set_auto_fill_enabled(self, enabled):
+        self.auto_fill_enabled = enabled
+
+    def set_adjust_later_enabled(self, enabled):
+        self.adjust_later_enabled = enabled
+
+    def _seconds_to_time(self, seconds: int):
+        if seconds is None:
+            return None
+        seconds = max(0, seconds)
+        hh = seconds // 3600
+        mm = (seconds % 3600) // 60
+        ss = seconds % 60
+        return f"{hh:02d}:{mm:02d}:{ss:02d}"
 
     def move_train(self, from_idx, to_idx):
         if from_idx == to_idx:
@@ -469,6 +486,19 @@ class TimetableModel(QAbstractTableModel):
 
                 if "stops" not in m_train: m_train["stops"] = []
                 formatted_value = self._format_time(value)
+
+                # Pre-edit check
+                is_target_train = True
+                for s in m_train.get("stops", []):
+                    if s.get("arrival_time") is not None or s.get("departure_time") is not None:
+                        is_target_train = False
+                        break
+
+                stations_with_time = set()
+                for s in m_train.get("stops", []):
+                    if s.get("arrival_time") is not None or s.get("departure_time") is not None:
+                        stations_with_time.add(s.get("stop_idx"))
+                has_multiple_stations = len(stations_with_time) >= 2
                 
                 # 管理用インデックス stop_idx を使用して、該当する駅訪問データを特定
                 stop = next((s for s in m_train["stops"] if s.get("stop_idx") == stop_idx), None)
@@ -507,8 +537,11 @@ class TimetableModel(QAbstractTableModel):
                                 stop["stop_type"] = next_stop.get("stop_type", 1)
                     except ValueError:
                         pass
+
                 time_key = "arrival_time" if row_def["type"] == "arr" else "departure_time"
                 other_key = "departure_time" if row_def["type"] == "arr" else "arrival_time"
+                old_time_str = stop.get(time_key)
+
                 if stop.get(time_key) != formatted_value:
                     stop[time_key] = formatted_value
                     # ユーザーが時刻を入力し、かつ、もう一方の時刻が未入力（None）の場合のみ自動補完する
@@ -528,6 +561,76 @@ class TimetableModel(QAbstractTableModel):
 
                     stop["track_id"] = config["track_id"]
                     changed = True
+
+                    # 同じ種別の列車から時刻を補完
+                    if self.auto_fill_enabled and is_target_train and formatted_value is not None:
+                        target_type_id = m_train.get("train_type_id")
+                        ref_m_train = None
+                        for c in range(col - 1, -1, -1):
+                            prev_id = self.train_ids[c]
+                            prev_m = m_trains.get(prev_id)
+                            if prev_m and prev_m.get("train_type_id") == target_type_id:
+                                prev_stop = next((s for s in prev_m.get("stops", []) if s.get("stop_idx") == stop_idx), None)
+                                if prev_stop and (prev_stop.get("arrival_time") is not None or prev_stop.get("departure_time") is not None):
+                                    ref_m_train = prev_m
+                                    break
+                        
+                        if ref_m_train:
+                            ref_stop = next((s for s in ref_m_train["stops"] if s.get("stop_idx") == stop_idx), None)
+                            ref_time_str = None
+                            if ref_stop:
+                                if ref_stop.get(time_key) is not None:
+                                    ref_time_str = ref_stop[time_key]
+                                elif ref_stop.get(other_key) is not None:
+                                    ref_time_str = ref_stop[other_key]
+                            
+                            if ref_time_str is not None:
+                                t_ref = self._time_to_seconds(ref_time_str)
+                                t_input = self._time_to_seconds(formatted_value)
+                                if t_ref is not None and t_input is not None:
+                                    diff = t_input - t_ref
+                                    for ref_stop_item in ref_m_train["stops"]:
+                                        ref_idx = ref_stop_item.get("stop_idx")
+                                        if ref_idx is not None and ref_idx > stop_idx:
+                                            target_stop_item = next((s for s in m_train["stops"] if s.get("stop_idx") == ref_idx), None)
+                                            if not target_stop_item:
+                                                ref_cfg = self.full_stop_configs[ref_idx]
+                                                target_stop_item = {
+                                                    "station_id": ref_stop_item["station_id"],
+                                                    "line_id": ref_stop_item["line_id"],
+                                                    "direction": ref_stop_item["direction"],
+                                                    "track_id": ref_stop_item.get("track_id", ref_cfg["track_id"]),
+                                                    "arrival_time": None,
+                                                    "departure_time": None,
+                                                    "stop_type": ref_stop_item.get("stop_type", 1),
+                                                    "stop_idx": ref_idx
+                                                }
+                                                m_train["stops"].append(target_stop_item)
+                                            
+                                            if ref_stop_item.get("arrival_time") is not None:
+                                                t_arr = self._time_to_seconds(ref_stop_item["arrival_time"])
+                                                target_stop_item["arrival_time"] = self._seconds_to_time(t_arr + diff)
+                                            if ref_stop_item.get("departure_time") is not None:
+                                                t_dep = self._time_to_seconds(ref_stop_item["departure_time"])
+                                                target_stop_item["departure_time"] = self._seconds_to_time(t_dep + diff)
+                                    m_train["stops"].sort(key=lambda x: x.get("stop_idx", 0))
+
+                    # 発着時刻の変更時に後の駅の発着時刻も増減
+                    elif self.adjust_later_enabled and has_multiple_stations:
+                        if old_time_str is not None and formatted_value is not None and old_time_str != formatted_value:
+                            t_old = self._time_to_seconds(old_time_str)
+                            t_new = self._time_to_seconds(formatted_value)
+                            if t_old is not None and t_new is not None:
+                                diff = t_new - t_old
+                                for sub_stop in m_train.get("stops", []):
+                                    sub_idx = sub_stop.get("stop_idx")
+                                    if sub_idx is not None and sub_idx > stop_idx:
+                                        if sub_stop.get("arrival_time") is not None:
+                                            sub_arr = self._time_to_seconds(sub_stop["arrival_time"])
+                                            sub_stop["arrival_time"] = self._seconds_to_time(sub_arr + diff)
+                                        if sub_stop.get("departure_time") is not None:
+                                            sub_dep = self._time_to_seconds(sub_stop["departure_time"])
+                                            sub_stop["departure_time"] = self._seconds_to_time(sub_dep + diff)
         if changed:
             self._trigger_update(col, d_trains, index)
             return True
