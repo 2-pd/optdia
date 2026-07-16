@@ -322,6 +322,8 @@ class MainWindow(QMainWindow):
         save_as_action = file_menu.addAction("名前を付けて保存(&A)")
         save_as_action.setShortcut("Ctrl+Shift+S")
         save_as_action.triggered.connect(self._on_save_as_project)
+        export_csv_action = file_menu.addAction("時刻表をCSVにエクスポート")
+        export_csv_action.triggered.connect(self._on_export_csv)
         file_menu.addSeparator()
         properties_action = file_menu.addAction("プロジェクトのプロパティ")
         file_menu.addSeparator()
@@ -448,6 +450,11 @@ class MainWindow(QMainWindow):
                 self._update_window_title()
                 self.app_settings.add_recent_file(filepath)
                 self._update_recent_files_menu()
+
+    def _on_export_csv(self):
+        """時刻表をCSVにエクスポートする"""
+        from dialogs.export_csv import export_timetable_to_csv
+        export_timetable_to_csv(self)
 
     def _save_project_to_path(self, filepath: str) -> bool:
         """指定されたパスにプロジェクトを保存する。成功したらTrueを返す。"""
