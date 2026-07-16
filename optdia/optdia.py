@@ -4,7 +4,7 @@
 import sys
 import os
 import subprocess
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QIcon, QAction
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -73,8 +73,8 @@ class MainWindow(QMainWindow):
                 border: none;
                 text-align: left;
                 text-decoration: underline;
-                padding-left: 15px;
-                font-size: 14px;
+                padding-left: 10px;
+                font-size: 15px;
                 background-color: transparent;
             }
             QPushButton:hover {
@@ -85,6 +85,8 @@ class MainWindow(QMainWindow):
         # 1つ目のボタン: 路線・駅情報
         self.btn_lines = QPushButton("路線・駅情報")
         self.btn_lines.setFixedHeight(50)
+        self.btn_lines.setIcon(QIcon(':/assets/line.png'))
+        self.btn_lines.setIconSize(QSize(30, 30))
         self.btn_lines.clicked.connect(self._on_edit_lines_stations)
         self.btn_lines.setStyleSheet(button_style)
         sidebar_layout.addWidget(self.btn_lines)
@@ -92,6 +94,8 @@ class MainWindow(QMainWindow):
         # 2つ目のボタン: 種別情報
         self.btn_types = QPushButton("種別情報")
         self.btn_types.setFixedHeight(50)
+        self.btn_types.setIcon(QIcon(':/assets/train_type.png'))
+        self.btn_types.setIconSize(QSize(30, 30))
         self.btn_types.clicked.connect(self._on_edit_train_types)
         self.btn_types.setStyleSheet(button_style)
         sidebar_layout.addWidget(self.btn_types)
@@ -114,7 +118,8 @@ class MainWindow(QMainWindow):
         route_layout.addLayout(route_header_layout)
 
         self.route_list_widget = QListWidget()
-        self.route_list_widget.setStyleSheet("font-size: 14px;")
+        self.route_list_widget.setStyleSheet("font-size: 14px; QListWidget::item {height: 32px;}")
+        self.route_list_widget.setIconSize(QSize(24, 24))
         self.route_list_widget.setDragDropMode(QListWidget.InternalMove)
         self.route_list_widget.model().rowsMoved.connect(self._on_routes_reordered)
         self.route_list_widget.itemSelectionChanged.connect(self._on_timetable_settings_changed)
@@ -141,10 +146,11 @@ class MainWindow(QMainWindow):
         diagram_layout.addLayout(diagram_header_layout)
 
         self.diagram_list_widget = QListWidget()
+        self.diagram_list_widget.setStyleSheet("font-size: 14px; QListWidget::item {height: 32px;}")
+        self.diagram_list_widget.setIconSize(QSize(24, 24))
         self.diagram_list_widget.setDragDropMode(QListWidget.InternalMove)
         self.diagram_list_widget.model().rowsMoved.connect(self._on_diagrams_reordered)
         self.diagram_list_widget.itemSelectionChanged.connect(self._on_diagram_selected_in_main_window)
-        self.diagram_list_widget.setStyleSheet("font-size: 14px;")
         diagram_layout.addWidget(self.diagram_list_widget)
 
         # サイドバーの残りスペースを2等分するため、stretch=1 を指定
@@ -236,6 +242,7 @@ class MainWindow(QMainWindow):
         for rid in self.project.routes_order:
             route = self.project.routes[rid]
             item = QListWidgetItem(route.get("route_name", rid))
+            item.setIcon(QIcon(':/assets/route.png'))
             item.setData(Qt.UserRole, rid)
             self.route_list_widget.addItem(item)
 
@@ -245,6 +252,7 @@ class MainWindow(QMainWindow):
         for did in self.project.diagrams_order:
             diag = self.project.diagrams[did]
             item = QListWidgetItem(diag.get("diagram_name", did))
+            item.setIcon(QIcon(':/assets/diagram.png'))
             item.setData(Qt.UserRole, did)
             self.diagram_list_widget.addItem(item)
 

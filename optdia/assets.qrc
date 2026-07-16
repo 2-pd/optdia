@@ -1,5 +1,9 @@
 <RCC>
     <qresource prefix="/">
         <file>assets/app_icon.ico</file>
+        <file>assets/line.png</file>
+        <file>assets/train_type.png</file>
+        <file>assets/route.png</file>
+        <file>assets/diagram.png</file>
     </qresource>
 </RCC>
