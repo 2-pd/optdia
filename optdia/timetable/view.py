@@ -310,10 +310,15 @@ class TimetableView(QTableView):
                 
             menu.addMenu(passenger_menu)
             
+            split_action = menu.addAction("この駅で列車を分割")
+            
             selected_action = menu.exec(event.globalPos())
             if selected_action and selected_action in (stop_action, pass_action, op_stop_action):
                 new_val = selected_action.data()
                 model.setData(index, new_val, StopTypeRole)
+            elif selected_action == split_action:
+                from .dialogs import split_train_at_cell
+                split_train_at_cell(self, model, index)
         else:
             super().contextMenuEvent(event)
 

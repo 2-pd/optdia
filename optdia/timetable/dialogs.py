@@ -1,12 +1,16 @@
+import random
+import string
+import copy
 from PySide6.QtCore import Qt, QModelIndex, QSize
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QGroupBox, QLineEdit,
     QComboBox, QLabel, QScrollArea, QWidget, QListWidget, QListWidgetItem,
-    QCheckBox, QPlainTextEdit,
+    QCheckBox, QPlainTextEdit, QMessageBox
 )
 from common.gui_utils import HtmlDelegate
 from project import OptDiaProject
+from dialogs.operation import VehicleOperationEditorDialog
 
 # 列車を選択するためのポップアップダイアログ
 class TrainPicker(QDialog):
@@ -591,7 +595,6 @@ class OperationPickerDialog(QDialog):
 
     def _on_edit_clicked(self):
         self.close()
-        from dialogs.operation import VehicleOperationEditorDialog
         dialog = VehicleOperationEditorDialog(self.parent(), self.project, self.diagram_id)
         dialog.exec()
 
@@ -939,3 +942,158 @@ class NotePopup(QDialog):
 
     def get_text(self):
         return self.text_edit.toPlainText()
+
+
+def split_train_at_cell(parent, model, index):
+    if not index.isValid():
+        return
+
+    row = index.row()
+    col = index.column()
+
+    if row < len(model.row_headers) or row >= len(model.row_headers) + len(model.station_rows):
+        return
+
+    if col < 0 or col >= len(model.train_ids):
+        return
+
+    row_idx = row - len(model.row_headers)
+    row_def = model.station_rows[row_idx]
+    stop_idx = row_def["stop_idx"]
+    cfg = model.full_stop_configs[stop_idx]
+    station_id = cfg["station_id"]
+
+    route_id = model.route_id
+    diagram_id = model.diagram_id
+    direction = model.direction
+
+    route = model.project.routes.get(route_id)
+    if not route:
+        return
+
+    train_key = "inbound_trains" if direction == "inbound" else "outbound_trains"
+    d_trains = route.get("trains_by_diagram", {}).get(diagram_id, {}).get(train_key, {})
+    m_trains = route.get(train_key, {})
+
+    train_id = model.train_ids[col]
+    m_train = m_trains.get(train_id)
+    d_train = d_trains.get(train_id)
+
+    if not m_train or not d_train:
+        return
+
+    # 右クリックされたセルに発着時刻が入力されているかチェック
+    stop = next((s for s in m_train.get("stops", []) if s.get("stop_idx") == stop_idx), None)
+    has_time = False
+    if stop:
+        if row_def["type"] == "arr":
+            has_time = bool(stop.get("arrival_time"))
+        else:
+            has_time = bool(stop.get("departure_time"))
+
+    if not has_time:
+        QMessageBox.warning(parent, "エラー", "発着時刻が未入力の駅で列車を分割することはできません")
+        return
+
+    # 発着時刻が入力されている最初と最後の駅では分割させない
+    timed_stops = [s for s in m_train.get("stops", []) if s.get("arrival_time") or s.get("departure_time")]
+    if not timed_stops:
+        QMessageBox.warning(parent, "エラー", "列車は途中の停車駅でのみ分割可能です")
+        return
+
+    first_station_id = timed_stops[0]["station_id"]
+    last_station_id = timed_stops[-1]["station_id"]
+
+    if station_id == first_station_id or station_id == last_station_id:
+        QMessageBox.warning(parent, "エラー", "列車は途中の停車駅でのみ分割可能です")
+        return
+
+    # 分割を実行するか確認
+    station_name = model.project.stations.get(station_id, {}).get("station_name", station_id)
+    reply = QMessageBox.question(
+        parent,
+        "確認",
+        f"{station_name}でこの列車を分割しますか？",
+        QMessageBox.Yes | QMessageBox.No,
+        QMessageBox.No
+    )
+    if reply != QMessageBox.Yes:
+        return
+
+    # 列車の分割
+    # 1. 新しい列車IDを生成
+    chars = string.ascii_letters + string.digits
+    while True:
+        new_train_id = "".join(random.choices(chars, k=16))
+        if new_train_id not in m_trains:
+            break
+
+    # 2. 列車マスタデータをコピー
+    new_m_train = copy.deepcopy(m_train)
+    new_stops = []
+    # 分割位置より前の経由駅情報は除外
+    for s in new_m_train.get("stops", []):
+        s_copy = s.copy()
+        if s_copy["stop_idx"] < stop_idx:
+            s_copy["arrival_time"] = None
+            s_copy["departure_time"] = None
+        elif s_copy["stop_idx"] == stop_idx:
+            s_copy["arrival_time"] = None
+        if s_copy.get("arrival_time") is not None or s_copy.get("departure_time") is not None:
+            new_stops.append(s_copy)
+    new_m_train["stops"] = new_stops
+
+    # 3. オリジナルの列車データから分割位置よりあとの経由駅情報を除去
+    orig_stops = []
+    for s in m_train.get("stops", []):
+        s_copy = s.copy()
+        if s_copy["stop_idx"] == stop_idx and model.project.stations.get(s_copy["station_id"], {}).get("show_arrival_time", False):
+            s_copy["departure_time"] = None
+        elif s_copy["stop_idx"] > stop_idx:
+            s_copy["arrival_time"] = None
+            s_copy["departure_time"] = None
+        if s_copy.get("arrival_time") is not None or s_copy.get("departure_time") is not None:
+            orig_stops.append(s_copy)
+    m_train["stops"] = orig_stops
+
+    # 運行系統に新しい列車マスタデータを追加
+    m_trains[new_train_id] = new_m_train
+
+    # 4. オリジナルの列車データを参照している各ダイヤのダイヤ別列車情報を処理
+    diagram_ids = list(m_train.get("_diagram_ids", []))
+    new_m_train["_diagram_ids"] = list(diagram_ids)
+
+    for did in model.project.diagrams_order:
+        tbd_for_did = route.get("trains_by_diagram", {}).get(did, {})
+        d_trains_for_did = tbd_for_did.get(train_key, {})
+        d_order_for_did = tbd_for_did.get(f"{train_key}_order", [])
+        if train_id in d_trains_for_did and d_trains_for_did[train_id].get("to_be_saved") is True:
+            orig_d_train = d_trains_for_did[train_id]
+            # 運転ダイヤ別の列車情報をコピー
+            new_d_train = copy.deepcopy(orig_d_train)
+            new_d_train["train_id"] = new_train_id
+            new_d_train["to_be_saved"] = True
+            
+            # オリジナルの列車データの連続する列車を削除してコピーの列車の識別情報を記載
+            orig_d_train["subsequent_trains"] = [{
+                "route_id": route_id,
+                "direction": direction,
+                "train_id": new_train_id
+            }]
+            
+            # オリジナルの列車データのIDの直後にコピーの列車のIDを挿入
+            if train_id in d_order_for_did:
+                idx = d_order_for_did.index(train_id)
+                d_order_for_did.insert(idx + 1, new_train_id)
+            else:
+                d_order_for_did.append(new_train_id)
+                
+            d_trains_for_did[new_train_id] = new_d_train
+
+    # 経由駅情報の正規化
+    model._normalize_train_stops(m_train)
+    model._normalize_train_stops(new_m_train)
+
+    # 時刻表テーブルのモデルを更新
+    model.update_data(model.route_id, model.diagram_id, model.direction)
+    model.dataChanged.emit(QModelIndex(), QModelIndex(), [])

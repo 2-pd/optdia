@@ -350,13 +350,15 @@ class TimetableDelegate(QStyledItemDelegate):
         # 時刻が入っている(未入力でない)stop_idxの集合を取得
         timed_indices = {s["stop_idx"] for s in stops if s.get("arrival_time") or s.get("departure_time")}
         
+        # 全駅の発着時刻が未入力の場合
         if not timed_indices:
             return "・・"
             
         first_idx = min(timed_indices)
         last_idx = max(timed_indices)
         
-        if stop_idx < first_idx or stop_idx > last_idx:
+        # 始発駅着時刻以前のセルと終着駅発時刻以降のセル
+        if stop_idx <= first_idx or stop_idx >= last_idx:
             return "・・"
             
         # 始発から終着の間にある駅。セグメントの範囲を特定する
