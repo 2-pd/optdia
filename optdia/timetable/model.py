@@ -176,6 +176,7 @@ class TimetableModel(QAbstractTableModel):
                     work_segments = segments
 
                 for seg in work_segments:
+                    segment_id = seg["segment_id"]
                     line_id = seg["line_id"]
                     line_data = self.project.lines.get(line_id, {})
                     line_color = line_data.get("line_color", "#333333")
@@ -199,6 +200,7 @@ class TimetableModel(QAbstractTableModel):
 
                         self.full_stop_sequence.append(sid)
                         self.full_stop_configs.append({
+                            "segment_id": segment_id,
                             "station_id": sid, 
                             "line_id": line_id, 
                             "direction": seg_line_direction, 
@@ -223,7 +225,7 @@ class TimetableModel(QAbstractTableModel):
                 # 駅情報の逆引き用マップ（normalizationの高速化用）
                 self._stop_lookup = {}
                 for i, cfg in enumerate(self.full_stop_configs):
-                    key = (cfg["station_id"], cfg["line_id"], cfg["direction"])
+                    key = (cfg["station_id"], cfg["segment_id"])
                     if key not in self._stop_lookup: self._stop_lookup[key] = []
                     self._stop_lookup[key].append(i)
 
@@ -300,9 +302,9 @@ class TimetableModel(QAbstractTableModel):
         stops_with_idx = []
 
         for s in train["stops"]:
-            sid, lid, ldir = s["station_id"], s["line_id"], s["direction"]
+            sid, seg_id = s["station_id"], s["segment_id"]
             # 高速な逆引きを使用して stop_idx を特定
-            key = (sid, lid, ldir)
+            key = (sid, seg_id)
             for i in self._stop_lookup.get(key, []):
                 cfg = self.full_stop_configs[i]
                 if ((not cfg.get("is_segment_start") or s.get("arrival_time") is None) and
@@ -372,17 +374,15 @@ class TimetableModel(QAbstractTableModel):
                     row_def = self.station_rows[row_idx]
                     stop_idx = row_def["stop_idx"]
                     config = self.full_stop_configs[stop_idx]
+                    seg_id = config["segment_id"]
                     sid = config["station_id"]
-                    lid = config["line_id"]
-                    ldir = config["direction"]
                     
                     if "stops" not in m_train: m_train["stops"] = []
                     stop = next((s for s in m_train["stops"] if s.get("stop_idx") == stop_idx), None)
                     if not stop:
                         stop = {
+                            "segment_id": seg_id,
                             "station_id": sid,
-                            "line_id": lid,
-                            "direction": ldir,
                             "track_id": config["track_id"],
                             "arrival_time": None,
                             "departure_time": None,
@@ -456,20 +456,18 @@ class TimetableModel(QAbstractTableModel):
                 row_def = self.station_rows[row_idx]
                 stop_idx = row_def["stop_idx"]
                 config = self.full_stop_configs[stop_idx]
+                seg_id = config["segment_id"]
                 sid = config["station_id"]
-                lid = config["line_id"]
-                ldir = config["direction"]
 
                 # 番線IDの更新処理
                 if role == TrackIdRole:
                     stop = next((s for s in m_train.get("stops", []) if s.get("stop_idx") == stop_idx), None)
                     if not stop:
                         # 時刻未入力の状態で番線だけ選んだ場合、ストップデータを新規作成
-                        config_for_stop = self.full_stop_configs[stop_idx]
                         initial_arr = None
                         initial_dep = None
                         stop = {
-                            "station_id": sid, "line_id": lid, "direction": ldir,
+                            "segment_id": seg_id, "station_id": sid,
                             "track_id": value,
                             "arrival_time": initial_arr, "departure_time": initial_dep,
                             "stop_type": 1, "stop_idx": stop_idx
@@ -509,14 +507,12 @@ class TimetableModel(QAbstractTableModel):
                         return False
 
                     # 運行系統内の路線ごとの始点駅であれば到着時刻をNoneに、終点駅であれば発車時刻をNoneに設定
-                    config_for_stop = self.full_stop_configs[stop_idx]
                     initial_arrival_time = None
                     initial_departure_time = None
 
                     stop = {
+                        "segment_id": seg_id,
                         "station_id": sid,
-                        "line_id": lid,
-                        "direction": ldir,
                         "track_id": config["track_id"],
                         "arrival_time": initial_arrival_time,
                         "departure_time": initial_departure_time,
@@ -596,9 +592,8 @@ class TimetableModel(QAbstractTableModel):
                                             if not target_stop_item:
                                                 ref_cfg = self.full_stop_configs[ref_idx]
                                                 target_stop_item = {
+                                                    "segment_id": ref_cfg["segment_id"],
                                                     "station_id": ref_stop_item["station_id"],
-                                                    "line_id": ref_stop_item["line_id"],
-                                                    "direction": ref_stop_item["direction"],
                                                     "track_id": ref_stop_item.get("track_id", ref_cfg["track_id"]),
                                                     "arrival_time": None,
                                                     "departure_time": None,

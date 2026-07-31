@@ -1306,11 +1306,13 @@ class LineStationEditorDialog(QDialog):
 
         # 3. 全ての列車の経由駅情報（stops）から削除対象路線のデータを削除
         for route in self.project.routes.values():
+            # 運行系統から削除された線区の segment_id 一覧を事前に取得
+            valid_segment_ids = {seg["segment_id"] for seg in route.get("line_segments", []) if "segment_id" in seg}
             for train_key in ["inbound_trains", "outbound_trains"]:
                 trains_dict = route.get(train_key, {})
                 for train in trains_dict.values():
                     if "stops" in train:
-                        train["stops"] = [stop for stop in train["stops"] if stop.get("line_id") != line_id]
+                        train["stops"] = [stop for stop in train["stops"] if stop.get("segment_id") in valid_segment_ids]
 
         # 4. プロジェクトの路線データ本体から削除
         del self.project.lines[line_id]
@@ -1407,13 +1409,14 @@ class LineStationEditorDialog(QDialog):
 
         # B. 全ての列車の発着情報を検査し、削除対象の駅・路線ペアの経由駅データを削除
         for route in self.project.routes.values():
+            seg_map = {seg["segment_id"]: seg for seg in route.get("line_segments", []) if "segment_id" in seg}
             for train_key in ["inbound_trains", "outbound_trains"]:
                 trains_dict = route.get(train_key, {})
                 for train in trains_dict.values():
                     if "stops" in train:
                         train["stops"] = [
                             stop for stop in train["stops"]
-                            if not (stop.get("station_id") == station_id and stop.get("line_id") == self.current_selected_line_id)
+                            if not (stop.get("station_id") == station_id and seg_map.get(stop.get("segment_id"), {}).get("line_id") == self.current_selected_line_id)
                         ]
 
         # C. 他の路線で使用されていない場合は、プロジェクト全体の駅情報からも削除

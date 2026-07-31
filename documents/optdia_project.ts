@@ -99,6 +99,7 @@ interface optdia_route {
 
 // 路線の部分区間情報を格納するオブジェクト
 interface optdia_line_segment {
+    segment_id: string; // 部分区間ID
     line_id: string; // 路線ID
     start_station: string; // 区間の始点となる駅のID
     end_station: string; // 区間の終点となる駅のID(始点と終点の位置関係が路線情報での駅の順序と逆の場合は、路線が逆向きで経路に配置されていることを意味する)
@@ -179,8 +180,7 @@ interface optdia_subsequent_train_identifier {
 
 // 列車の経由駅情報
 interface optdia_train_stop {
-    line_id: string; // 路線ID
-    direction: "inbound" | "outbound"; // 方向(上りまたは下り)
+    segment_id: string; // 部分区間ID
     station_id: string; // 駅ID
     track_id: string | null; // 発着番線ID
     arrival_time: string | null; // 到着時刻(hh:mm:ss形式)

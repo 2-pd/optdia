@@ -40,6 +40,11 @@ class OptDiaProject:
         # 運行系統 (routes: optdia_route[])
         self.routes, self.routes_order = self._split_collection(entities.get("routes", []), "route_id")
         for route in self.routes.values():
+            # line_segments の各要素に segment_id が存在しない場合はランダムな英数字8文字を付与
+            for seg in route.get("line_segments", []):
+                if not seg.get("segment_id"):
+                    seg["segment_id"] = self._generate_segment_id()
+
             # 定義に基づき、運行系統が直接保持する列車辞書(optdia_train_dict)を確保
             route.setdefault("inbound_trains", {})
             route.setdefault("outbound_trains", {})
@@ -87,6 +92,14 @@ class OptDiaProject:
         # 読込時に部分区間境界での分割処理を行い、発着時刻データが2つの部分区間に跨っている可能性を排除する
         self._split_all_boundary_stops()
 
+    @staticmethod
+    def _generate_segment_id():
+        """ランダムな英数字8文字からなる一意なIDを生成する"""
+        import string
+        import random
+        chars = string.ascii_letters + string.digits
+        return "".join(random.choices(chars, k=8))
+
     def _split_all_boundary_stops(self):
         """全路線の全列車に対し、部分区間境界駅での発着時刻分割を行う"""
         for route in self.routes.values():
@@ -119,7 +132,7 @@ class OptDiaProject:
                         train["stops"] = new_stops
 
     def _normalize_train_stops_for_save(self, stops):
-        """保存用に、不要なデータの削除と、同一駅・路線の連続するデータの統合を行う"""
+        """保存用に、不要なデータの削除と、同一駅・同一区間の連続するデータの統合を行う"""
         if not stops:
             return []
         
@@ -133,12 +146,11 @@ class OptDiaProject:
         i = 0
         while i < len(stops):
             s1 = stops[i]
-            # 最後の要素でなく、かつ「s1が着のみ」「s2が発のみ」かつ「同一駅・路線・方向」なら統合
+            # 最後の要素でなく、かつ「s1が着のみ」「s2が発のみ」かつ「同一駅・同一区間」なら統合
             if i + 1 < len(stops):
                 s2 = stops[i+1]
                 if (s1["station_id"] == s2["station_id"] and 
-                    s1["line_id"] == s2["line_id"] and 
-                    s1["direction"] == s2["direction"] and
+                    s1["segment_id"] == s2["segment_id"] and 
                     s1.get("arrival_time") and not s1.get("departure_time") and
                     not s2.get("arrival_time") and s2.get("departure_time")):
                     

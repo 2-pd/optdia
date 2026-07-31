@@ -268,7 +268,14 @@ class SelectSegmentDialog(QDialog):
         return "forward" if idx_start <= idx_end else "reverse"
 
     def get_data(self):
+        segment_id = None
+        if self.editing_segment_index is not None and 0 <= self.editing_segment_index < len(self.existing_segments):
+            segment_id = self.existing_segments[self.editing_segment_index].get("segment_id")
+        if not segment_id:
+            segment_id = OptDiaProject._generate_segment_id()
+
         return {
+            "segment_id": segment_id,
             "line_id": self.line_combo.currentData(),
             "start_station": self.start_combo.currentData(),
             "end_station": self.end_combo.currentData()
@@ -1067,6 +1074,11 @@ class RouteEditorDialog(QDialog):
             stations_in_this_segment = self._get_stations_in_segment(line_id, start_sid, end_sid)
             rel_idx = stations_in_this_segment.index(split_sid)
 
+            # 新しい2つのセグメントIDを作成
+            seg1_id = OptDiaProject._generate_segment_id()
+            seg2_id = OptDiaProject._generate_segment_id()
+            old_seg_id = segment_data.get("segment_id")
+
             for train_key in ["inbound_trains", "outbound_trains"]:
                 is_inbound = (train_key == "inbound_trains")
                 
@@ -1079,6 +1091,10 @@ class RouteEditorDialog(QDialog):
                     target_route_idx = r_start_idx + rel_idx
                 else:
                     target_route_idx = r_start_idx + (len(stations_in_this_segment) - 1 - rel_idx)
+
+                # 下り: 前半=seg1_id, 後半=seg2_id / 上り: 前半=seg2_id, 後半=seg1_id
+                first_seg_id = seg2_id if is_inbound else seg1_id
+                second_seg_id = seg1_id if is_inbound else seg2_id
 
                 for train in route_data.get(train_key, {}).values():
                     stops = train.get("stops", [])
@@ -1098,24 +1114,37 @@ class RouteEditorDialog(QDialog):
                             r_ptr += 1
                         if split_idx != -1: break
 
+                    # stop_idx の前後で segment_id を更新
+                    for s_idx, stop in enumerate(stops):
+                        if old_seg_id and stop.get("segment_id") == old_seg_id:
+                            if split_idx != -1:
+                                if s_idx < split_idx:
+                                    stop["segment_id"] = first_seg_id
+                                elif s_idx > split_idx:
+                                    stop["segment_id"] = second_seg_id
+                            else:
+                                stop["segment_id"] = first_seg_id
+
                     if split_idx != -1:
                         orig_stop = stops[split_idx]
                         
                         # 進行方向における前段区間の「終点」としてのデータ（発時刻をNoneに設定）
                         stop_terminal = orig_stop.copy()
                         stop_terminal["departure_time"] = None
+                        stop_terminal["segment_id"] = first_seg_id
                         
                         # 進行方向における後段区間の「起点」としてのデータ（着時刻をNoneに設定）
                         stop_origin = orig_stop.copy()
                         stop_origin["arrival_time"] = None
+                        stop_origin["segment_id"] = second_seg_id
                         
                         # 1つの停車駅データを、境界を跨ぐ2つのデータに分割して挿入
                         stops[split_idx : split_idx+1] = [stop_terminal, stop_origin]
             
             # 分割処理：元の要素を削除し、新しい2つの区間を挿入
             route_data["line_segments"].pop(index)
-            route_data["line_segments"].insert(index, {"line_id": line_id, "start_station": start_sid, "end_station": split_sid})
-            route_data["line_segments"].insert(index + 1, {"line_id": line_id, "start_station": split_sid, "end_station": end_sid})
+            route_data["line_segments"].insert(index, {"segment_id": seg1_id, "line_id": line_id, "start_station": start_sid, "end_station": split_sid})
+            route_data["line_segments"].insert(index + 1, {"segment_id": seg2_id, "line_id": line_id, "start_station": split_sid, "end_station": end_sid})
             
             self._populate_segment_list(route_data)
             self._populate_station_preview(route_data) # プレビューの更新
