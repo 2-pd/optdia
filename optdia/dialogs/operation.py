@@ -11,7 +11,7 @@ from common.gui_utils import create_color_square_pixmap
 
 # 車両運用情報編集ダイアログ
 class VehicleOperationEditorDialog(QDialog):
-    def __init__(self, parent, project: OptDiaProject, diagram_id: str):
+    def __init__(self, parent, project: OptDiaProject, diagram_id: str, initial_group_id: str = None):
         super().__init__(parent)
         self.project = project
         self.diagram_id = diagram_id
@@ -47,12 +47,15 @@ class VehicleOperationEditorDialog(QDialog):
         operation_groups_order = diagram.get("operation_groups_order", [])
 
         # 運用グループ名のリスト
-        for og_id in operation_groups_order:
+        initial_row = 0
+        for idx, og_id in enumerate(operation_groups_order):
             og = operation_groups[og_id]
             item = QListWidgetItem(og.get("operation_group_name", ""))
             item.setData(Qt.UserRole, og_id)
             item.setBackground(QColor(og.get("main_color", "#ffffff")))
             self.group_list.addItem(item)
+            if initial_group_id and og_id == initial_group_id:
+                initial_row = idx
 
         # 「運用グループ名のリスト」の下にスペースを設けて、そこに「運用グループの追加」というボタンを追加
         left_layout.addSpacing(10)
@@ -280,7 +283,7 @@ class VehicleOperationEditorDialog(QDialog):
         # 表示の切り替え
         if len(operation_groups_order) > 0:
             self.stacked_widget.setCurrentIndex(0)
-            self.group_list.setCurrentRow(0)
+            self.group_list.setCurrentRow(initial_row)
         else:
             self.stacked_widget.setCurrentIndex(1)
 

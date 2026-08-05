@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QIcon, QAction
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QFileDialog, QMessageBox, QDialog, QLabel,
+    QPushButton, QFileDialog, QMessageBox, QDialog, QLabel, QComboBox,
     QListWidget, QListWidgetItem, QStackedWidget,
     QTabBar, QHeaderView, QMenu
 )
@@ -22,6 +22,7 @@ from dialogs.route import AddRouteDialog, SelectSegmentDialog, SplitSegmentDialo
 from dialogs.diagram import AddDiagramDialog, DiagramEditorDialog
 from dialogs.line_station import LineStationEditorDialog
 from dialogs.train_type import AddTrainTypeDialog, TrainTypeEditorDialog
+from dialogs.operation import VehicleOperationEditorDialog
 from dialogs.project_meta import ProjectPropertiesDialog
 from dialogs.about import AboutDialog
 from timetable.model import TimetableModel
@@ -204,9 +205,71 @@ class MainWindow(QMainWindow):
         self.timetable_content_stack = QStackedWidget()
         self.timetable_content_stack.addWidget(self.timetable_view)
 
+        # 運用表エリア用の親ウィジェット
+        self.operation_area_widget = QWidget()
+        op_area_layout = QVBoxLayout(self.operation_area_widget)
+        op_area_layout.setContentsMargins(0, 0, 0, 0)
+        op_area_layout.setSpacing(0)
+
+        # 運用表表示エリアの上部コントロールバー (高さ50px)
+        self.op_control_bar = QWidget()
+        self.op_control_bar.setFixedHeight(50)
+        self.op_control_bar.setStyleSheet("background-color: #f7f7f7; border-bottom: 1px solid #dddddd;")
+        op_control_layout = QHBoxLayout(self.op_control_bar)
+        op_control_layout.setContentsMargins(10, 0, 10, 0)
+        op_control_layout.setSpacing(10)
+
+        self.op_group_combo = QComboBox()
+        self.op_group_combo.setFixedHeight(32)
+        self.op_group_combo.currentIndexChanged.connect(self._on_operation_group_changed)
+        op_control_layout.addWidget(self.op_group_combo, stretch=1)
+
+        self.btn_edit_operations = QPushButton("編集")
+        self.btn_edit_operations.setFixedWidth(60)
+        self.btn_edit_operations.setStyleSheet("QPushButton { border: none; text-decoration: underline; background-color: transparent; font-size: 14px; }")
+        self.btn_edit_operations.clicked.connect(self._on_edit_operations_clicked)
+        op_control_layout.addWidget(self.btn_edit_operations)
+
+        op_area_layout.addWidget(self.op_control_bar)
+
+        # 運用表表示エリアの本体 (左側 リストウィジェット + 右側 運用表表示エリア)
+        op_body_widget = QWidget()
+        op_body_layout = QHBoxLayout(op_body_widget)
+        op_body_layout.setContentsMargins(0, 0, 0, 0)
+        op_body_layout.setSpacing(0)
+
+        # 運用リスト (幅220px、項目高さ70px)
+        self.op_list_widget = QListWidget()
+        self.op_list_widget.setFixedWidth(240)
+        self.op_list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.op_list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.op_list_widget.setStyleSheet("""
+            QListWidget {
+                border-right: 1px solid #dddddd;
+                background-color: #ffffff;
+            }
+            QListWidget::item {
+                height: 70px;
+                border-bottom: 1px solid #eeeeee;
+            }
+        """)
+        op_body_layout.addWidget(self.op_list_widget)
+
         # 運用表表示エリア
         self.timeline_view = TimelineView()
-        self.timetable_content_stack.addWidget(self.timeline_view)
+        op_body_layout.addWidget(self.timeline_view, stretch=1)
+
+        op_area_layout.addWidget(op_body_widget, stretch=1)
+
+        # スクロール同期設定
+        self.op_list_widget.verticalScrollBar().valueChanged.connect(
+            self.timeline_view.verticalScrollBar().setValue
+        )
+        self.timeline_view.verticalScrollBar().valueChanged.connect(
+            self.op_list_widget.verticalScrollBar().setValue
+        )
+
+        self.timetable_content_stack.addWidget(self.operation_area_widget)
 
         self.timetable_layout.addWidget(self.timetable_content_stack)
         
@@ -561,8 +624,12 @@ class MainWindow(QMainWindow):
         tab_index = self.direction_tab_bar.currentIndex()
         if tab_index == 2:
             self.timetable_content_stack.setCurrentIndex(1)
+            # 運用表"タブが選択されたときは運行系統リストを無効化
+            self.route_list_widget.setEnabled(False)
         else:
             self.timetable_content_stack.setCurrentIndex(0)
+            # 運用表以外のタブが選択されたときは運行系統リストを有効化
+            self.route_list_widget.setEnabled(True)
 
         route_item = self.route_list_widget.currentItem()
         diagram_item = self.diagram_list_widget.currentItem()
@@ -574,6 +641,117 @@ class MainWindow(QMainWindow):
         direction = "inbound" if tab_index == 1 else "outbound"
         
         self.timetable_model.update_data(route_id, diagram_id, direction)
+
+        if tab_index == 2:
+            self._update_op_group_combo()
+
+    def _update_op_group_combo(self):
+        """選択されているダイヤに応じて運用グループのコンボボックス表示内容を更新する"""
+        diagram_item = self.diagram_list_widget.currentItem()
+        diagram_id = diagram_item.data(Qt.UserRole) if diagram_item else None
+        
+        diagram = self.project.diagrams.get(diagram_id, {}) if diagram_id else {}
+        op_groups_order = diagram.get("operation_groups_order", [])
+        op_groups = diagram.get("operation_groups", {})
+
+        current_og_id = self.op_group_combo.currentData()
+
+        self.op_group_combo.blockSignals(True)
+        self.op_group_combo.clear()
+        
+        if not op_groups_order:
+            self.op_group_combo.setEnabled(False)
+        else:
+            self.op_group_combo.setEnabled(True)
+            for og_id in op_groups_order:
+                og = op_groups.get(og_id, {})
+                og_name = og.get("operation_group_name", "")
+                self.op_group_combo.addItem(og_name, og_id)
+            
+            # 以前選択していたIDがあれば再選択
+            idx = self.op_group_combo.findData(current_og_id)
+            if idx >= 0:
+                self.op_group_combo.setCurrentIndex(idx)
+            else:
+                self.op_group_combo.setCurrentIndex(0)
+
+        self.op_group_combo.blockSignals(False)
+
+        self._update_op_list_widget()
+
+    def _on_operation_group_changed(self, index: int):
+        """運用グループのコンボボックス選択が変化したときにリストを更新する"""
+        self._update_op_list_widget()
+
+    def _update_op_list_widget(self):
+        """コンボボックスで選択中の運用グループに属する運用番号をリスト表示する"""
+        self.op_list_widget.clear()
+        
+        diagram_item = self.diagram_list_widget.currentItem()
+        diagram_id = diagram_item.data(Qt.UserRole) if diagram_item else None
+        if not diagram_id:
+            return
+
+        diagram = self.project.diagrams.get(diagram_id, {})
+        op_groups = diagram.get("operation_groups", {})
+        operations = diagram.get("operations", {})
+
+        og_id = self.op_group_combo.currentData()
+        if og_id and og_id in op_groups:
+            og = op_groups[og_id]
+            op_ids = og.get("operations", [])
+            for op_id in op_ids:
+                op = operations.get(op_id, {})
+                op_num = op.get("operation_number", "")
+                car_count = op.get("car_count", 0)
+                start_loc = op.get("start_location", "")
+                start_track = op.get("start_track")
+                end_loc = op.get("end_location", "")
+                end_track = op.get("end_track")
+
+                # 出庫表示: 出庫場所名 (発着番線等があれば空白区切りで付加)
+                start_text = f"{start_loc}<span style='font-size: 10px; color: gray;'>({start_track})</span>".strip() if start_track else start_loc
+                # 入庫表示: 入庫場所名 (発着番線等があれば空白区切りで付加)
+                end_text = f"{end_loc}<span style='font-size: 10px; color: gray;'>({end_track})</span>".strip() if end_track else end_loc
+
+                item = QListWidgetItem()
+                item_widget = QWidget()
+                item_layout = QHBoxLayout(item_widget)
+                item_layout.setContentsMargins(0, 0, 0, 0)
+                item_layout.setSpacing(0)
+
+                main_color = op.get("main_color", "#ffffff")
+
+                # 左側ラベル: 1行目 運用番号 (14px), 2行目 所定両数 (12px, グレー)
+                left_label = QLabel(f"<b style='font-size: 14px;'>{op_num}</b><br/><span style='font-size: 12px; color: gray;'>({car_count}両)</span>")
+                left_label.setAlignment(Qt.AlignCenter | Qt.AlignVCenter)
+                left_label.setStyleSheet(f"background-color: {main_color};")
+                left_label.setFixedWidth(100)
+
+                # 右側ラベル: 1行目 出庫場所等, 2行目 入庫場所等
+                right_label = QLabel(f"○{start_text}<br/>△{end_text}")
+                right_label.setAlignment(Qt.AlignCenter | Qt.AlignVCenter)
+                right_label.setStyleSheet("background-color: #f7f7f7;")
+                right_label.setFixedWidth(140)
+
+                item_layout.addWidget(left_label)
+                item_layout.addWidget(right_label)
+
+                self.op_list_widget.addItem(item)
+                self.op_list_widget.setItemWidget(item, item_widget)
+
+    def _on_edit_operations_clicked(self):
+        """運用表上部の編集ボタンを押したときに車両運用情報編集ダイアログを開く"""
+        diagram_item = self.diagram_list_widget.currentItem()
+        diagram_id = diagram_item.data(Qt.UserRole) if diagram_item else None
+        if not diagram_id:
+            return
+
+        initial_group_id = self.op_group_combo.currentData()
+
+        dialog = VehicleOperationEditorDialog(self, self.project, diagram_id, initial_group_id)
+        dialog.exec()
+        self._update_op_group_combo()
 
     def _on_diagrams_reordered(self, parent, start, end, destination, row):
         """サイドバーでの運転ダイヤの並び替えをプロジェクトデータに反映する"""
