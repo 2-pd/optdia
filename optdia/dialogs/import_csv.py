@@ -528,7 +528,10 @@ def import_timetable_from_csv(parent_window):
                                 group_id = new_og_id
                                 
                             op_groups[group_id].setdefault("operations", []).append(found_op_id)
-                        ops_list.append(found_op_id)
+                        ops_list.append({
+                            "operation_id": found_op_id,
+                            "formation_is_reversed": False
+                        })
                 diagram_ops_map[d_id] = ops_list
 
             # 駅時刻データの抽出（各CSV駅行ごと）

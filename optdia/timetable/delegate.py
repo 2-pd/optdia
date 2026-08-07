@@ -25,13 +25,50 @@ class TimetableDelegate(QStyledItemDelegate):
         num_stations = len(model.station_rows) if hasattr(model, 'station_rows') else 0
         footer_row_idx = num_headers + num_stations
 
-        # フッター行はウィジェットが配置されるため、デリゲートでは描画しない
+        # フッター行（連続する列車）の描画
         if row == footer_row_idx:
             painter.save()
-            # 背景の描画 (選択状態など)
             style = text_option.widget.style() if text_option.widget else QApplication.style()
-            text_option.text = "" # テキストはウィジェットが描画するため、デリゲートでは描画しない
+            text_option.text = ""
             style.drawControl(QStyle.CE_ItemViewItem, text_option, painter)
+
+            # 連続する列車の描画
+            col = index.column()
+            if hasattr(model, 'train_ids') and col < len(model.train_ids):
+                route = model.project.routes.get(model.route_id) if hasattr(model, 'project') and model.route_id else None
+                if route:
+                    tbd = route.get("trains_by_diagram", {}).get(model.diagram_id, {})
+                    train_key = "inbound_trains" if model.direction == "inbound" else "outbound_trains"
+                    d_trains = tbd.get(train_key, {})
+                    train_id = model.train_ids[col]
+                    d_train = d_trains.get(train_id, {})
+                    subsequent_list = d_train.get("subsequent_trains") or []
+
+                    sub_lines = []
+                    for item in subsequent_list[:3]:
+                        s_rid, s_dir, s_tid = item.get("route_id"), item.get("direction"), item.get("train_id")
+                        if s_tid:
+                            s_route = model.project.routes.get(s_rid)
+                            if s_route:
+                                s_train_key = "inbound_trains" if s_dir == "inbound" else "outbound_trains"
+                                s_m_train = s_route.get(s_train_key, {}).get(s_tid)
+                                if s_m_train:
+                                    num = s_m_train.get("train_number") or "(番号なし)"
+                                    tt_id = s_m_train.get("train_type_id")
+                                    tt = model.project.train_types.get(tt_id) if hasattr(model, 'project') else None
+                                    color_str = tt.get("main_color", "#333333") if tt else "#333333"
+                                    sub_lines.append((num, QColor(color_str)))
+
+                    if sub_lines:
+                        line_h = painter.fontMetrics().height()
+                        total_h = len(sub_lines) * line_h
+                        start_y = option.rect.top() + (option.rect.height() - total_h) // 2
+                        for idx_line, (num_str, col_obj) in enumerate(sub_lines):
+                            line_rect = QRect(option.rect.left(), start_y + idx_line * line_h, option.rect.width(), line_h)
+                            painter.setPen(col_obj)
+                            painter.setFont(text_option.font)
+                            painter.drawText(line_rect, Qt.AlignCenter, num_str)
+
             painter.setPen(QColor("#dddddd")) # 右側の境界線
             painter.drawLine(option.rect.right(), option.rect.top(), option.rect.right(), option.rect.bottom())
             # 下部の境界線も描画
@@ -156,14 +193,14 @@ class TimetableDelegate(QStyledItemDelegate):
         if row == 3: # 両数
             size.setHeight(max(line_height, 32))
         elif row == 6: # 行き先
-            # 入力内容（折り返し数）に関わらず、高さを1行分の2倍に固定します
+            # 入力内容（折り返し数）に関わらず、高さを1行分の2倍に固定
             size.setHeight(line_height * 2)
         
         model = index.model()
         num_headers = len(model.row_headers) if hasattr(model, 'row_headers') else 0
         num_stations = len(model.station_rows) if hasattr(model, 'station_rows') else 0
         if row == num_headers + num_stations:
-            # フッターも同様に3行分に固定します
+            # フッターも同様に3行分に固定
             size.setHeight(line_height * 3)
         elif row == num_headers + num_stations + 1:
             # 備考は4行分に固定
@@ -192,10 +229,37 @@ class TimetableDelegate(QStyledItemDelegate):
             return True
         
         num_stations = len(model.station_rows) if hasattr(model, 'station_rows') else 0
-        if event.type() == QEvent.MouseButtonRelease and index.row() == num_headers + num_stations + 1: # 備考行
+        footer_row_idx = num_headers + num_stations
+        if event.type() == QEvent.MouseButtonRelease and index.row() == footer_row_idx: # 連続する列車行
+            self._show_subsequent_train_dialog(index, model, option.widget)
+            return True
+        if event.type() == QEvent.MouseButtonRelease and index.row() == footer_row_idx + 1: # 備考行
             self._show_note_popup(index, model, option.widget)
             return True
         return super().editorEvent(event, model, option, index)
+
+    def _show_subsequent_train_dialog(self, index, model, widget):
+        from timetable.dialogs import SubsequentTrainDialog
+        if not model.route_id or not model.diagram_id:
+            return
+        col = index.column()
+        if col >= len(model.train_ids):
+            return
+        route = model.project.routes.get(model.route_id)
+        if not route:
+            return
+        tbd = route.get("trains_by_diagram", {}).get(model.diagram_id, {})
+        train_key = "inbound_trains" if model.direction == "inbound" else "outbound_trains"
+        train_id = model.train_ids[col]
+
+        d_train = tbd.get(train_key, {}).get(train_id)
+        m_train = route.get(train_key, {}).get(train_id)
+
+        if d_train:
+            dialog = SubsequentTrainDialog(widget, model.project, d_train, m_train, model.diagram_id,
+                                           model.route_id, model.direction)
+            if dialog.exec() == QDialog.Accepted:
+                model.setData(index, None, Qt.EditRole)
 
     def _show_train_type_menu(self, index, model, widget):
         train_id = model.train_ids[index.column()]

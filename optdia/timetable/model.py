@@ -168,6 +168,7 @@ class TimetableModel(QAbstractTableModel):
                 if direction == "inbound":
                     for seg in reversed(segments):
                         work_segments.append({
+                            "segment_id": seg["segment_id"],
                             "line_id": seg["line_id"],
                             "start_station": seg["end_station"],
                             "end_station": seg["start_station"]
@@ -781,7 +782,7 @@ class TimetableModel(QAbstractTableModel):
                 ops = []
                 operations_dict = self.project.diagrams.get(self.diagram_id, {}).get("operations", {})
                 for op in d_train.get("operations", []):
-                    op_id = op.get("operation_id")
+                    op_id = op.get("operation_id") if isinstance(op, dict) else op
                     if op_id:
                         op_data = operations_dict.get(op_id)
                         op_num = op_data.get("operation_number") if op_data else op_id
@@ -793,7 +794,8 @@ class TimetableModel(QAbstractTableModel):
                     # 運用内の所定両数を合計する
                     total = 0
                     for op in d_train.get("operations", []):
-                        op_data = self.project.diagrams.get(self.diagram_id, {}).get("operations", {}).get(op.get("operation_id"), {})
+                        op_id = op.get("operation_id") if isinstance(op, dict) else op
+                        op_data = self.project.diagrams.get(self.diagram_id, {}).get("operations", {}).get(op_id, {}) if op_id else {}
                         total += op_data.get("car_count", 0)
                     cc = total if total > 0 else None
                 if role == Qt.DisplayRole:
@@ -914,31 +916,17 @@ class TimetableModel(QAbstractTableModel):
         return d_train, m_train
 
     def _resolve_destination(self, d_train, m_train, diagram_id, depth=0, force_single=False):
-        """行き先を再帰的に解決する。未入力なら終着駅を返す。
+        """行き先を解決する。
+        未入力で連続する列車が設定されている場合は「(連続)」を返し、
+        連続する列車も無ければ終着駅を返す。
         Returns: (destination_string, is_branched)
         """
-        if depth >= 5:
-            return self._get_terminal_station_name(m_train), False
-
         dest = d_train.get("destination")
         if dest:
             return dest, False
 
         subs = d_train.get("subsequent_trains", [])
-        if not force_single and len(subs) >= 2:
-            # 再帰探索の過程で初めて複数の連続する列車を検出した場合
-            results = []
-            for sub_info in subs[:2]:
-                st_d, st_m = self._get_train_pair_from_sub_info(sub_info, diagram_id)
-                # 分岐後の探査では、さらなる分岐は追わず1つ目のみを辿る
-                res, _ = self._resolve_destination(st_d, st_m, diagram_id, depth + 1, force_single=True) if st_d else (self._get_terminal_station_name(m_train), False)
-                # 分岐表示用の文字数制限を適用
-                results.append(res[:3] + ".." if len(res) > 4 else res)
-            return "/".join(results), True
-
         if subs:
-            st_d, st_m = self._get_train_pair_from_sub_info(subs[0], diagram_id)
-            if st_d:
-                return self._resolve_destination(st_d, st_m, diagram_id, depth + 1, force_single=force_single)
+            return "(連続)", False
 
         return self._get_terminal_station_name(m_train), False

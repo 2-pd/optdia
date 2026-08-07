@@ -195,7 +195,7 @@ class MainWindow(QMainWindow):
         v_header.setStyleSheet("QHeaderView::section { padding: 0px 4px 0px 8px; margin: 0px; }")
         v_header.setDefaultAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.timetable_view.setVerticalHeader(v_header)
-        v_header.setSectionResizeMode(QHeaderView.ResizeToContents)
+        # 行の高さは固定のため ResizeToContents は設定しない
         
         # ボタン用デリゲートの適用
         self.timetable_delegate = TimetableDelegate(self.timetable_view)
