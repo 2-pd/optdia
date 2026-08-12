@@ -1,13 +1,62 @@
 import random
 import string
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QByteArray, QDataStream, QIODevice
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QDialog, QHBoxLayout, QVBoxLayout, QLabel, QListWidget, QListWidgetItem, QStackedWidget, QTabWidget, QWidget, QPushButton, QLineEdit, QColorDialog,
-    QGroupBox, QSpinBox, QPlainTextEdit, QFormLayout, QScrollArea
+    QGroupBox, QSpinBox, QPlainTextEdit, QFormLayout, QScrollArea, QAbstractItemView
 )
 from project import OptDiaProject
 from common.gui_utils import create_color_square_pixmap
+
+class OperationGroupListWidget(QListWidget):
+    """運用リスト項目（運用のドラッグアンドドロップ）を受け入れる運用グループのカスタムリストウィジェット"""
+    def __init__(self, parent_dialog, parent=None):
+        super().__init__(parent)
+        self.dialog = parent_dialog
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasFormat("application/x-optdia-op-id") or event.mimeData().hasFormat("application/x-qabstractitemmodeldatalist"):
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasFormat("application/x-optdia-op-id"):
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+
+    def dropEvent(self, event):
+        if event.mimeData().hasFormat("application/x-optdia-op-id"):
+            byte_data = event.mimeData().data("application/x-optdia-op-id")
+            stream = QDataStream(byte_data, QIODevice.ReadOnly)
+            op_id = stream.readQString()
+            target_item = self.itemAt(event.position().toPoint())
+            if target_item and op_id:
+                target_og_id = target_item.data(Qt.UserRole)
+                self.dialog._move_operation_to_group(op_id, target_og_id)
+            event.acceptProposedAction()
+            return
+
+        # 内部で運用グループ自体のドラッグアンドドロップ入れ替えを行う場合はスーパークラスの処理
+        super().dropEvent(event)
+
+class OperationListWidget(QListWidget):
+    """運用のカスタムMIMEデータをサポートする運用リストウィジェット"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+    def mimeData(self, items):
+        mime_data = super().mimeData(items)
+        if items:
+            op_id = items[0].data(Qt.UserRole)
+            if op_id:
+                encoded_data = QByteArray()
+                stream = QDataStream(encoded_data, QIODevice.WriteOnly)
+                stream.writeQString(op_id)
+                mime_data.setData("application/x-optdia-op-id", encoded_data)
+        return mime_data
 
 # 車両運用情報編集ダイアログ
 class VehicleOperationEditorDialog(QDialog):
@@ -36,17 +85,20 @@ class VehicleOperationEditorDialog(QDialog):
         group_label = QLabel("<b>運用グループ</b>")
         left_layout.addWidget(group_label)
         
-        self.group_list = QListWidget()
-        self.group_list.setDragDropMode(QListWidget.InternalMove)
+        self.group_list = OperationGroupListWidget(self)
+        self.group_list.setDragDropMode(QListWidget.DragDrop)
+        self.group_list.setDefaultDropAction(Qt.MoveAction)
+        self.group_list.setAcceptDrops(True)
         self.group_list.model().rowsMoved.connect(self._on_groups_reordered)
         self.group_list.itemSelectionChanged.connect(self._on_group_selected)
+        self.group_list.setStyleSheet("QListWidget::item { height: 32px; }")
         left_layout.addWidget(self.group_list)
         
         diagram = self.project.diagrams.get(diagram_id, {})
         operation_groups = diagram.get("operation_groups", {})
         operation_groups_order = diagram.get("operation_groups_order", [])
 
-        # 運用グループ名のリスト
+        # 運用グループのリスト
         initial_row = 0
         for idx, og_id in enumerate(operation_groups_order):
             og = operation_groups[og_id]
@@ -57,11 +109,17 @@ class VehicleOperationEditorDialog(QDialog):
             if initial_group_id and og_id == initial_group_id:
                 initial_row = idx
 
-        # 「運用グループ名のリスト」の下にスペースを設けて、そこに「運用グループの追加」というボタンを追加
-        left_layout.addSpacing(10)
+        # 「運用グループのリスト」の下にスペースを設けて、そこに「運用グループの追加」というボタンを追加
         self.add_group_button = QPushButton("運用グループの追加")
         self.add_group_button.clicked.connect(self._on_add_operation_group)
         left_layout.addWidget(self.add_group_button)
+
+        # 並び替えに関する説明文を追加
+        left_layout.addSpacing(10)
+        drag_info_label = QLabel("ドラッグ操作により運用の並び替えや別の運用グループへの移動が可能です")
+        drag_info_label.setWordWrap(True)
+        drag_info_label.setStyleSheet("color: #888888; font-size: 12px;")
+        left_layout.addWidget(drag_info_label)
             
         main_layout.addWidget(left_panel, stretch=1)
 
@@ -91,8 +149,10 @@ class VehicleOperationEditorDialog(QDialog):
         op_header_label = QLabel("<b>運用</b>")
         left_op_layout.addWidget(op_header_label)
 
-        self.op_list = QListWidget()
-        self.op_list.setDragDropMode(QListWidget.InternalMove)
+        self.op_list = OperationListWidget()
+        self.op_list.setDragEnabled(True)
+        self.op_list.setDragDropMode(QListWidget.DragDrop)
+        self.op_list.setDefaultDropAction(Qt.MoveAction)
         self.op_list.model().rowsMoved.connect(self._on_ops_reordered)
         self.op_list.itemSelectionChanged.connect(self._on_operation_selected)
         left_op_layout.addWidget(self.op_list)
@@ -673,3 +733,30 @@ class VehicleOperationEditorDialog(QDialog):
         diagram["operation_groups_order"] = new_order
         if hasattr(self.parent(), "set_modified"):
             self.parent().set_modified(True)
+
+    def _move_operation_to_group(self, op_id: str, target_group_id: str):
+        selected_items = self.group_list.selectedItems()
+        source_group_id = selected_items[0].data(Qt.UserRole) if selected_items else None
+        if not source_group_id or source_group_id == target_group_id:
+            return
+
+        diagram = self.project.diagrams.get(self.diagram_id, {})
+        operation_groups = diagram.get("operation_groups", {})
+        source_og = operation_groups.get(source_group_id)
+        target_og = operation_groups.get(target_group_id)
+
+        if not source_og or not target_og:
+            return
+
+        source_ops = source_og.get("operations", [])
+        if op_id in source_ops:
+            source_ops.remove(op_id)
+
+        target_ops = target_og.setdefault("operations", [])
+        if op_id not in target_ops:
+            target_ops.append(op_id)
+
+        self._set_modified()
+
+        # 現在の運用リストから該当運用を削除し、必要に応じて選択を更新
+        self._on_group_selected()
