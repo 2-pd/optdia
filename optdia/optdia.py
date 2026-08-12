@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QFileDialog, QMessageBox, QDialog, QLabel, QComboBox,
     QListWidget, QListWidgetItem, QStackedWidget,
-    QTabBar, QHeaderView, QMenu
+    QTabBar, QHeaderView, QMenu, QAbstractItemView, QFrame
 )
 import assets_rc
 from version import APP_NAME, __version__
@@ -238,13 +238,16 @@ class MainWindow(QMainWindow):
         op_body_layout.setContentsMargins(0, 0, 0, 0)
         op_body_layout.setSpacing(0)
 
-        # 運用リスト (幅220px、項目高さ70px)
+        # 運用リスト (幅240px、項目高さ70px)
         self.op_list_widget = QListWidget()
         self.op_list_widget.setFixedWidth(240)
+        self.op_list_widget.setFrameShape(QFrame.NoFrame)
+        self.op_list_widget.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.op_list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.op_list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.op_list_widget.setStyleSheet("""
             QListWidget {
+                border: none;
                 border-right: 1px solid #dddddd;
                 background-color: #ffffff;
             }
@@ -257,6 +260,7 @@ class MainWindow(QMainWindow):
 
         # 運用表表示エリア
         self.timeline_view = TimelineView()
+        self.timeline_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         op_body_layout.addWidget(self.timeline_view, stretch=1)
 
         op_area_layout.addWidget(op_body_widget, stretch=1)
@@ -267,6 +271,9 @@ class MainWindow(QMainWindow):
         )
         self.timeline_view.verticalScrollBar().valueChanged.connect(
             self.op_list_widget.verticalScrollBar().setValue
+        )
+        self.timeline_view.horizontalScrollBar().rangeChanged.connect(
+            lambda min_val, max_val: self._sync_op_list_viewport_margin()
         )
 
         self.timetable_content_stack.addWidget(self.operation_area_widget)
@@ -705,8 +712,12 @@ class MainWindow(QMainWindow):
                 op_num = op.get("operation_number", "")
                 car_count = op.get("car_count", 0)
                 start_loc = op.get("start_location", "")
+                if not start_loc:
+                    start_loc = "？"
                 start_track = op.get("start_track")
                 end_loc = op.get("end_location", "")
+                if not end_loc:
+                    end_loc = "？"
                 end_track = op.get("end_track")
 
                 # 出庫表示: 出庫場所名 (発着番線等があれば空白区切りで付加)
@@ -715,6 +726,7 @@ class MainWindow(QMainWindow):
                 end_text = f"{end_loc}<span style='font-size: 10px; color: gray;'>({end_track})</span>".strip() if end_track else end_loc
 
                 item = QListWidgetItem()
+                item.setSizeHint(QSize(240, 70))
                 item_widget = QWidget()
                 item_layout = QHBoxLayout(item_widget)
                 item_layout.setContentsMargins(0, 0, 0, 0)
@@ -739,6 +751,20 @@ class MainWindow(QMainWindow):
 
                 self.op_list_widget.addItem(item)
                 self.op_list_widget.setItemWidget(item, item_widget)
+
+        self.timeline_view.update_timeline(self.project, diagram_id, og_id)
+        self._sync_op_list_viewport_margin()
+
+    def _sync_op_list_viewport_margin(self):
+        """運用リストウィジェットの底面マージンを運用表の水平スクロールバー高さに合わせる"""
+        h_bar = self.timeline_view.horizontalScrollBar()
+        is_visible = (self.timeline_view.horizontalScrollBarPolicy() == Qt.ScrollBarAlwaysOn) or h_bar.isVisible()
+        margin_bottom = h_bar.height() if is_visible else 0
+        self.op_list_widget.setViewportMargins(0, 0, 0, margin_bottom)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._sync_op_list_viewport_margin()
 
     def _on_edit_operations_clicked(self):
         """運用表上部の編集ボタンを押したときに車両運用情報編集ダイアログを開く"""
