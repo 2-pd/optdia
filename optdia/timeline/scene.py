@@ -2,6 +2,7 @@ from PySide6.QtWidgets import QGraphicsScene, QGraphicsRectItem, QGraphicsSimple
 from PySide6.QtGui import QColor, QFont, QPen, QBrush
 from PySide6.QtCore import Qt, QRectF
 
+# 運用ガントチャートのシーン
 class TimelineScene(QGraphicsScene):
     ROW_HEIGHT = 70
     BAR_HEIGHT = 24
@@ -212,8 +213,51 @@ class TimelineScene(QGraphicsScene):
                 else:
                     st_text.setBrush(QBrush(QColor("#000000")))
 
-                st_text.setPos(rect_x, rect_y + rect_h)
+                rect = st_text.boundingRect()
+                st_text.setPos(rect_x - (rect.width() / 2), rect_y + rect_h)
                 st_text.setZValue(2)
                 self.addItem(st_text)
 
             prev_last_station_id = train["last_station_id"]
+
+
+# 運用ガントチャートの見出しのシーン
+class TimelineHeaderScene(QGraphicsScene):
+    TIMELINE_WIDTH = 2160  # 36 hours * 60 minutes/hour = 2160px
+    HEADER_HEIGHT = 40
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.right_margin = 0
+        self.update_header(0)
+
+    def update_header(self, right_margin: int = 0):
+        self.right_margin = right_margin
+        self.clear()
+        scene_w = self.TIMELINE_WIDTH + self.right_margin
+        self.setSceneRect(0, 0, scene_w, self.HEADER_HEIGHT)
+
+        solid_pen = QPen(QColor("#cccccc"), 1, Qt.PenStyle.SolidLine)
+        font = QFont()
+        font.setPixelSize(14)
+
+        for hour in range(37):
+            x = hour * 60
+            # 縦線描画
+            line = self.addLine(x, 0, x, self.HEADER_HEIGHT, solid_pen)
+            line.setZValue(0)
+
+            # 時刻文字の描画（36時は表示しない）
+            if hour < 36:
+                text_item = QGraphicsSimpleTextItem(str(hour))
+                text_item.setFont(font)
+                text_item.setBrush(QBrush(QColor("#333333")))
+                text_item.setPos(x + 4, 10)
+                text_item.setZValue(1)
+                self.addItem(text_item)
+
+        # 下部の枠線を描画 (y = HEADER_HEIGHT - 1)
+        bottom_line = self.addLine(0, self.HEADER_HEIGHT - 1, scene_w, self.HEADER_HEIGHT - 1, solid_pen)
+        bottom_line.setZValue(2)
+
+

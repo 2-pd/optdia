@@ -28,7 +28,7 @@ from dialogs.about import AboutDialog
 from timetable.model import TimetableModel
 from timetable.view import TimetableView, TimetableVerticalHeader
 from timetable.delegate import TimetableDelegate
-from timeline.view import TimelineView
+from timeline.view import TimelineView, TimelineHeaderView
 
 # メインウィンドウ
 class MainWindow(QMainWindow):
@@ -201,17 +201,17 @@ class MainWindow(QMainWindow):
         self.timetable_delegate = TimetableDelegate(self.timetable_view)
         self.timetable_view.setItemDelegate(self.timetable_delegate)
 
-        # 時刻表テーブルと運用表表示エリアを切り替えるスタックドウィジェット
+        # 時刻表テーブルと運用表示エリアを切り替えるスタックドウィジェット
         self.timetable_content_stack = QStackedWidget()
         self.timetable_content_stack.addWidget(self.timetable_view)
 
-        # 運用表エリア用の親ウィジェット
+        # 運用表示エリア用の親ウィジェット
         self.operation_area_widget = QWidget()
         op_area_layout = QVBoxLayout(self.operation_area_widget)
         op_area_layout.setContentsMargins(0, 0, 0, 0)
         op_area_layout.setSpacing(0)
 
-        # 運用表表示エリアの上部コントロールバー (高さ50px)
+        # 運用表示エリアの上部コントロールバー (高さ50px)
         self.op_control_bar = QWidget()
         self.op_control_bar.setFixedHeight(50)
         self.op_control_bar.setStyleSheet("background-color: #f7f7f7; border-bottom: 1px solid #dddddd;")
@@ -232,7 +232,33 @@ class MainWindow(QMainWindow):
 
         op_area_layout.addWidget(self.op_control_bar)
 
-        # 運用表表示エリアの本体 (左側 リストウィジェット + 右側 運用表表示エリア)
+        # 運用表示エリアの見出しバー (高さ40px)
+        op_header_bar = QWidget()
+        op_header_bar.setFixedHeight(40)
+        op_header_bar.setStyleSheet("background-color: #f7f7f7; border-bottom: 1px solid #dddddd;")
+        op_header_layout = QHBoxLayout(op_header_bar)
+        op_header_layout.setContentsMargins(0, 0, 0, 0)
+        op_header_layout.setSpacing(0)
+
+        lbl_op_num = QLabel("運用番号")
+        lbl_op_num.setFixedWidth(100)
+        lbl_op_num.setAlignment(Qt.AlignCenter)
+        lbl_op_num.setStyleSheet("font-size: 14px; font-weight: bold;")
+
+        lbl_op_se = QLabel("出入庫")
+        lbl_op_se.setFixedWidth(140)
+        lbl_op_se.setAlignment(Qt.AlignCenter)
+        lbl_op_se.setStyleSheet("font-size: 14px; font-weight: bold; border-right: 1px solid #dddddd;")
+
+        self.timeline_header_view = TimelineHeaderView()
+
+        op_header_layout.addWidget(lbl_op_num)
+        op_header_layout.addWidget(lbl_op_se)
+        op_header_layout.addWidget(self.timeline_header_view, stretch=1)
+
+        op_area_layout.addWidget(op_header_bar)
+
+        # 運用表示エリアの本体 (左側 リストウィジェット + 右側 運用ガントチャート)
         op_body_widget = QWidget()
         op_body_layout = QHBoxLayout(op_body_widget)
         op_body_layout.setContentsMargins(0, 0, 0, 0)
@@ -258,7 +284,7 @@ class MainWindow(QMainWindow):
         """)
         op_body_layout.addWidget(self.op_list_widget)
 
-        # 運用表表示エリア
+        # 運用ガントチャート
         self.timeline_view = TimelineView()
         self.timeline_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         op_body_layout.addWidget(self.timeline_view, stretch=1)
@@ -272,9 +298,19 @@ class MainWindow(QMainWindow):
         self.timeline_view.verticalScrollBar().valueChanged.connect(
             self.op_list_widget.verticalScrollBar().setValue
         )
+        self.timeline_view.horizontalScrollBar().valueChanged.connect(
+            self.timeline_header_view.horizontalScrollBar().setValue
+        )
+        self.timeline_header_view.horizontalScrollBar().valueChanged.connect(
+            self.timeline_view.horizontalScrollBar().setValue
+        )
         self.timeline_view.horizontalScrollBar().rangeChanged.connect(
             lambda min_val, max_val: self._sync_op_list_viewport_margin()
         )
+        self.timeline_view.verticalScrollBar().rangeChanged.connect(
+            lambda min_val, max_val: self._sync_op_list_viewport_margin()
+        )
+
 
         self.timetable_content_stack.addWidget(self.operation_area_widget)
 
@@ -696,71 +732,84 @@ class MainWindow(QMainWindow):
         
         diagram_item = self.diagram_list_widget.currentItem()
         diagram_id = diagram_item.data(Qt.UserRole) if diagram_item else None
-        if not diagram_id:
-            return
-
-        diagram = self.project.diagrams.get(diagram_id, {})
-        op_groups = diagram.get("operation_groups", {})
-        operations = diagram.get("operations", {})
-
+        
         og_id = self.op_group_combo.currentData()
-        if og_id and og_id in op_groups:
-            og = op_groups[og_id]
-            op_ids = og.get("operations", [])
-            for op_id in op_ids:
-                op = operations.get(op_id, {})
-                op_num = op.get("operation_number", "")
-                car_count = op.get("car_count", 0)
-                start_loc = op.get("start_location", "")
-                if not start_loc:
-                    start_loc = "？"
-                start_track = op.get("start_track")
-                end_loc = op.get("end_location", "")
-                if not end_loc:
-                    end_loc = "？"
-                end_track = op.get("end_track")
 
-                # 出庫表示: 出庫場所名 (発着番線等があれば空白区切りで付加)
-                start_text = f"{start_loc}<span style='font-size: 10px; color: gray;'>({start_track})</span>".strip() if start_track else start_loc
-                # 入庫表示: 入庫場所名 (発着番線等があれば空白区切りで付加)
-                end_text = f"{end_loc}<span style='font-size: 10px; color: gray;'>({end_track})</span>".strip() if end_track else end_loc
+        if diagram_id:
+            diagram = self.project.diagrams.get(diagram_id, {})
+            op_groups = diagram.get("operation_groups", {})
+            operations = diagram.get("operations", {})
 
-                item = QListWidgetItem()
-                item.setSizeHint(QSize(240, 70))
-                item_widget = QWidget()
-                item_layout = QHBoxLayout(item_widget)
-                item_layout.setContentsMargins(0, 0, 0, 0)
-                item_layout.setSpacing(0)
+            if og_id and og_id in op_groups:
+                og = op_groups[og_id]
+                op_ids = og.get("operations", [])
+                for op_id in op_ids:
+                    op = operations.get(op_id, {})
+                    op_num = op.get("operation_number", "")
+                    car_count = op.get("car_count", 0)
+                    start_loc = op.get("start_location", "")
+                    if not start_loc:
+                        start_loc = "？"
+                    start_track = op.get("start_track")
+                    end_loc = op.get("end_location", "")
+                    if not end_loc:
+                        end_loc = "？"
+                    end_track = op.get("end_track")
 
-                main_color = op.get("main_color", "#ffffff")
+                    # 出庫表示: 出庫場所名 (発着番線等があれば空白区切りで付加)
+                    start_text = f"{start_loc}<span style='font-size: 10px; color: gray;'>({start_track})</span>".strip() if start_track else start_loc
+                    # 入庫表示: 入庫場所名 (発着番線等があれば空白区切りで付加)
+                    end_text = f"{end_loc}<span style='font-size: 10px; color: gray;'>({end_track})</span>".strip() if end_track else end_loc
 
-                # 左側ラベル: 1行目 運用番号 (14px), 2行目 所定両数 (12px, グレー)
-                left_label = QLabel(f"<b style='font-size: 14px;'>{op_num}</b><br/><span style='font-size: 12px; color: gray;'>({car_count}両)</span>")
-                left_label.setAlignment(Qt.AlignCenter | Qt.AlignVCenter)
-                left_label.setStyleSheet(f"background-color: {main_color};")
-                left_label.setFixedWidth(100)
+                    item = QListWidgetItem()
+                    item.setSizeHint(QSize(240, 70))
+                    item_widget = QWidget()
+                    item_layout = QHBoxLayout(item_widget)
+                    item_layout.setContentsMargins(0, 0, 0, 0)
+                    item_layout.setSpacing(0)
 
-                # 右側ラベル: 1行目 出庫場所等, 2行目 入庫場所等
-                right_label = QLabel(f"○{start_text}<br/>△{end_text}")
-                right_label.setAlignment(Qt.AlignCenter | Qt.AlignVCenter)
-                right_label.setStyleSheet("background-color: #f7f7f7;")
-                right_label.setFixedWidth(140)
+                    main_color = op.get("main_color", "#ffffff")
 
-                item_layout.addWidget(left_label)
-                item_layout.addWidget(right_label)
+                    # 左側ラベル: 1行目 運用番号 (14px), 2行目 所定両数 (12px, グレー)
+                    left_label = QLabel(f"<b style='font-size: 14px;'>{op_num}</b><br/><span style='font-size: 12px; color: gray;'>({car_count}両)</span>")
+                    left_label.setAlignment(Qt.AlignCenter | Qt.AlignVCenter)
+                    left_label.setStyleSheet(f"background-color: {main_color};")
+                    left_label.setFixedWidth(100)
 
-                self.op_list_widget.addItem(item)
-                self.op_list_widget.setItemWidget(item, item_widget)
+                    # 右側ラベル: 1行目 出庫場所等, 2行目 入庫場所等
+                    right_label = QLabel(f"○{start_text}<br/>△{end_text}")
+                    right_label.setAlignment(Qt.AlignCenter | Qt.AlignVCenter)
+                    right_label.setStyleSheet("background-color: #f7f7f7;")
+                    right_label.setFixedWidth(140)
+
+                    item_layout.addWidget(left_label)
+                    item_layout.addWidget(right_label)
+
+                    self.op_list_widget.addItem(item)
+                    self.op_list_widget.setItemWidget(item, item_widget)
 
         self.timeline_view.update_timeline(self.project, diagram_id, og_id)
         self._sync_op_list_viewport_margin()
 
+
     def _sync_op_list_viewport_margin(self):
-        """運用リストウィジェットの底面マージンを運用表の水平スクロールバー高さに合わせる"""
+        """運用リストウィジェットの底面マージンを運用表の水平スクロールバー高さに合わせ、見出しシーンの幅に垂直スクロールバー幅を反映する"""
         h_bar = self.timeline_view.horizontalScrollBar()
-        is_visible = (self.timeline_view.horizontalScrollBarPolicy() == Qt.ScrollBarAlwaysOn) or h_bar.isVisible()
-        margin_bottom = h_bar.height() if is_visible else 0
+        is_h_visible = (self.timeline_view.horizontalScrollBarPolicy() == Qt.ScrollBarAlwaysOn) or h_bar.isVisible()
+        margin_bottom = h_bar.height() if is_h_visible else 0
         self.op_list_widget.setViewportMargins(0, 0, 0, margin_bottom)
+
+        v_bar = self.timeline_view.verticalScrollBar()
+        # シーン高さとビューポート高さから垂直スクロールバーの必要有無を動的に判定
+        scene_height = self.timeline_view.scene.sceneRect().height() if self.timeline_view.scene else 0
+        viewport_height = self.timeline_view.viewport().height()
+        is_v_needed = (self.timeline_view.verticalScrollBarPolicy() == Qt.ScrollBarAlwaysOn) or (
+            self.timeline_view.verticalScrollBarPolicy() != Qt.ScrollBarAlwaysOff and scene_height > viewport_height and viewport_height > 0
+        )
+        right_margin = v_bar.width() if is_v_needed else 0
+        self.timeline_header_view.update_header(right_margin)
+
+
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
