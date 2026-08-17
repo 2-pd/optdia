@@ -771,10 +771,19 @@ class MainWindow(QMainWindow):
                     main_color = op.get("main_color", "#ffffff")
 
                     # 左側ラベル: 1行目 運用番号 (14px), 2行目 所定両数 (12px, グレー)
-                    left_label = QLabel(f"<b style='font-size: 14px;'>{op_num}</b><br/><span style='font-size: 12px; color: gray;'>({car_count}両)</span>")
+                    left_label = QLabel(f"<b style='font-size: 14px; text-decoration: underline;'>{op_num}</b><br/><span style='font-size: 12px; color: gray;'>({car_count}両)</span>")
                     left_label.setAlignment(Qt.AlignCenter | Qt.AlignVCenter)
                     left_label.setStyleSheet(f"background-color: {main_color};")
                     left_label.setFixedWidth(100)
+                    left_label.setCursor(Qt.PointingHandCursor)
+
+                    def make_click_handler(d_id, g_id, o_id):
+                        def mouse_press(event):
+                            if event.button() == Qt.LeftButton:
+                                self._open_operation_editor(d_id, g_id, o_id)
+                        return mouse_press
+
+                    left_label.mousePressEvent = make_click_handler(diagram_id, og_id, op_id)
 
                     # 右側ラベル: 1行目 出庫場所等, 2行目 入庫場所等
                     right_label = QLabel(f"○{start_text}<br/>△{end_text}")
@@ -815,6 +824,12 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
         self._sync_op_list_viewport_margin()
 
+    def _open_operation_editor(self, diagram_id: str, group_id: str = None, op_id: str = None):
+        """指定した運用を選択した状態で車両運用情報編集ダイアログを開く"""
+        dialog = VehicleOperationEditorDialog(self, self.project, diagram_id, group_id, op_id)
+        dialog.exec()
+        self._update_op_group_combo()
+
     def _on_edit_operations_clicked(self):
         """運用表上部の編集ボタンを押したときに車両運用情報編集ダイアログを開く"""
         diagram_item = self.diagram_list_widget.currentItem()
@@ -823,10 +838,7 @@ class MainWindow(QMainWindow):
             return
 
         initial_group_id = self.op_group_combo.currentData()
-
-        dialog = VehicleOperationEditorDialog(self, self.project, diagram_id, initial_group_id)
-        dialog.exec()
-        self._update_op_group_combo()
+        self._open_operation_editor(diagram_id, initial_group_id)
 
     def _on_diagrams_reordered(self, parent, start, end, destination, row):
         """サイドバーでの運転ダイヤの並び替えをプロジェクトデータに反映する"""
