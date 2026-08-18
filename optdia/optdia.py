@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 )
 import assets_rc
 from version import APP_NAME, __version__
-from project import OptDiaProject, load_project
+from project import OptDiaProject, load_project, SchemaVersionError
 from settings import AppSettings
 from common.gui_utils import HtmlDelegate, create_color_square_pixmap
 from common.widgets import LineSampleWidget
@@ -597,6 +597,8 @@ class MainWindow(QMainWindow):
             self._on_timetable_settings_changed()
             self.app_settings.add_recent_file(filepath) # 成功したら最近開いたファイルに追加
             self._update_recent_files_menu()
+        except SchemaVersionError:
+            pass
         except Exception as e:
             QMessageBox.critical(self, "エラー", f"プロジェクトファイルの読み込み中にエラーが発生しました:\n{e}\nファイルが破損している可能性があります。")
 
@@ -877,6 +879,9 @@ def main():
     if filepath:
         try:
             project = load_project(filepath)
+        except SchemaVersionError:
+            project = OptDiaProject()
+            filepath = None
         except Exception:
             QMessageBox.critical(None, "エラー", "このファイルは破損しています")
             project = OptDiaProject()

@@ -1,9 +1,28 @@
 import json
 import os
 import gzip
+from PySide6.QtWidgets import QMessageBox
 
 # プロジェクトファイルの仕様バージョン (optdia_project.ts の定義に準拠)
 PROJECT_SCHEMA_VERSION = "2026.06.001"
+
+
+class SchemaVersionError(Exception):
+    """プロジェクトファイルの仕様バージョンがアプリケーションより新しい場合に発生する例外"""
+    pass
+
+
+def is_newer_schema_version(file_version: str, current_version: str) -> bool:
+    """
+    バージョン番号文字列をピリオドで分割し、整数キャストして大小比較を行う。
+    file_version が current_version より大きい場合に True を返す。
+    """
+    try:
+        file_parts = [int(x) for x in str(file_version).split(".")]
+        curr_parts = [int(x) for x in str(current_version).split(".")]
+        return file_parts > curr_parts
+    except (ValueError, TypeError, AttributeError):
+        return False
 
 class OptDiaProject:
     """
@@ -89,8 +108,19 @@ class OptDiaProject:
                         if m_train is not None and diagram_id not in m_train["_diagram_ids"]:
                             m_train["_diagram_ids"].append(diagram_id)
 
-        # 読込時に部分区間境界での分割処理を行い、発着時刻データが2つの部分区間に跨っている可能性を排除する
-        self._split_all_boundary_stops()
+        # プロジェクトファイルを開くときに全ての列車データ(optdia_train)を検査
+        # stopsの最後の駅について、発時刻がNoneであり、かつ、その駅のshow_arrival_timeがTrueでないならば、着時刻の値を発時刻に代入
+        for route in self.routes.values():
+            for train_key in ["inbound_trains", "outbound_trains"]:
+                for train in route.get(train_key, {}).values():
+                    stops = train.get("stops", [])
+                    if stops:
+                        last_stop = stops[-1]
+                        if last_stop.get("departure_time") is None:
+                            station_id = last_stop.get("station_id")
+                            station = self.stations.get(station_id, {})
+                            if not station.get("show_arrival_time", False):
+                                last_stop["departure_time"] = last_stop.get("arrival_time")
 
     @staticmethod
     def _generate_segment_id():
@@ -99,37 +129,6 @@ class OptDiaProject:
         import random
         chars = string.ascii_letters + string.digits
         return "".join(random.choices(chars, k=8))
-
-    def _split_all_boundary_stops(self):
-        """全路線の全列車に対し、部分区間境界駅での発着時刻分割を行う"""
-        for route in self.routes.values():
-            # 部分区間境界駅（路線の接続点）を特定
-            segments = route.get("line_segments", [])
-            boundary_stations = set()
-            for i in range(len(segments) - 1):
-                if segments[i]["end_station"] == segments[i+1]["start_station"]:
-                    boundary_stations.add(segments[i]["end_station"])
-
-            for key in ["inbound_trains", "outbound_trains"]:
-                for train in route.get(key, {}).values():
-                        new_stops = []
-                        for s in train.get("stops", []):
-                            # 境界駅でかつ着発両方の時刻がある場合、分割する
-                            if (s.get("station_id") in boundary_stations and 
-                                s.get("arrival_time") and s.get("departure_time")):
-                                
-                                # 着時刻のみのデータ
-                                s_arr = s.copy()
-                                s_arr["departure_time"] = None
-                                new_stops.append(s_arr)
-                                
-                                # 発時刻のみのデータ
-                                s_dep = s.copy()
-                                s_dep["arrival_time"] = None
-                                new_stops.append(s_dep)
-                            else:
-                                new_stops.append(s)
-                        train["stops"] = new_stops
 
     def _normalize_train_stops_for_save(self, stops):
         """保存用に、不要なデータの削除と、同一駅・同一区間の連続するデータの統合を行う"""
@@ -186,10 +185,16 @@ class OptDiaProject:
         if "stops" in clean_train:
             # 保存直前に、不要なデータの削除と、同一駅・路線の連続するデータの統合を行う
             stops = self._normalize_train_stops_for_save(clean_train["stops"])
-            clean_train["stops"] = [
+            cleaned_stops = [
                 {sk: sv for sk, sv in stop.items() if sk != "stop_idx"}
                 for stop in stops
             ]
+            if cleaned_stops:
+                if cleaned_stops[0].get("arrival_time") is not None:
+                    cleaned_stops[0]["arrival_time"] = None
+                if cleaned_stops[-1].get("departure_time") is not None:
+                    cleaned_stops[-1]["departure_time"] = None
+            clean_train["stops"] = cleaned_stops
         return clean_train
 
     def to_dict(self):
@@ -242,8 +247,8 @@ class OptDiaProject:
                                 {k: v for k, v in dt[key][tid].items() if k != "to_be_saved"}
                                 for tid in dt[order_key]
                                 if dt[key][tid].get("to_be_saved") is True
-                        ]
-                        del dt_copy[order_key]
+                            ]
+                            del dt_copy[order_key]
                     new_tbd[did] = dt_copy
                 r_copy["trains_by_diagram"] = new_tbd
             routes_export.append(r_copy)
@@ -303,6 +308,15 @@ def load_project(filepath: str) -> OptDiaProject:
     with open_func(filepath, "rt", encoding="utf-8") as f:
         data = json.load(f)
     
+    file_schema_version = data.get("metadata", {}).get("project_schema_version", "")
+    if is_newer_schema_version(file_schema_version, PROJECT_SCHEMA_VERSION):
+        QMessageBox.critical(
+            None,
+            "エラー",
+            "このプロジェクトファイルは現在ご利用の本アプリケーションより新しいバージョンで作成されたものです。\nこのファイルを編集するには本アプリケーションを新しいバージョンに更新してください。"
+        )
+        raise SchemaVersionError("Incompatible project schema version")
+
     return OptDiaProject(data)
 
 
