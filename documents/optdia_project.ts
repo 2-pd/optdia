@@ -99,7 +99,7 @@ interface optdia_route {
 
 // 路線の部分区間情報を格納するオブジェクト
 interface optdia_line_segment {
-    segment_id: string; // 部分区間ID
+    segment_id: string; // 部分区間ID(ランダムな英数字8文字)
     line_id: string; // 路線ID
     start_station: string; // 区間の始点となる駅のID
     end_station: string; // 区間の終点となる駅のID(始点と終点の位置関係が路線情報での駅の順序と逆の場合は、路線が逆向きで経路に配置されていることを意味する)
@@ -127,7 +127,7 @@ interface optdia_route_diagram_trains {
 
 // 列車種別情報を格納するオブジェクト
 interface optdia_train_type {
-    train_type_id: string; // 列車種別ID
+    train_type_id: string; // 列車種別ID(ランダムな英数字10文字)
     train_type_name: string; // 列車種別名
     train_type_short_name: string; // 列車種別の短縮名
     train_name: string | null;// 列車愛称
@@ -162,7 +162,7 @@ interface optdia_train {
 
 // 運転ダイヤ別の列車情報を格納するオブジェクト
 interface optdia_diagram_train {
-    train_id: string; // 列車ID
+    train_id: string; // 列車ID(ランダムな英数字16文字)
     operations: optdia_train_operation[]; // 列車の担当運用情報(下記)を前位側(方反でない場合を基準とする)から順に配列で
     car_count: null | number; // 両数(nullの場合は担当運用の所定両数の合計値が指定されたものとみなす)
     destination: null | string; // 行き先表示(nullの場合は終着駅の駅名が指定されたものとみなす)
@@ -216,8 +216,8 @@ interface optdia_operation {
 // 一時入庫の情報
 interface optdia_temporary_stabling_event {
     stabled_location: string; // 入庫場所名
-    start_time: string; // 入庫時刻
-    end_time: string; // 出庫時刻
+    start_time: string; // 入庫時刻(hh:mm:ss形式)
+    end_time: string; // 出庫時刻(hh:mm:ss形式)
     formations_can_changed: boolean; // 編成が変更される可能性があるか否か
     note: string; // 備考
 }
@@ -232,7 +232,7 @@ interface optdia_train_operation {
 
 // 車両運用グループの情報を格納するオブジェクト
 interface optdia_operation_group {
-    operation_group_id: string; // 運用グループID
+    operation_group_id: string; // 運用グループID(ランダムな英数字8文字)
     operation_group_name: string; // 運用グループ名
     main_color: string; // 運用グループの表示色(デフォルト値は #ffffff)
     operations: string[]; // グループに属する車両運用のIDを表示順に配列で

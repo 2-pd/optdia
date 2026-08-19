@@ -1,6 +1,122 @@
-from PySide6.QtWidgets import QGraphicsScene, QGraphicsRectItem, QGraphicsSimpleTextItem, QGraphicsLineItem
+from PySide6.QtWidgets import (
+    QGraphicsScene, QGraphicsRectItem, QGraphicsSimpleTextItem, QGraphicsLineItem, QMenu, QDialog
+)
 from PySide6.QtGui import QColor, QFont, QPen, QBrush
 from PySide6.QtCore import Qt, QRectF
+from .dialogs import TemporaryStablingDialog
+
+
+# 一時入庫を表す矩形アイテム
+class TemporaryStablingItem(QGraphicsRectItem):
+    def __init__(self, x: float, y: float, w: float, h: float, event_data: dict, operation: dict, scene: "TimelineScene"):
+        super().__init__(x, y, w, h)
+        self.event_data = event_data
+        self.operation = operation
+        self.timeline_scene = scene
+
+        # 塗りつぶし色は透明、輪郭線は灰色
+        self.setPen(QPen(QColor("#888888"), 1))
+        self.setBrush(QBrush(Qt.NoBrush))
+        self.setZValue(1)
+
+        # テキスト項目を配置
+        stabled_location = event_data.get("stabled_location", "")
+        self.text_item = QGraphicsSimpleTextItem(stabled_location, self)
+        font = QFont()
+        font.setPixelSize(12)
+        self.text_item.setFont(font)
+
+        # formations_can_changed が True の場合は赤文字、それ以外は黒文字
+        if event_data.get("formations_can_changed", False):
+            self.text_item.setBrush(QBrush(QColor("#ff0000")))
+        else:
+            self.text_item.setBrush(QBrush(QColor("#000000")))
+
+        tn_rect = self.text_item.boundingRect()
+        tn_y = (h - tn_rect.height()) / 2.0
+        self.text_item.setPos(x + 2, y + tn_y)
+        self.text_item.setZValue(2)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            parent_widget = self.timeline_scene.views()[0].window() if self.timeline_scene and self.timeline_scene.views() else None
+            dialog = TemporaryStablingDialog(parent_widget, event_data=self.event_data)
+            if dialog.exec() == QDialog.Accepted:
+                new_data = dialog.get_data()
+                self.event_data.update(new_data)
+                # start_time順にソート
+                events = self.operation.get("temporary_stabling_events", [])
+                events.sort(key=lambda e: e.get("start_time", ""))
+                self.timeline_scene.refresh()
+                if parent_widget and hasattr(parent_widget, "set_modified"):
+                    parent_widget.set_modified(True)
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+
+# ガントチャート要素間の空白を埋める透明の矩形アイテム
+class BlankSpaceItem(QGraphicsRectItem):
+    def __init__(self, start_m: float, end_m: float, y_base: float, bar_top_offset: float, bar_height: float, operation: dict, scene: "TimelineScene"):
+        x = float(start_m)
+        y = float(y_base + bar_top_offset)
+        w = max(1.0, float(end_m - start_m))
+        h = float(bar_height)
+        super().__init__(x, y, w, h)
+        self.start_m = start_m
+        self.end_m = end_m
+        self.operation = operation
+        self.timeline_scene = scene
+
+        self.setAcceptHoverEvents(True)
+        # 透明な領域でホバーイベントが拾えるようにアルファ0のブラシをセット
+        self.setBrush(QBrush(QColor(0, 0, 0, 0)))
+        self.setPen(QPen(Qt.NoPen))
+        self.setZValue(1)
+
+    def hoverEnterEvent(self, event):
+        # 薄い灰色の左下がりの斜線模様
+        hatch_brush = QBrush(QColor("#cccccc"), Qt.BDiagPattern)
+        self.setBrush(hatch_brush)
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self.setBrush(QBrush(QColor(0, 0, 0, 0)))
+        super().hoverLeaveEvent(event)
+
+    def contextMenuEvent(self, event):
+        menu = QMenu()
+        act_train = menu.addAction("ここへ列車を登録")
+        act_deadhead = menu.addAction("ここへ時刻表にない回送を追加")
+        act_stabling = menu.addAction("ここへ一時入庫を追加")
+
+        screen_pos = event.screenPos()
+        selected_act = menu.exec(screen_pos)
+
+        if selected_act == act_stabling:
+            sh = int(self.start_m // 60)
+            sm = int(self.start_m % 60)
+            eh = int(self.end_m // 60)
+            em = int(self.end_m % 60)
+            default_start_time = f"{sh:02d}:{sm:02d}:00"
+            default_end_time = f"{eh:02d}:{em:02d}:00"
+
+            parent_widget = self.timeline_scene.views()[0].window() if self.timeline_scene and self.timeline_scene.views() else None
+            dialog = TemporaryStablingDialog(
+                parent_widget,
+                default_start_time=default_start_time,
+                default_end_time=default_end_time
+            )
+            if dialog.exec() == QDialog.Accepted:
+                new_data = dialog.get_data()
+                if "temporary_stabling_events" not in self.operation:
+                    self.operation["temporary_stabling_events"] = []
+                self.operation["temporary_stabling_events"].append(new_data)
+                self.operation["temporary_stabling_events"].sort(key=lambda e: e.get("start_time", ""))
+                self.timeline_scene.refresh()
+                if parent_widget and hasattr(parent_widget, "set_modified"):
+                    parent_widget.set_modified(True)
+
 
 # 運用ガントチャートのシーン
 class TimelineScene(QGraphicsScene):
@@ -15,6 +131,10 @@ class TimelineScene(QGraphicsScene):
         self.project = None
         self.diagram_id = None
         self.operation_group_id = None
+
+    def refresh(self):
+        if self.project and self.diagram_id and self.operation_group_id:
+            self.update_timeline(self.project, self.diagram_id, self.operation_group_id)
 
     def update_timeline(self, project, diagram_id: str, operation_group_id: str):
         self.project = project
@@ -58,12 +178,32 @@ class TimelineScene(QGraphicsScene):
         for row_idx, op_id in enumerate(op_ids):
             op = operations.get(op_id, {})
             y_base = row_idx * self.ROW_HEIGHT
+            elements = []
 
-            # 出庫・入庫テキスト
-            self._draw_operation_start_end(op, y_base)
+            # 出庫・入庫テキストを描画し要素範囲を記録
+            start_end_elems = self._draw_operation_start_end(op, y_base)
+            elements.extend(start_end_elems)
 
-            # 運用に割り振られている列車の矩形描画
-            self._draw_operation_trains(op_id, y_base)
+            # 運用に割り振られている列車の矩形を描画し要素範囲を記録
+            train_elems = self._draw_operation_trains(op_id, y_base)
+            elements.extend(train_elems)
+
+            # 一時入庫の矩形を描画し要素範囲を記録
+            stabling_elems = self._draw_operation_stabling(op, y_base)
+            elements.extend(stabling_elems)
+
+            # 各要素間の空白部分に透明な矩形を配置
+            max_end = None
+            for s, e in sorted(elements, key=lambda x: (x[0], x[1])):
+                if max_end is not None:
+                    if s > max_end:
+                        blank_item = BlankSpaceItem(max_end, s, y_base, self.BAR_TOP_OFFSET, self.BAR_HEIGHT, op, self)
+                        self.addItem(blank_item)
+                        max_end = max(max_end, e)
+                    else:
+                        max_end = max(max_end, e)
+                else:
+                    max_end = e
 
     def _time_to_minutes(self, time_str: str):
         if not time_str:
@@ -85,7 +225,8 @@ class TimelineScene(QGraphicsScene):
         st_name = st.get("station_name", "")
         return st_name[0] if st_name else ""
 
-    def _draw_operation_start_end(self, op: dict, y_base: float):
+    def _draw_operation_start_end(self, op: dict, y_base: float) -> list:
+        elements = []
         start_time_str = op.get("start_time")
         if start_time_str:
             start_m = self._time_to_minutes(start_time_str)
@@ -100,6 +241,7 @@ class TimelineScene(QGraphicsScene):
                 text_item.setPos(start_m - rect.width(), y_base + self.LABEL_TOP_OFFSET)
                 text_item.setZValue(2)
                 self.addItem(text_item)
+                elements.append((start_m, start_m))
 
         end_time_str = op.get("end_time")
         if end_time_str:
@@ -114,9 +256,33 @@ class TimelineScene(QGraphicsScene):
                 text_item.setPos(end_m, y_base + self.LABEL_TOP_OFFSET)
                 text_item.setZValue(2)
                 self.addItem(text_item)
+                elements.append((end_m, end_m))
 
-    def _draw_operation_trains(self, target_op_id: str, y_base: float):
-        # プロジェクト内の全列車を走査して、target_op_id を持つ列車（かつ現在の diagram_id に属するもの）を抽出
+        return elements
+
+    def _draw_operation_stabling(self, op: dict, y_base: float) -> list:
+        elements = []
+        events = op.get("temporary_stabling_events", [])
+        for ev in events:
+            start_m = self._time_to_minutes(ev.get("start_time"))
+            end_m = self._time_to_minutes(ev.get("end_time"))
+            if start_m is not None and end_m is not None:
+                w = max(1.0, float(end_m - start_m))
+                stabling_item = TemporaryStablingItem(
+                    float(start_m),
+                    y_base + float(self.BAR_TOP_OFFSET),
+                    w,
+                    float(self.BAR_HEIGHT),
+                    ev,
+                    op,
+                    self
+                )
+                self.addItem(stabling_item)
+                elements.append((start_m, end_m))
+        return elements
+
+    def _draw_operation_trains(self, target_op_id: str, y_base: float) -> list:
+        elements = []
         matched_trains = []
 
         for route in self.project.routes.values():
@@ -158,7 +324,6 @@ class TimelineScene(QGraphicsScene):
                             "last_station_id": last_station_id
                         })
 
-        # 最初の発時刻順にソート
         matched_trains.sort(key=lambda x: x["first_dep"])
 
         prev_last_station_id = None
@@ -177,6 +342,8 @@ class TimelineScene(QGraphicsScene):
             rect_x = float(first_dep)
             rect_y = y_base + float(self.BAR_TOP_OFFSET)
 
+            elements.append((first_dep, last_arr))
+
             # 列車種別の基本色を取得
             tt = self.project.train_types.get(train["train_type_id"]) if train["train_type_id"] else None
             main_color_str = tt.get("main_color", "#333333") if tt else "#333333"
@@ -193,7 +360,6 @@ class TimelineScene(QGraphicsScene):
             tn_text = QGraphicsSimpleTextItem(train["train_number"])
             tn_text.setFont(font_tn)
             tn_text.setBrush(QBrush(QColor("#ffffff")))
-            # 左寄せ、縦中央付近または上端に配置（高さ24pxの中で上下中央）
             tn_rect = tn_text.boundingRect()
             tn_y = rect_y + (rect_h - tn_rect.height()) / 2.0
             tn_text.setPos(rect_x + 2, tn_y)
@@ -219,6 +385,8 @@ class TimelineScene(QGraphicsScene):
                 self.addItem(st_text)
 
             prev_last_station_id = train["last_station_id"]
+
+        return elements
 
 
 # 運用ガントチャートの見出しのシーン

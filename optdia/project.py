@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import gzip
@@ -281,7 +282,9 @@ class OptDiaProject:
         プロジェクトデータを指定されたパスに JSON 形式で保存します。
         拡張子が .optd の場合は gzip 圧縮を行います。
         """
-        data = self.to_dict()
+        # 保存前にプロジェクトデータ全体をディープコピーすることでデータの破損を防ぐ
+        project_copy = copy.deepcopy(self)
+        data = project_copy.to_dict()
         is_compressed = filepath.lower().endswith(".optd")
         open_func = gzip.open if is_compressed else open
 
