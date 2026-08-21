@@ -1,8 +1,12 @@
+import random
+import string
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QSpinBox, QCheckBox, QPlainTextEdit, QPushButton
+    QSpinBox, QCheckBox, QPlainTextEdit, QPushButton,
+    QComboBox, QRadioButton, QGroupBox, QMessageBox
 )
+
 
 class RolloverMinuteSpinBox(QSpinBox):
     def __init__(self, parent=None):
@@ -80,7 +84,7 @@ class TemporaryStablingDialog(QDialog):
         layout.addWidget(lbl_note)
         self.txt_note = QPlainTextEdit()
         layout.addWidget(self.txt_note)
-        
+
         layout.addStretch()
 
         # 6. OK / キャンセル ボタン
@@ -205,3 +209,416 @@ class TemporaryStablingDialog(QDialog):
             "formations_can_changed": self.chk_formations.isChecked(),
             "note": self.txt_note.toPlainText()
         }
+
+
+class AddDeadheadDialog(QDialog):
+    """回送の追加ダイアログ"""
+
+    def __init__(self, parent=None, project=None, diagram_id: str = None, operation_id: str = None, default_start_m: float = 0, default_end_m: float = 0):
+        super().__init__(parent)
+        self.setWindowTitle("回送の追加")
+        self.resize(400, 500)
+
+        self.project = project
+        self.diagram_id = diagram_id
+        self.operation_id = operation_id
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        layout.setContentsMargins(15, 15, 15, 15)
+
+        # 1. 列車番号:
+        lbl_train_num = QLabel("列車番号:")
+        layout.addWidget(lbl_train_num)
+        self.txt_train_number = QLineEdit()
+        layout.addWidget(self.txt_train_number)
+
+        # 2. 種別:
+        lbl_train_type = QLabel("種別:")
+        layout.addWidget(lbl_train_type)
+        self.combo_train_type = QComboBox()
+        layout.addWidget(self.combo_train_type)
+
+        # 3. 登録先運行系統:
+        lbl_route = QLabel("登録先運行系統:")
+        layout.addWidget(lbl_route)
+        self.combo_route = QComboBox()
+        layout.addWidget(self.combo_route)
+
+        # 4. 方面 (上り / 下り) ラジオボタン
+        dir_layout = QHBoxLayout()
+        self.radio_outbound = QRadioButton("下り")
+        self.radio_inbound = QRadioButton("上り")
+        self.radio_outbound.setChecked(True)
+        dir_layout.addWidget(self.radio_outbound)
+        dir_layout.addWidget(self.radio_inbound)
+        dir_layout.addStretch()
+        layout.addLayout(dir_layout)
+
+        # 5. 「始発」グループボックス
+        grp_start = QGroupBox("始発")
+        grp_start_layout = QVBoxLayout(grp_start)
+        grp_start_layout.setSpacing(8)
+
+        # 1行目: 駅: + コンボボックス
+        start_row1 = QHBoxLayout()
+        lbl_start_st = QLabel("駅:")
+        self.combo_start_station = QComboBox()
+        start_row1.addWidget(lbl_start_st)
+        start_row1.addWidget(self.combo_start_station, stretch=1)
+        grp_start_layout.addLayout(start_row1)
+
+        # 2行目: 時刻: + 時スピンボックス + 時 + 分スピンボックス + 分
+        start_row2 = QHBoxLayout()
+        lbl_start_time = QLabel("時刻:")
+        self.spin_start_hour = QSpinBox()
+        self.spin_start_hour.setRange(0, 99)
+        self.spin_start_min = RolloverMinuteSpinBox()
+        lbl_start_h = QLabel("時")
+        lbl_start_m = QLabel("分")
+        start_row2.addWidget(lbl_start_time)
+        start_row2.addWidget(self.spin_start_hour)
+        start_row2.addWidget(lbl_start_h)
+        start_row2.addWidget(self.spin_start_min)
+        start_row2.addWidget(lbl_start_m)
+        start_row2.addStretch()
+        grp_start_layout.addLayout(start_row2)
+
+        layout.addWidget(grp_start)
+
+        # 6. 「終着」グループボックス
+        grp_end = QGroupBox("終着")
+        grp_end_layout = QVBoxLayout(grp_end)
+        grp_end_layout.setSpacing(8)
+
+        # 1行目: 駅: + コンボボックス
+        end_row1 = QHBoxLayout()
+        lbl_end_st = QLabel("駅:")
+        self.combo_end_station = QComboBox()
+        end_row1.addWidget(lbl_end_st)
+        end_row1.addWidget(self.combo_end_station, stretch=1)
+        grp_end_layout.addLayout(end_row1)
+
+        # 2行目: 時刻: + 時スピンボックス + 時 + 分スピンボックス + 分
+        end_row2 = QHBoxLayout()
+        lbl_end_time = QLabel("時刻:")
+        self.spin_end_hour = QSpinBox()
+        self.spin_end_hour.setRange(0, 99)
+        self.spin_end_min = RolloverMinuteSpinBox()
+        lbl_end_h = QLabel("時")
+        lbl_end_m = QLabel("分")
+        end_row2.addWidget(lbl_end_time)
+        end_row2.addWidget(self.spin_end_hour)
+        end_row2.addWidget(lbl_end_h)
+        end_row2.addWidget(self.spin_end_min)
+        end_row2.addWidget(lbl_end_m)
+        end_row2.addStretch()
+        grp_end_layout.addLayout(end_row2)
+
+        layout.addWidget(grp_end)
+
+        layout.addStretch()
+
+        # 7. OK / キャンセル ボタン
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        self.btn_ok = QPushButton("OK")
+        self.btn_cancel = QPushButton("キャンセル")
+        btn_layout.addWidget(self.btn_ok)
+        btn_layout.addWidget(self.btn_cancel)
+        layout.addLayout(btn_layout)
+
+        # シグナル設定
+        self.spin_start_min.valueChanged.connect(
+            lambda v: self._on_minute_changed(self.spin_start_min, self.spin_start_hour, v)
+        )
+        self.spin_end_min.valueChanged.connect(
+            lambda v: self._on_minute_changed(self.spin_end_min, self.spin_end_hour, v)
+        )
+        self.combo_route.currentIndexChanged.connect(self._on_route_or_dir_changed)
+        self.radio_outbound.toggled.connect(self._on_route_or_dir_changed)
+        self.radio_inbound.toggled.connect(self._on_route_or_dir_changed)
+        self.btn_ok.clicked.connect(self._on_ok_clicked)
+
+        self.btn_cancel.clicked.connect(self.reject)
+
+        self.setStyleSheet("""
+            QLineEdit, QSpinBox, QComboBox {
+                border: 1px solid #aaaaaa;
+                border-radius: 3px;
+                padding: 3px;
+                background-color: #ffffff;
+            }
+            QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
+                border: 1px solid #3b82f6;
+            }
+            QPushButton {
+                border: 1px solid #aaaaaa;
+                border-radius: 3px;
+                padding: 5px 15px;
+                background-color: #f0f0f0;
+            }
+            QPushButton:hover {
+                background-color: #e0e0e0;
+            }
+            QPushButton:pressed {
+                background-color: #d0d0d0;
+            }
+        """)
+
+        self._init_data(default_start_m, default_end_m)
+
+    def _on_minute_changed(self, min_spin: QSpinBox, hour_spin: QSpinBox, val: int):
+        if val == 60:
+            min_spin.blockSignals(True)
+            min_spin.setValue(0)
+            min_spin.blockSignals(False)
+            hour_spin.setValue(hour_spin.value() + 1)
+        elif val == -1:
+            min_spin.blockSignals(True)
+            min_spin.setValue(59)
+            min_spin.blockSignals(False)
+            if hour_spin.value() > 0:
+                hour_spin.setValue(hour_spin.value() - 1)
+
+    def _init_data(self, default_start_m: float, default_end_m: float):
+        if not self.project:
+            return
+
+        # 種別コンボボックスの設定
+        self.combo_train_type.blockSignals(True)
+        self.combo_train_type.clear()
+        deadhead_idx = -1
+        for i, ttid in enumerate(self.project.train_types_order):
+            tt = self.project.train_types.get(ttid, {})
+            name = tt.get("train_type_name", ttid)
+            self.combo_train_type.addItem(name, ttid)
+            if name == "回送":
+                deadhead_idx = i
+        if deadhead_idx != -1:
+            self.combo_train_type.setCurrentIndex(deadhead_idx)
+        elif self.combo_train_type.count() > 0:
+            self.combo_train_type.setCurrentIndex(0)
+        self.combo_train_type.blockSignals(False)
+
+        # 運行系統コンボボックスの設定
+        self.combo_route.blockSignals(True)
+        self.combo_route.clear()
+        for rid in self.project.routes_order:
+            r = self.project.routes.get(rid, {})
+            name = r.get("route_name", rid)
+            self.combo_route.addItem(name, rid)
+        if self.combo_route.count() > 0:
+            self.combo_route.setCurrentIndex(0)
+        self.combo_route.blockSignals(False)
+
+        # 時刻スピンボックスの初期値設定
+        sh = int(default_start_m // 60)
+        sm = int(default_start_m % 60)
+        self.spin_start_hour.setValue(sh)
+        self.spin_start_min.blockSignals(True)
+        self.spin_start_min.setValue(sm)
+        self.spin_start_min.blockSignals(False)
+
+        eh = int(default_end_m // 60) if default_end_m else sh
+        em = int(default_end_m % 60) if default_end_m else sm
+        self.spin_end_hour.setValue(eh)
+        self.spin_end_min.blockSignals(True)
+        self.spin_end_min.setValue(em)
+        self.spin_end_min.blockSignals(False)
+
+        self._on_route_or_dir_changed()
+
+    def _on_route_or_dir_changed(self):
+        route_id = self.combo_route.currentData()
+        direction = "inbound" if self.radio_inbound.isChecked() else "outbound"
+
+        self.combo_start_station.blockSignals(True)
+        self.combo_end_station.blockSignals(True)
+        self.combo_start_station.clear()
+        self.combo_end_station.clear()
+
+        stations_seq = self._get_stations_for_route_direction(route_id, direction)
+        for st_info in stations_seq:
+            self.combo_start_station.addItem(st_info["display_name"], st_info)
+            self.combo_end_station.addItem(st_info["display_name"], st_info)
+
+        if self.combo_start_station.count() > 0:
+            self.combo_start_station.setCurrentIndex(0)
+        if self.combo_end_station.count() > 0:
+            self.combo_end_station.setCurrentIndex(self.combo_end_station.count() - 1)
+
+        self.combo_start_station.blockSignals(False)
+        self.combo_end_station.blockSignals(False)
+
+    def _get_stations_for_route_direction(self, route_id: str, direction: str) -> list:
+        if not self.project or not route_id or route_id not in self.project.routes:
+            return []
+        route = self.project.routes[route_id]
+        segments = route.get("line_segments", [])
+        work_segments = []
+        if direction == "inbound":
+            for seg in reversed(segments):
+                work_segments.append({
+                    "segment_id": seg["segment_id"],
+                    "line_id": seg["line_id"],
+                    "start_station": seg["end_station"],
+                    "end_station": seg["start_station"]
+                })
+        else:
+            work_segments = segments
+
+        stations_seq = []
+        seq_idx = 0
+        for seg in work_segments:
+            segment_id = seg["segment_id"]
+            line_id = seg["line_id"]
+            line_data = self.project.lines.get(line_id, {})
+            line_name = line_data.get("line_name", line_id)
+            station_list = line_data.get("station_list", [])
+            line_station_ids = [s["station_id"] for s in station_list]
+            try:
+                idx_start = line_station_ids.index(seg["start_station"])
+                idx_end = line_station_ids.index(seg["end_station"])
+            except ValueError:
+                continue
+
+            seg_line_direction = "outbound" if idx_start <= idx_end else "inbound"
+
+            if idx_start <= idx_end:
+                s_ids = line_station_ids[idx_start:idx_end + 1]
+            else:
+                s_ids = [line_station_ids[i] for i in range(idx_start, idx_end - 1, -1)]
+
+
+            for sid in s_ids:
+                s_data = self.project.stations.get(sid, {})
+                st_name = s_data.get("station_name", sid)
+                ls_item = next((s for s in station_list if s["station_id"] == sid), {})
+                track_id = ls_item.get("inbound_main_track" if seg_line_direction == "inbound" else "outbound_main_track")
+                display_name = f"{st_name}({line_name})"
+                stations_seq.append({
+                    "station_id": sid,
+                    "station_name": st_name,
+                    "line_name": line_name,
+                    "segment_id": segment_id,
+                    "track_id": track_id,
+                    "seq_idx": seq_idx,
+                    "display_name": display_name
+                })
+                seq_idx += 1
+        return stations_seq
+
+    def _on_ok_clicked(self):
+        start_item = self.combo_start_station.currentData()
+        end_item = self.combo_end_station.currentData()
+        if not start_item or not end_item:
+            return
+
+        direction_str = "上り" if self.radio_inbound.isChecked() else "下り"
+        if start_item["seq_idx"] >= end_item["seq_idx"]:
+            QMessageBox.warning(self, "エラー", f"始発駅と終着駅の位置関係が{direction_str}の並び順に一致しません")
+            return
+
+        route_id = self.combo_route.currentData()
+        if not route_id or route_id not in self.project.routes:
+            return
+
+        # 時刻の取得
+        sh = self.spin_start_hour.value()
+        sm = self.spin_start_min.value()
+        if sm < 0: sm = 59
+        elif sm > 59: sm = 0
+        start_time_str = f"{sh:02d}:{sm:02d}:00"
+
+        eh = self.spin_end_hour.value()
+        em = self.spin_end_min.value()
+        if em < 0: em = 59
+        elif em > 59: em = 0
+        end_time_str = f"{eh:02d}:{em:02d}:00"
+
+        if start_time_str > end_time_str:
+            QMessageBox.warning(self, "エラー", f"始発時刻と終着時刻が矛盾しています")
+            return
+
+        direction_key = "inbound" if self.radio_inbound.isChecked() else "outbound"
+        train_key = "inbound_trains" if direction_key == "inbound" else "outbound_trains"
+        order_key = f"{train_key}_order"
+
+        route = self.project.routes[route_id]
+        tbd = route.setdefault("trains_by_diagram", {}).setdefault(self.diagram_id, {})
+        d_trains = tbd.setdefault(train_key, {})
+        m_trains = route.setdefault(train_key, {})
+        order = tbd.setdefault(order_key, [])
+
+        # 列車IDの生成 (ランダムな16文字の英数字)
+        chars = string.ascii_letters + string.digits
+        while True:
+            new_train_id = "".join(random.choices(chars, k=16))
+            if new_train_id not in d_trains and new_train_id not in m_trains:
+                break
+
+        # 停車駅情報の構築
+        start_stop = {
+            "segment_id": start_item["segment_id"],
+            "station_id": start_item["station_id"],
+            "track_id": start_item.get("track_id"),
+            "arrival_time": None,
+            "departure_time": start_time_str,
+            "stop_type": 1
+        }
+
+        end_st_data = self.project.stations.get(end_item["station_id"], {})
+        show_arr = end_st_data.get("show_arrival_time", False)
+        end_stop = {
+            "segment_id": end_item["segment_id"],
+            "station_id": end_item["station_id"],
+            "track_id": end_item.get("track_id"),
+            "arrival_time": end_time_str,
+            "departure_time": None if show_arr else end_time_str,
+            "stop_type": 1
+        }
+
+        train_type_id = self.combo_train_type.currentData()
+        train_number = self.txt_train_number.text()
+
+        # マスタ列車情報
+        m_trains[new_train_id] = {
+            "train_number": train_number,
+            "train_type_id": train_type_id,
+            "named_train_number": None,
+            "note": "",
+            "stops": [start_stop, end_stop],
+            "_diagram_ids": [self.diagram_id]
+        }
+
+        # ダイヤ別列車情報
+        d_trains[new_train_id] = {
+            "train_id": new_train_id,
+            "operations": [
+                {
+                    "operation_id": self.operation_id,
+                    "formation_is_reversed": False
+                }
+            ] if self.operation_id else [],
+            "car_count": None,
+            "destination": None,
+            "subsequent_trains": [],
+            "to_be_saved": True
+        }
+
+        # 順序リストへの挿入 (to_be_saved が True である最後の列車の直後)
+        last_saved_idx = -1
+        for i, tid in enumerate(order):
+            if d_trains.get(tid, {}).get("to_be_saved") is True:
+                last_saved_idx = i
+
+        if last_saved_idx != -1:
+            insert_idx = last_saved_idx + 1
+        else:
+            insert_idx = 0
+
+        order.insert(insert_idx, new_train_id)
+
+        self.accept()
+

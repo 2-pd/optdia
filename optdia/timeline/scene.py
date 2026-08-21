@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QColor, QFont, QPen, QBrush
 from PySide6.QtCore import Qt, QRectF
-from .dialogs import TemporaryStablingDialog
+from .dialogs import TemporaryStablingDialog, AddDeadheadDialog
 
 
 # 一時入庫を表す矩形アイテム
@@ -57,7 +57,7 @@ class TemporaryStablingItem(QGraphicsRectItem):
 
 # ガントチャート要素間の空白を埋める透明の矩形アイテム
 class BlankSpaceItem(QGraphicsRectItem):
-    def __init__(self, start_m: float, end_m: float, y_base: float, bar_top_offset: float, bar_height: float, operation: dict, scene: "TimelineScene"):
+    def __init__(self, start_m: float, end_m: float, y_base: float, bar_top_offset: float, bar_height: float, operation: dict, operation_id: str, scene: "TimelineScene"):
         x = float(start_m)
         y = float(y_base + bar_top_offset)
         w = max(1.0, float(end_m - start_m))
@@ -66,6 +66,7 @@ class BlankSpaceItem(QGraphicsRectItem):
         self.start_m = start_m
         self.end_m = end_m
         self.operation = operation
+        self.operation_id = operation_id
         self.timeline_scene = scene
 
         self.setAcceptHoverEvents(True)
@@ -93,7 +94,29 @@ class BlankSpaceItem(QGraphicsRectItem):
         screen_pos = event.screenPos()
         selected_act = menu.exec(screen_pos)
 
-        if selected_act == act_stabling:
+        if selected_act == act_deadhead:
+            parent_widget = self.timeline_scene.views()[0].window() if self.timeline_scene and self.timeline_scene.views() else None
+            dialog = AddDeadheadDialog(
+                parent_widget,
+                project=self.timeline_scene.project,
+                diagram_id=self.timeline_scene.diagram_id,
+                operation_id=self.operation_id,
+                default_start_m=self.start_m,
+                default_end_m=self.end_m
+            )
+            if dialog.exec() == QDialog.Accepted:
+                self.timeline_scene.refresh()
+                if parent_widget:
+                    if hasattr(parent_widget, "timetable_model") and parent_widget.timetable_model:
+                        parent_widget.timetable_model.update_data(
+                            parent_widget.timetable_model.route_id,
+                            parent_widget.timetable_model.diagram_id,
+                            parent_widget.timetable_model.direction
+                        )
+                    if hasattr(parent_widget, "set_modified"):
+                        parent_widget.set_modified(True)
+
+        elif selected_act == act_stabling:
             sh = int(self.start_m // 60)
             sm = int(self.start_m % 60)
             eh = int(self.end_m // 60)
@@ -178,11 +201,17 @@ class TimelineScene(QGraphicsScene):
         for row_idx, op_id in enumerate(op_ids):
             op = operations.get(op_id, {})
             y_base = row_idx * self.ROW_HEIGHT
-            elements = []
 
-            # 出庫・入庫テキストを描画し要素範囲を記録
-            start_end_elems = self._draw_operation_start_end(op, y_base)
-            elements.extend(start_end_elems)
+            # 出庫・入庫テキストを描画
+            self._draw_operation_start_end(op, y_base)
+
+            # 出庫・入庫時刻が未設定の場合はそれぞれ0分(0時0分)、2160分(36時0分)とみなして範囲を設定
+            start_m = self._time_to_minutes(op.get("start_time"))
+            eff_start = start_m if start_m is not None else 0
+            end_m = self._time_to_minutes(op.get("end_time"))
+            eff_end = end_m if end_m is not None else 2160
+
+            elements = [(eff_start, eff_start)]
 
             # 運用に割り振られている列車の矩形を描画し要素範囲を記録
             train_elems = self._draw_operation_trains(op_id, y_base)
@@ -192,12 +221,14 @@ class TimelineScene(QGraphicsScene):
             stabling_elems = self._draw_operation_stabling(op, y_base)
             elements.extend(stabling_elems)
 
+            elements.append((eff_end, eff_end))
+
             # 各要素間の空白部分に透明な矩形を配置
             max_end = None
             for s, e in sorted(elements, key=lambda x: (x[0], x[1])):
                 if max_end is not None:
                     if s > max_end:
-                        blank_item = BlankSpaceItem(max_end, s, y_base, self.BAR_TOP_OFFSET, self.BAR_HEIGHT, op, self)
+                        blank_item = BlankSpaceItem(max_end, s, y_base, self.BAR_TOP_OFFSET, self.BAR_HEIGHT, op, op_id, self)
                         self.addItem(blank_item)
                         max_end = max(max_end, e)
                     else:
@@ -225,8 +256,7 @@ class TimelineScene(QGraphicsScene):
         st_name = st.get("station_name", "")
         return st_name[0] if st_name else ""
 
-    def _draw_operation_start_end(self, op: dict, y_base: float) -> list:
-        elements = []
+    def _draw_operation_start_end(self, op: dict, y_base: float):
         start_time_str = op.get("start_time")
         if start_time_str:
             start_m = self._time_to_minutes(start_time_str)
@@ -241,7 +271,6 @@ class TimelineScene(QGraphicsScene):
                 text_item.setPos(start_m - rect.width(), y_base + self.LABEL_TOP_OFFSET)
                 text_item.setZValue(2)
                 self.addItem(text_item)
-                elements.append((start_m, start_m))
 
         end_time_str = op.get("end_time")
         if end_time_str:
@@ -256,9 +285,6 @@ class TimelineScene(QGraphicsScene):
                 text_item.setPos(end_m, y_base + self.LABEL_TOP_OFFSET)
                 text_item.setZValue(2)
                 self.addItem(text_item)
-                elements.append((end_m, end_m))
-
-        return elements
 
     def _draw_operation_stabling(self, op: dict, y_base: float) -> list:
         elements = []

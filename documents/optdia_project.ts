@@ -204,10 +204,10 @@ interface optdia_operation {
     main_color: string; // 運用の表示色(デフォルト値は #ffffff)
     start_location: string; // 運用の出庫場所名
     start_track: string | null; // 運用の出庫場所の発着番線等(発着番線等が規定されていない場合はnull)
-    start_time: string | null; // 運用の出庫時間(hh:mm:ss形式、出庫しない場合はnull)
+    start_time: string | null; // 運用の出庫時間(hh:mm:ss形式、出庫しない場合や未設定の場合はnull)
     end_location: string; // 運用の入庫場所名
     end_track: string | null; // 運用の入庫場所の発着番線等(発着番線等が規定されていない場合はnull)
-    end_time: string; // 運用の入庫時間(hh:mm:ss形式、入庫しない場合はnull)
+    end_time: string | null; // 運用の入庫時間(hh:mm:ss形式、入庫しない場合や未設定の場合はnull)
     note: string; // 備考
     temporary_stabling_events: optdia_temporary_stabling_event[]; // 一時入庫の情報(下記)を時系列順に配列で
 }
