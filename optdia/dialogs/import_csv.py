@@ -42,6 +42,12 @@ class ImportCsvSettingsDialog(QDialog):
         self.chk_delete_existing.setChecked(False)
         layout.addWidget(self.chk_delete_existing)
         
+        self.chk_skip_duplicate_number = QCheckBox("既存の列車と列車番号が重複する列車を除外", self)
+        self.chk_skip_duplicate_number.setChecked(False)
+        layout.addWidget(self.chk_skip_duplicate_number)
+        
+        self.chk_delete_existing.stateChanged.connect(self._on_delete_existing_changed)
+        
         layout.addStretch()
         
         # ボタン (OK / キャンセル)
@@ -57,6 +63,10 @@ class ImportCsvSettingsDialog(QDialog):
         btn_layout.addWidget(self.btn_cancel)
         
         layout.addLayout(btn_layout)
+
+    def _on_delete_existing_changed(self, state):
+        """「既存の列車を全て削除してからインポート」の状態変化に応じて「重複除外」チェックを制御"""
+        self.chk_skip_duplicate_number.setEnabled(state == 0)
 
 
 def parse_csv_time(val):
@@ -137,6 +147,27 @@ def time_to_seconds(text):
     return None
 
 
+def _add_seconds_to_time(time_str, seconds):
+    """時刻文字列(HH:MM:SS)に指定秒数を加算して返す"""
+    if not time_str:
+        return time_str
+    parts = time_str.split(':')
+    if len(parts) == 3:
+        try:
+            total = int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2]) + seconds
+            h = total // 3600
+            m = (total % 3600) // 60
+            s = total % 60
+            return f"{h:02d}:{m:02d}:{s:02d}"
+        except ValueError:
+            pass
+    return time_str
+
+
+# 丸かっこ(半角・全角)とその内容を除去する正規表現
+_PAREN_RE = re.compile(r'[\(（][^\)）]*[\)）]')
+
+
 # CSVから時刻表をインポートする処理の本体
 def import_timetable_from_csv(parent_window):
     # 1. 表示状態チェック
@@ -205,7 +236,7 @@ def import_timetable_from_csv(parent_window):
             
         # 発着の区別列(2列目)があるかどうかを判定
         # いずれかのメタデータ行が存在し、かつ2列目のそのすべてが空欄である場合
-        metadata_headers = ["列車番号", "運転日", "運用番号", "両数", "種別", "列車種別", "号数", "行き先", "行先", "連続する列車", "備考"]
+        metadata_headers = ["列車番号", "列番", "運転日", "運用番号", "運番", "運用", "両数", "種別", "列車種別", "号数", "行き先", "行先", "連続する列車", "備考"]
         has_metadata = False
         all_col1_empty = True
         
@@ -283,8 +314,14 @@ def import_timetable_from_csv(parent_window):
                     station_name = header[:-4].strip()
                     type_hint = "departure"
                     
-                if station_name in route_station_names:
-                    station_id = route_station_names[station_name]
+                # 駅名マッチング(丸かっこ除去フォールバック付き)
+                matched_sid = route_station_names.get(station_name)
+                if matched_sid is None and _PAREN_RE.search(station_name):
+                    _stripped_name = _PAREN_RE.sub("", station_name).strip()
+                    matched_sid = route_station_names.get(_stripped_name)
+                    
+                if matched_sid is not None:
+                    station_id = matched_sid
                     # 行のタイプ決定
                     row_type = type_hint
                     if row_type is None:
@@ -342,6 +379,39 @@ def import_timetable_from_csv(parent_window):
         
         chars = string.ascii_letters + string.digits
         
+        # 重複列車番号チェック用に既存列車番号セットを収集
+        existing_train_numbers = set()
+        if not dialog.chk_delete_existing.isChecked() and dialog.chk_skip_duplicate_number.isChecked():
+            for _tid in tbd.get(order_key, []):
+                _dt = tbd.get(train_key, {}).get(_tid)
+                if _dt and _dt.get("to_be_saved"):
+                    _mt = m_trains.get(_tid, {})
+                    _tn = _mt.get("train_number", "")
+                    if _tn:
+                        existing_train_numbers.add(_tn)
+        
+        # 深夜列車の24時間オフセット判定 - 各列車の始発時刻を収集
+        _first_times = []
+        for _ci in range(num_trains):
+            _ft = None
+            for _row in station_rows_parsed:
+                _t_str = _row["values"][_ci] if _ci < len(_row["values"]) else ""
+                _t_val, _ = parse_csv_time(_t_str)
+                if _t_val is not None:
+                    _ft = time_to_seconds(_t_val)
+                    break
+            _first_times.append(_ft)
+        
+        midnight_offset_flags = [False] * num_trains
+        _seen_evening = False
+        for _ci in range(num_trains):
+            _t = _first_times[_ci]
+            if _t is not None:
+                if _t >= 18 * 3600:
+                    _seen_evening = True
+                elif _seen_evening and _t < 6 * 3600:
+                    midnight_offset_flags[_ci] = True
+        
         for col_idx in range(num_trains):
             QApplication.processEvents()
             # メタデータ抽出
@@ -363,11 +433,11 @@ def import_timetable_from_csv(parent_window):
                     continue
                     
                 key = pr["key"]
-                if key == "列車番号":
+                if key in ("列車番号", "列番"):
                     train_number = val
                 elif key == "運転日":
                     operation_day = val
-                elif key == "運用番号":
+                elif key in ("運用番号", "運番", "運用"):
                     operation_number = val
                 elif key == "両数":
                     # 単位「両」より後ろを除去して数値化
@@ -391,6 +461,25 @@ def import_timetable_from_csv(parent_window):
                     subsequent_str = val
                 elif key == "備考":
                     note = val
+            
+            # 重複列車番号チェック
+            if existing_train_numbers and train_number and train_number in existing_train_numbers:
+                continue
+            
+            # 種別が未指定の場合のデフォルト設定 (「普通」→「各駅停車」→「各停」の順で検索、なければ「普通」を新規作成)
+            if not train_type_str:
+                _default_names = ["普通", "各駅停車", "各停"]
+                for _dn in _default_names:
+                    for _tt in project.train_types.values():
+                        if (_tt.get("train_type_name") == _dn or
+                                _tt.get("train_type_short_name") == _dn or
+                                _tt.get("train_name") == _dn):
+                            train_type_str = _dn
+                            break
+                    if train_type_str:
+                        break
+                if not train_type_str:
+                    train_type_str = "普通"
                     
             # 列車種別の決定
             train_type_id = None
@@ -664,7 +753,30 @@ def import_timetable_from_csv(parent_window):
                         stop_dict["stop_type"] = 1
 
                     stops_raw.append(stop_dict)
-
+            
+            # 深夜列車の24時間オフセット適用
+            if midnight_offset_flags[col_idx]:
+                for _s in stops_raw:
+                    if _s.get("arrival_time"):
+                        _s["arrival_time"] = _add_seconds_to_time(_s["arrival_time"], 86400)
+                    if _s.get("departure_time"):
+                        _s["departure_time"] = _add_seconds_to_time(_s["departure_time"], 86400)
+            
+            # 時刻逆戻り補正: 前の時刻より小さい時刻が出たら24時間加算
+            _prev_secs = None
+            for _s in stops_raw:
+                for _time_key in ("arrival_time", "departure_time"):
+                    _t = _s.get(_time_key)
+                    if _t is None:
+                        continue
+                    _t_secs = time_to_seconds(_t)
+                    if _t_secs is None:
+                        continue
+                    if _prev_secs is not None and _t_secs < _prev_secs:
+                        _s[_time_key] = _add_seconds_to_time(_t, 86400)
+                        _t_secs += 86400
+                    _prev_secs = _t_secs
+            
             # 4. 各列車の経由駅情報の検査と補填処理
             num_stops = len(stops_raw)
             for s_idx, stop_item in enumerate(stops_raw):
@@ -685,7 +797,7 @@ def import_timetable_from_csv(parent_window):
                 if not is_first_station and stop_item["arrival_time"] is None and stop_item["departure_time"] is not None:
                     stop_item["arrival_time"] = stop_item["departure_time"]
 
-                if not is_last_station and stop_item["departure_time"] is None and stop_item["arrival_time"] is not None:
+                if not (is_last_station and show_arr) and stop_item["departure_time"] is None and stop_item["arrival_time"] is not None:
                     stop_item["departure_time"] = stop_item["arrival_time"]
 
                 # 上記に関わらず、各部分区間(optdia_line_segment)の端点駅における着時刻/発時刻のクリア
