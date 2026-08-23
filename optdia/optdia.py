@@ -689,6 +689,9 @@ class MainWindow(QMainWindow):
 
         if tab_index == 2:
             self._update_op_group_combo()
+            self.timeline_header_view.horizontalScrollBar().setValue(
+                self.timeline_view.horizontalScrollBar().value()
+            )
 
     def _update_op_group_combo(self):
         """選択されているダイヤに応じて運用グループのコンボボックス表示内容を更新する"""
@@ -763,6 +766,29 @@ class MainWindow(QMainWindow):
                     # 入庫表示: 入庫場所名 (発着番線等があれば空白区切りで付加)
                     end_text = f"{end_loc}<span style='font-size: 10px; color: gray;'>({end_track})</span>".strip() if end_track else end_loc
 
+                    # 出入庫時刻の取得 (hh:mm - hh:mm, Noneのときは --:--)
+                    start_time_str = op.get("start_time")
+                    if start_time_str:
+                        try:
+                            parts = start_time_str.split(":")
+                            start_time_disp = f"{int(parts[0]):02d}:{int(parts[1]):02d}"
+                        except (ValueError, IndexError):
+                            start_time_disp = "--:--"
+                    else:
+                        start_time_disp = "--:--"
+
+                    end_time_str = op.get("end_time")
+                    if end_time_str:
+                        try:
+                            parts = end_time_str.split(":")
+                            end_time_disp = f"{int(parts[0]):02d}:{int(parts[1]):02d}"
+                        except (ValueError, IndexError):
+                            end_time_disp = "--:--"
+                    else:
+                        end_time_disp = "--:--"
+
+                    time_text = f"{start_time_disp} - {end_time_disp}"
+
                     item = QListWidgetItem()
                     item.setSizeHint(QSize(240, 70))
                     item_widget = QWidget()
@@ -787,8 +813,8 @@ class MainWindow(QMainWindow):
 
                     left_label.mousePressEvent = make_click_handler(diagram_id, og_id, op_id)
 
-                    # 右側ラベル: 1行目 出庫場所等, 2行目 入庫場所等
-                    right_label = QLabel(f"○{start_text}<br/>△{end_text}")
+                    # 右側ラベル: 1行目 出庫場所等, 2行目 入庫場所等, 3行目 出入庫時間
+                    right_label = QLabel(f"○{start_text}<br/>△{end_text}<br/>{time_text}")
                     right_label.setAlignment(Qt.AlignCenter | Qt.AlignVCenter)
                     right_label.setStyleSheet("background-color: #f7f7f7;")
                     right_label.setFixedWidth(140)

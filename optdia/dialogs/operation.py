@@ -9,6 +9,53 @@ from PySide6.QtWidgets import (
 from project import OptDiaProject
 from common.gui_utils import create_color_square_pixmap
 
+
+class OperationHourSpinBox(QSpinBox):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setRange(-1, 99)
+        self.setSuffix("時")
+
+    def textFromValue(self, val: int) -> str:
+        if val == -1:
+            return "--"
+        return str(val)
+
+    def valueFromText(self, text: str) -> int:
+        clean_text = text.replace("時", "").strip()
+        if clean_text == "--" or not clean_text:
+            return -1
+        try:
+            return int(clean_text)
+        except ValueError:
+            return -1
+
+
+class OperationMinuteSpinBox(QSpinBox):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setRange(-1, 60)
+        self.setSuffix("分")
+
+    def textFromValue(self, val: int) -> str:
+        if val == -1:
+            return "--"
+        if val < 0:
+            val = 59
+        elif val > 59:
+            val = 0
+        return f"{val:02d}"
+
+    def valueFromText(self, text: str) -> int:
+        clean_text = text.replace("分", "").strip()
+        if clean_text == "--" or not clean_text:
+            return -1
+        try:
+            return int(clean_text)
+        except ValueError:
+            return -1
+
+
 class OperationGroupListWidget(QListWidget):
     """運用リスト項目（運用のドラッグアンドドロップ）を受け入れる運用グループのカスタムリストウィジェット"""
     def __init__(self, parent_dialog, parent=None):
@@ -67,6 +114,7 @@ class VehicleOperationEditorDialog(QDialog):
         self._min_car_count_auto = False
         self._max_car_count_auto = False
         self._is_syncing_car_counts = False
+        self._is_updating_time = False
 
         diagram = self.project.diagrams.get(diagram_id, {})
         diagram_name = diagram.get("diagram_name", "")
@@ -253,24 +301,20 @@ class VehicleOperationEditorDialog(QDialog):
         start_layout.addRow("出庫番線等:", self.start_track_edit)
 
         start_time_layout = QHBoxLayout()
-        self.start_hour_spin = QSpinBox()
-        self.start_hour_spin.setRange(0, 99)
-        self.start_hour_spin.setSuffix("時")
-        self.start_hour_spin.valueChanged.connect(self._on_start_time_changed)
+        self.start_hour_spin = OperationHourSpinBox()
+        self.start_hour_spin.valueChanged.connect(self._on_start_hour_changed)
         start_time_layout.addWidget(self.start_hour_spin)
 
-        self.start_min_spin = QSpinBox()
-        self.start_min_spin.setRange(-1, 60)
-        self.start_min_spin.setSuffix("分")
+        self.start_min_spin = OperationMinuteSpinBox()
         self.start_min_spin.valueChanged.connect(self._on_start_min_changed)
         start_time_layout.addWidget(self.start_min_spin)
         start_time_layout.addStretch()
 
-        self.btn_use_first_train_dep = QPushButton("初列車の始発時刻を使用")
-        self.btn_use_first_train_dep.setCursor(Qt.PointingHandCursor)
-        self.btn_use_first_train_dep.setStyleSheet("QPushButton { border: none; text-decoration: underline; background-color: transparent; font-size: 12px; }")
-        self.btn_use_first_train_dep.clicked.connect(self._on_use_first_train_dep)
-        start_time_layout.addWidget(self.btn_use_first_train_dep)
+        self.btn_use_first_train = QPushButton("初列車の情報を使用")
+        self.btn_use_first_train.setCursor(Qt.PointingHandCursor)
+        self.btn_use_first_train.setStyleSheet("QPushButton { border: none; text-decoration: underline; background-color: transparent; font-size: 12px; }")
+        self.btn_use_first_train.clicked.connect(self._on_use_first_train_info)
+        start_time_layout.addWidget(self.btn_use_first_train)
 
         start_layout.addRow("出庫時間:", start_time_layout)
         right_op_layout.addWidget(start_group)
@@ -290,24 +334,20 @@ class VehicleOperationEditorDialog(QDialog):
         end_layout.addRow("入庫番線等:", self.end_track_edit)
 
         end_time_layout = QHBoxLayout()
-        self.end_hour_spin = QSpinBox()
-        self.end_hour_spin.setRange(0, 99)
-        self.end_hour_spin.setSuffix("時")
-        self.end_hour_spin.valueChanged.connect(self._on_end_time_changed)
+        self.end_hour_spin = OperationHourSpinBox()
+        self.end_hour_spin.valueChanged.connect(self._on_end_hour_changed)
         end_time_layout.addWidget(self.end_hour_spin)
 
-        self.end_min_spin = QSpinBox()
-        self.end_min_spin.setRange(-1, 60)
-        self.end_min_spin.setSuffix("分")
+        self.end_min_spin = OperationMinuteSpinBox()
         self.end_min_spin.valueChanged.connect(self._on_end_min_changed)
         end_time_layout.addWidget(self.end_min_spin)
         end_time_layout.addStretch()
 
-        self.btn_use_last_train_arr = QPushButton("終列車の終着時刻を使用")
-        self.btn_use_last_train_arr.setCursor(Qt.PointingHandCursor)
-        self.btn_use_last_train_arr.setStyleSheet("QPushButton { border: none; text-decoration: underline; background-color: transparent; font-size: 12px; }")
-        self.btn_use_last_train_arr.clicked.connect(self._on_use_last_train_arr)
-        end_time_layout.addWidget(self.btn_use_last_train_arr)
+        self.btn_use_last_train = QPushButton("終列車の情報を使用")
+        self.btn_use_last_train.setCursor(Qt.PointingHandCursor)
+        self.btn_use_last_train.setStyleSheet("QPushButton { border: none; text-decoration: underline; background-color: transparent; font-size: 12px; }")
+        self.btn_use_last_train.clicked.connect(self._on_use_last_train_info)
+        end_time_layout.addWidget(self.btn_use_last_train)
 
         end_layout.addRow("入庫時間:", end_time_layout)
         right_op_layout.addWidget(end_group)
@@ -507,14 +547,14 @@ class VehicleOperationEditorDialog(QDialog):
 
     def _parse_time(self, time_str):
         if not time_str:
-            return 0, 0
+            return -1, -1
         try:
             parts = time_str.split(":")
-            h = int(parts[0]) if len(parts) > 0 else 0
-            m = int(parts[1]) if len(parts) > 1 else 0
+            h = int(parts[0]) if len(parts) > 0 else -1
+            m = int(parts[1]) if len(parts) > 1 else -1
             return h, m
         except Exception:
-            return 0, 0
+            return -1, -1
 
     def _time_to_seconds(self, time_str: str):
         if not time_str:
@@ -555,12 +595,12 @@ class VehicleOperationEditorDialog(QDialog):
         self.op_color_square.setPixmap(create_color_square_pixmap("#ffffff"))
         self.start_location_edit.clear()
         self.start_track_edit.clear()
-        self.start_hour_spin.setValue(0)
-        self.start_min_spin.setValue(0)
+        self.start_hour_spin.setValue(-1)
+        self.start_min_spin.setValue(-1)
         self.end_location_edit.clear()
         self.end_track_edit.clear()
-        self.end_hour_spin.setValue(0)
-        self.end_min_spin.setValue(0)
+        self.end_hour_spin.setValue(-1)
+        self.end_min_spin.setValue(-1)
         self.op_note_edit.clear()
         self._block_op_signals(False)
 
@@ -641,26 +681,56 @@ class VehicleOperationEditorDialog(QDialog):
             op["start_track"] = text if text else None
             self._set_modified()
 
+    def _on_start_hour_changed(self, val: int):
+        if self._is_updating_time:
+            return
+        self._is_updating_time = True
+        try:
+            if val == -1:
+                self.start_min_spin.setValue(-1)
+            elif val >= 0 and self.start_min_spin.value() == -1:
+                self.start_min_spin.setValue(0)
+        finally:
+            self._is_updating_time = False
+        self._on_start_time_changed()
+
+    def _on_start_min_changed(self, val: int):
+        if self._is_updating_time:
+            return
+        self._is_updating_time = True
+        try:
+            h = self.start_hour_spin.value()
+            if h == -1:
+                if val >= 0:
+                    self.start_hour_spin.setValue(0)
+                    if val >= 60:
+                        self.start_min_spin.setValue(0)
+                        self.start_hour_spin.setValue(1)
+            else:
+                if val >= 60:
+                    self.start_min_spin.setValue(0)
+                    self.start_hour_spin.setValue(min(99, h + 1))
+                elif val <= -1:
+                    if h > 0:
+                        self.start_min_spin.setValue(59)
+                        self.start_hour_spin.setValue(h - 1)
+                    else:
+                        self.start_min_spin.setValue(-1)
+                        self.start_hour_spin.setValue(-1)
+        finally:
+            self._is_updating_time = False
+        self._on_start_time_changed()
+
     def _on_start_time_changed(self):
         op_id, op = self._get_current_op()
         if op:
             h = self.start_hour_spin.value()
             m = self.start_min_spin.value()
-            op["start_time"] = f"{h:02d}:{m:02d}:00"
+            if h == -1 or m == -1:
+                op["start_time"] = None
+            else:
+                op["start_time"] = f"{h:02d}:{m:02d}:00"
             self._set_modified()
-
-    def _on_start_min_changed(self, val: int):
-        if val >= 60:
-            self.start_min_spin.blockSignals(True)
-            self.start_min_spin.setValue(0)
-            self.start_min_spin.blockSignals(False)
-            self.start_hour_spin.setValue(min(99, self.start_hour_spin.value() + 1))
-        elif val <= -1:
-            self.start_min_spin.blockSignals(True)
-            self.start_min_spin.setValue(59)
-            self.start_min_spin.blockSignals(False)
-            self.start_hour_spin.setValue(max(0, self.start_hour_spin.value() - 1))
-        self._on_start_time_changed()
 
     def _on_end_location_changed(self, text: str):
         op_id, op = self._get_current_op()
@@ -674,31 +744,61 @@ class VehicleOperationEditorDialog(QDialog):
             op["end_track"] = text if text else None
             self._set_modified()
 
+    def _on_end_hour_changed(self, val: int):
+        if self._is_updating_time:
+            return
+        self._is_updating_time = True
+        try:
+            if val == -1:
+                self.end_min_spin.setValue(-1)
+            elif val >= 0 and self.end_min_spin.value() == -1:
+                self.end_min_spin.setValue(0)
+        finally:
+            self._is_updating_time = False
+        self._on_end_time_changed()
+
+    def _on_end_min_changed(self, val: int):
+        if self._is_updating_time:
+            return
+        self._is_updating_time = True
+        try:
+            h = self.end_hour_spin.value()
+            if h == -1:
+                if val >= 0:
+                    self.end_hour_spin.setValue(0)
+                    if val >= 60:
+                        self.end_min_spin.setValue(0)
+                        self.end_hour_spin.setValue(1)
+            else:
+                if val >= 60:
+                    self.end_min_spin.setValue(0)
+                    self.end_hour_spin.setValue(min(99, h + 1))
+                elif val <= -1:
+                    if h > 0:
+                        self.end_min_spin.setValue(59)
+                        self.end_hour_spin.setValue(h - 1)
+                    else:
+                        self.end_min_spin.setValue(-1)
+                        self.end_hour_spin.setValue(-1)
+        finally:
+            self._is_updating_time = False
+        self._on_end_time_changed()
+
     def _on_end_time_changed(self):
         op_id, op = self._get_current_op()
         if op:
             h = self.end_hour_spin.value()
             m = self.end_min_spin.value()
-            op["end_time"] = f"{h:02d}:{m:02d}:00"
+            if h == -1 or m == -1:
+                op["end_time"] = None
+            else:
+                op["end_time"] = f"{h:02d}:{m:02d}:00"
             self._set_modified()
-
-    def _on_end_min_changed(self, val: int):
-        if val >= 60:
-            self.end_min_spin.blockSignals(True)
-            self.end_min_spin.setValue(0)
-            self.end_min_spin.blockSignals(False)
-            self.end_hour_spin.setValue(min(99, self.end_hour_spin.value() + 1))
-        elif val <= -1:
-            self.end_min_spin.blockSignals(True)
-            self.end_min_spin.setValue(59)
-            self.end_min_spin.blockSignals(False)
-            self.end_hour_spin.setValue(max(0, self.end_hour_spin.value() - 1))
-        self._on_end_time_changed()
 
     def _get_operation_trains_info(self, target_op_id: str):
         """
         現在編集中の車両運用(target_op_id)が割り当てられている列車の情報を収集し、
-        各列車の最初の発車時刻・最後の到着時刻を取得してリストで返す。
+        各列車の最初の発車時刻・最後の到着時刻および始発駅・終着駅を取得してリストで返す。
         """
         matched_trains = []
         for route in self.project.routes.values():
@@ -743,16 +843,21 @@ class VehicleOperationEditorDialog(QDialog):
 
                         sort_dep_sec = first_dep_sec if first_dep_sec is not None else (last_arr_sec if last_arr_sec is not None else 0)
 
+                        first_station_id = stops[0].get("station_id") if stops else None
+                        last_station_id = stops[-1].get("station_id") if stops else None
+
                         matched_trains.append({
                             "train_id": train_id,
                             "first_dep_sec": sort_dep_sec,
                             "first_dep_str": first_dep_str,
                             "last_arr_sec": last_arr_sec,
                             "last_arr_str": last_arr_str,
+                            "first_station_id": first_station_id,
+                            "last_station_id": last_station_id,
                         })
         return matched_trains
 
-    def _on_use_first_train_dep(self):
+    def _on_use_first_train_info(self):
         op_id, op = self._get_current_op()
         if not op_id or not op:
             return
@@ -767,20 +872,34 @@ class VehicleOperationEditorDialog(QDialog):
             self.start_min_spin.setValue(m)
             self._on_start_time_changed()
 
-    def _on_use_last_train_arr(self):
+        first_st_id = first_train.get("first_station_id")
+        if first_st_id and self.project:
+            st = self.project.stations.get(first_st_id, {})
+            st_name = st.get("station_name", "")
+            if st_name:
+                self.start_location_edit.setText(st_name)
+
+    def _on_use_last_train_info(self):
         op_id, op = self._get_current_op()
         if not op_id or not op:
             return
         matched_trains = self._get_operation_trains_info(op_id)
         if not matched_trains:
             return
-        last_train = max(matched_trains, key=lambda t: t["first_dep_sec"])
+        last_train = max(matched_trains, key=lambda t: (t["last_arr_sec"] if t["last_arr_sec"] is not None else t["first_dep_sec"]))
         arr_str = last_train.get("last_arr_str") or last_train.get("first_dep_str")
         if arr_str:
             h, m = self._parse_time(arr_str)
             self.end_hour_spin.setValue(h)
             self.end_min_spin.setValue(m)
             self._on_end_time_changed()
+
+        last_st_id = last_train.get("last_station_id")
+        if last_st_id and self.project:
+            st = self.project.stations.get(last_st_id, {})
+            st_name = st.get("station_name", "")
+            if st_name:
+                self.end_location_edit.setText(st_name)
 
     def _on_op_note_changed(self):
         op_id, op = self._get_current_op()

@@ -320,9 +320,13 @@ class AddDeadheadDialog(QDialog):
 
         layout.addWidget(grp_end)
 
+        # 7. 方反 チェックボックス
+        self.chk_reversed = QCheckBox("方反")
+        layout.addWidget(self.chk_reversed)
+
         layout.addStretch()
 
-        # 7. OK / キャンセル ボタン
+        # 8. OK / キャンセル ボタン
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
         self.btn_ok = QPushButton("OK")
@@ -601,7 +605,7 @@ class AddDeadheadDialog(QDialog):
             "operations": [
                 {
                     "operation_id": self.operation_id,
-                    "formation_is_reversed": False
+                    "formation_is_reversed": self.chk_reversed.isChecked()
                 }
             ] if self.operation_id else [],
             "car_count": None,

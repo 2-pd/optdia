@@ -1,9 +1,73 @@
 from PySide6.QtWidgets import (
-    QGraphicsScene, QGraphicsRectItem, QGraphicsSimpleTextItem, QGraphicsLineItem, QMenu, QDialog
+    QGraphicsScene, QGraphicsRectItem, QGraphicsSimpleTextItem, QGraphicsLineItem, QMenu, QDialog, QMessageBox
 )
 from PySide6.QtGui import QColor, QFont, QPen, QBrush
 from PySide6.QtCore import Qt, QRectF
 from .dialogs import TemporaryStablingDialog, AddDeadheadDialog, AddTrainToOperationDialog
+
+
+# 列車を表す矩形アイテム
+class TrainTimelineItem(QGraphicsRectItem):
+    def __init__(self, x: float, y: float, w: float, h: float, bg_color: QColor, train_number: str,
+                 route_id: str, direction_key: str, train_id: str, operation_id: str, scene: "TimelineScene"):
+        super().__init__(x, y, w, h)
+        self.route_id = route_id
+        self.direction_key = direction_key
+        self.train_id = train_id
+        self.operation_id = operation_id
+        self.timeline_scene = scene
+
+        self.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemClipsChildrenToShape, True)
+        self.setBrush(QBrush(bg_color))
+        self.setPen(QPen(Qt.NoPen))
+        self.setZValue(1)
+
+        # 列車番号 (白文字・左寄せ)
+        font_tn = QFont()
+        font_tn.setPixelSize(12)
+        self.tn_text = QGraphicsSimpleTextItem(train_number, self)
+        self.tn_text.setFont(font_tn)
+        self.tn_text.setBrush(QBrush(QColor("#ffffff")))
+        tn_rect = self.tn_text.boundingRect()
+        tn_y = y + (h - tn_rect.height()) / 2.0
+        self.tn_text.setPos(x + 2, tn_y)
+        self.tn_text.setZValue(2)
+
+    def contextMenuEvent(self, event):
+        menu = QMenu()
+        act_remove = menu.addAction("この列車を除外")
+        selected_act = menu.exec(event.screenPos())
+
+        if selected_act == act_remove:
+            parent_widget = self.timeline_scene.views()[0].window() if self.timeline_scene and self.timeline_scene.views() else None
+            reply = QMessageBox.question(
+                parent_widget,
+                "確認",
+                "この列車を運用から除外しますか？\nこの操作で列車そのものが削除されることはありません。",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply == QMessageBox.Yes:
+                route = self.timeline_scene.project.routes.get(self.route_id, {})
+                tbd = route.get("trains_by_diagram", {}).get(self.timeline_scene.diagram_id, {})
+                d_trains = tbd.get(self.direction_key, {})
+                d_train = d_trains.get(self.train_id)
+                if d_train and "operations" in d_train:
+                    d_train["operations"] = [
+                        op for op in d_train["operations"]
+                        if (op.get("operation_id") if isinstance(op, dict) else op) != self.operation_id
+                    ]
+                    d_train["to_be_saved"] = True
+                    self.timeline_scene.refresh()
+                    if parent_widget:
+                        if hasattr(parent_widget, "timetable_model") and parent_widget.timetable_model:
+                            parent_widget.timetable_model.update_data(
+                                parent_widget.timetable_model.route_id,
+                                parent_widget.timetable_model.diagram_id,
+                                parent_widget.timetable_model.direction
+                            )
+                        if hasattr(parent_widget, "set_modified"):
+                            parent_widget.set_modified(True)
 
 
 # 一時入庫を表す矩形アイテム
@@ -13,6 +77,8 @@ class TemporaryStablingItem(QGraphicsRectItem):
         self.event_data = event_data
         self.operation = operation
         self.timeline_scene = scene
+
+        self.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemClipsChildrenToShape, True)
 
         # 塗りつぶし色は透明、輪郭線は灰色
         self.setPen(QPen(QColor("#888888"), 1))
@@ -33,8 +99,8 @@ class TemporaryStablingItem(QGraphicsRectItem):
             self.text_item.setBrush(QBrush(QColor("#000000")))
 
         tn_rect = self.text_item.boundingRect()
-        tn_y = (h - tn_rect.height()) / 2.0
-        self.text_item.setPos(x + 2, y + tn_y)
+        tn_y = y + (h - tn_rect.height()) / 2.0
+        self.text_item.setPos(x + 2, tn_y)
         self.text_item.setZValue(2)
 
     def mousePressEvent(self, event):
@@ -377,7 +443,7 @@ class TimelineScene(QGraphicsScene):
         elements = []
         matched_trains = []
 
-        for route in self.project.routes.values():
+        for route_id, route in self.project.routes.items():
             tbd = route.get("trains_by_diagram", {}).get(self.diagram_id, {})
             for direction in ["inbound_trains", "outbound_trains"]:
                 m_trains = route.get(direction, {})
@@ -408,6 +474,9 @@ class TimelineScene(QGraphicsScene):
                         last_station_id = stops[-1].get("station_id") if stops else None
 
                         matched_trains.append({
+                            "route_id": route_id,
+                            "direction_key": direction,
+                            "train_id": train_id,
                             "train_number": m_train.get("train_number", ""),
                             "train_type_id": m_train.get("train_type_id"),
                             "first_dep": first_dep,
@@ -419,9 +488,6 @@ class TimelineScene(QGraphicsScene):
         matched_trains.sort(key=lambda x: x["first_dep"])
 
         prev_last_station_id = None
-
-        font_tn = QFont()
-        font_tn.setPixelSize(12)
 
         font_st = QFont()
         font_st.setPixelSize(14)
@@ -441,22 +507,18 @@ class TimelineScene(QGraphicsScene):
             main_color_str = tt.get("main_color", "#333333") if tt else "#333333"
             bg_color = QColor(main_color_str)
 
-            # 矩形描画
-            rect_item = QGraphicsRectItem(rect_x, rect_y, rect_w, rect_h)
-            rect_item.setBrush(QBrush(bg_color))
-            rect_item.setPen(QPen(Qt.NoPen))
-            rect_item.setZValue(1)
+            # 列車矩形描画 (コンテクストメニュー・テキストトリミング付き)
+            rect_item = TrainTimelineItem(
+                rect_x, rect_y, rect_w, rect_h,
+                bg_color,
+                train["train_number"],
+                train["route_id"],
+                train["direction_key"],
+                train["train_id"],
+                target_op_id,
+                self
+            )
             self.addItem(rect_item)
-
-            # 列車番号 (白文字・左寄せ)
-            tn_text = QGraphicsSimpleTextItem(train["train_number"])
-            tn_text.setFont(font_tn)
-            tn_text.setBrush(QBrush(QColor("#ffffff")))
-            tn_rect = tn_text.boundingRect()
-            tn_y = rect_y + (rect_h - tn_rect.height()) / 2.0
-            tn_text.setPos(rect_x + 2, tn_y)
-            tn_text.setZValue(2)
-            self.addItem(tn_text)
 
             # 始発駅の1文字表記
             start_st_initial = self._get_station_initial(train["first_station_id"])
