@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QColor, QFont, QPen, QBrush
 from PySide6.QtCore import Qt, QRectF
-from .dialogs import TemporaryStablingDialog, AddDeadheadDialog
+from .dialogs import TemporaryStablingDialog, AddDeadheadDialog, AddTrainToOperationDialog
 
 
 # 一時入庫を表す矩形アイテム
@@ -94,7 +94,31 @@ class BlankSpaceItem(QGraphicsRectItem):
         screen_pos = event.screenPos()
         selected_act = menu.exec(screen_pos)
 
-        if selected_act == act_deadhead:
+        if selected_act == act_train:
+            parent_widget = self.timeline_scene.views()[0].window() if self.timeline_scene and self.timeline_scene.views() else None
+            # 直前列車の終着駅IDを計算
+            prev_last_station_id = self._get_prev_last_station_id()
+            dialog = AddTrainToOperationDialog(
+                parent_widget,
+                project=self.timeline_scene.project,
+                diagram_id=self.timeline_scene.diagram_id,
+                target_op_id=self.operation_id,
+                start_m=self.start_m,
+                prev_last_station_id=prev_last_station_id
+            )
+            if dialog.exec() == QDialog.Accepted:
+                self.timeline_scene.refresh()
+                if parent_widget:
+                    if hasattr(parent_widget, "timetable_model") and parent_widget.timetable_model:
+                        parent_widget.timetable_model.update_data(
+                            parent_widget.timetable_model.route_id,
+                            parent_widget.timetable_model.diagram_id,
+                            parent_widget.timetable_model.direction
+                        )
+                    if hasattr(parent_widget, "set_modified"):
+                        parent_widget.set_modified(True)
+
+        elif selected_act == act_deadhead:
             parent_widget = self.timeline_scene.views()[0].window() if self.timeline_scene and self.timeline_scene.views() else None
             dialog = AddDeadheadDialog(
                 parent_widget,
@@ -139,6 +163,48 @@ class BlankSpaceItem(QGraphicsRectItem):
                 self.timeline_scene.refresh()
                 if parent_widget and hasattr(parent_widget, "set_modified"):
                     parent_widget.set_modified(True)
+
+    def _get_prev_last_station_id(self) -> str:
+        if not self.timeline_scene or not self.timeline_scene.project:
+            return None
+        diagram_id = self.timeline_scene.diagram_id
+        target_op_id = self.operation_id
+        prev_trains = []
+
+        for route in self.timeline_scene.project.routes.values():
+            tbd = route.get("trains_by_diagram", {}).get(diagram_id, {})
+            for direction in ["inbound_trains", "outbound_trains"]:
+                m_trains = route.get(direction, {})
+                d_trains = tbd.get(direction, {})
+                for train_id, d_train in d_trains.items():
+                    ops = d_train.get("operations", [])
+                    op_ids = [op.get("operation_id") if isinstance(op, dict) else op for op in ops]
+                    if target_op_id in op_ids:
+                        m_train = m_trains.get(train_id)
+                        if not m_train:
+                            continue
+                        stops = m_train.get("stops", [])
+                        valid_times = []
+                        for s in stops:
+                            arr = self.timeline_scene._time_to_minutes(s.get("arrival_time"))
+                            dep = self.timeline_scene._time_to_minutes(s.get("departure_time"))
+                            if arr is not None:
+                                valid_times.append(arr)
+                            if dep is not None:
+                                valid_times.append(dep)
+                        if not valid_times:
+                            continue
+                        first_dep = min(valid_times)
+                        last_arr = max(valid_times)
+                        if last_arr <= self.start_m:
+                            last_station_id = stops[-1].get("station_id") if stops else None
+                            prev_trains.append((last_arr, last_station_id))
+
+        if prev_trains:
+            prev_trains.sort(key=lambda x: x[0])
+            return prev_trains[-1][1]
+        return None
+
 
 
 # 運用ガントチャートのシーン
