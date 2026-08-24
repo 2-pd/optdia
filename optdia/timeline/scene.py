@@ -9,7 +9,9 @@ from .dialogs import TemporaryStablingDialog, AddDeadheadDialog, AddTrainToOpera
 # 列車を表す矩形アイテム
 class TrainTimelineItem(QGraphicsRectItem):
     def __init__(self, x: float, y: float, w: float, h: float, bg_color: QColor, train_number: str,
-                 route_id: str, direction_key: str, train_id: str, operation_id: str, scene: "TimelineScene"):
+                 route_id: str, direction_key: str, train_id: str, operation_id: str, scene: "TimelineScene",
+                 train_type: str = "", first_station_initial: str = "", last_station_initial: str = "",
+                 first_dep_str: str = "", last_arr_str: str = "", all_op_ids: list = None):
         super().__init__(x, y, w, h)
         self.route_id = route_id
         self.direction_key = direction_key
@@ -32,6 +34,33 @@ class TrainTimelineItem(QGraphicsRectItem):
         tn_y = y + (h - tn_rect.height()) / 2.0
         self.tn_text.setPos(x + 2, tn_y)
         self.tn_text.setZValue(2)
+
+        # ツールチップ設定
+        self.setToolTip(self._build_tooltip(
+            train_number, train_type, operation_id, all_op_ids or [],
+            first_station_initial, last_station_initial, first_dep_str, last_arr_str, scene
+        ))
+
+    def _build_tooltip(self, train_number: str, train_type: str, operation_id: str, all_op_ids: list,
+                       first_station_initial: str, last_station_initial: str,
+                       first_dep_str: str, last_arr_str: str, scene: "TimelineScene") -> str:
+        # 担当運用の運用番号リストを構築（自運用は太字）
+        op_parts = []
+        if scene and scene.project:
+            ops_dict = {}
+            for diag in scene.project.diagrams.values():
+                ops_dict.update(diag.get("operations", {}))
+            for oid in all_op_ids:
+                op = ops_dict.get(oid, {})
+                op_number = op.get("operation_number", oid)
+                if oid == operation_id:
+                    op_parts.append(f"<b>{op_number}</b>")
+                else:
+                    op_parts.append(op_number)
+        train_line = f"{train_type} {train_number}"
+        op_line = "+".join(op_parts) if op_parts else ""
+        route_line = f"{first_station_initial} {first_dep_str} → {last_arr_str} {last_station_initial}"
+        return f"{train_line}<br>{op_line}<br>{route_line}"
 
     def contextMenuEvent(self, event):
         menu = QMenu()
@@ -103,6 +132,32 @@ class TemporaryStablingItem(QGraphicsRectItem):
         self.text_item.setPos(x + 2, tn_y)
         self.text_item.setZValue(2)
 
+        # ツールチップ設定
+        self.setToolTip(self._build_tooltip(event_data))
+
+    def _build_tooltip(self, event_data: dict) -> str:
+        stabled_location = event_data.get("stabled_location", "")
+        start_time = event_data.get("start_time", "")
+        end_time = event_data.get("end_time", "")
+        note = event_data.get("note", "")
+
+        def fmt_time(t: str) -> str:
+            if not t:
+                return ""
+            parts = t.split(":")
+            if len(parts) >= 2:
+                return f"{parts[0]}:{parts[1]}"
+            return t
+
+        start_str = fmt_time(start_time)
+        end_str = fmt_time(end_time)
+        time_line = f"{start_str} - {end_str}"
+
+        lines = [stabled_location, time_line]
+        if note:
+            lines.append(note)
+        return "\n".join(lines)
+
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             parent_widget = self.timeline_scene.views()[0].window() if self.timeline_scene and self.timeline_scene.views() else None
@@ -119,6 +174,29 @@ class TemporaryStablingItem(QGraphicsRectItem):
             event.accept()
         else:
             super().mousePressEvent(event)
+
+    def contextMenuEvent(self, event):
+        menu = QMenu()
+        act_delete = menu.addAction("この一時入庫を削除")
+        selected_act = menu.exec(event.screenPos())
+
+        if selected_act == act_delete:
+            stabled_location = self.event_data.get("stabled_location", "")
+            parent_widget = self.timeline_scene.views()[0].window() if self.timeline_scene and self.timeline_scene.views() else None
+            reply = QMessageBox.question(
+                parent_widget,
+                "確認",
+                f"この一時入庫({stabled_location})を削除しますか？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply == QMessageBox.Yes:
+                events = self.operation.get("temporary_stabling_events", [])
+                if self.event_data in events:
+                    events.remove(self.event_data)
+                self.timeline_scene.refresh()
+                if parent_widget and hasattr(parent_widget, "set_modified"):
+                    parent_widget.set_modified(True)
 
 
 # ガントチャート要素間の空白を埋める透明の矩形アイテム
@@ -473,6 +551,21 @@ class TimelineScene(QGraphicsScene):
                         first_station_id = stops[0].get("station_id") if stops else None
                         last_station_id = stops[-1].get("station_id") if stops else None
 
+                        # 始発駅発車時刻文字列 (stops[0]のdeparture_time、なければarrival_time)
+                        first_stop = stops[0] if stops else {}
+                        first_dep_time = first_stop.get("departure_time") or first_stop.get("arrival_time") or ""
+                        # 終着駅到着時刻文字列 (stops[-1]のarrival_time、なければdeparture_time)
+                        last_stop = stops[-1] if stops else {}
+                        last_arr_time = last_stop.get("arrival_time") or last_stop.get("departure_time") or ""
+
+                        def fmt_hhmm(t: str) -> str:
+                            if not t:
+                                return ""
+                            parts = t.split(":")
+                            if len(parts) >= 2:
+                                return f"{parts[0]}:{parts[1]}"
+                            return t
+
                         matched_trains.append({
                             "route_id": route_id,
                             "direction_key": direction,
@@ -482,7 +575,10 @@ class TimelineScene(QGraphicsScene):
                             "first_dep": first_dep,
                             "last_arr": last_arr,
                             "first_station_id": first_station_id,
-                            "last_station_id": last_station_id
+                            "last_station_id": last_station_id,
+                            "all_op_ids": op_ids,
+                            "first_dep_str": fmt_hhmm(first_dep_time),
+                            "last_arr_str": fmt_hhmm(last_arr_time),
                         })
 
         matched_trains.sort(key=lambda x: x["first_dep"])
@@ -502,10 +598,15 @@ class TimelineScene(QGraphicsScene):
 
             elements.append((first_dep, last_arr))
 
-            # 列車種別の基本色を取得
+            # 列車種別の短縮名と基本色を取得
             tt = self.project.train_types.get(train["train_type_id"]) if train["train_type_id"] else None
+            train_type_short_name = tt.get("train_type_short_name", "") if tt else ""
             main_color_str = tt.get("main_color", "#333333") if tt else "#333333"
             bg_color = QColor(main_color_str)
+
+            # 始発・終着駅の1文字表記
+            first_station_initial = self._get_station_initial(train["first_station_id"])
+            last_station_initial = self._get_station_initial(train["last_station_id"])
 
             # 列車矩形描画 (コンテクストメニュー・テキストトリミング付き)
             rect_item = TrainTimelineItem(
@@ -516,12 +617,18 @@ class TimelineScene(QGraphicsScene):
                 train["direction_key"],
                 train["train_id"],
                 target_op_id,
-                self
+                self,
+                train_type=train_type_short_name,
+                first_station_initial=first_station_initial,
+                last_station_initial=last_station_initial,
+                first_dep_str=train["first_dep_str"],
+                last_arr_str=train["last_arr_str"],
+                all_op_ids=train["all_op_ids"],
             )
             self.addItem(rect_item)
 
             # 始発駅の1文字表記
-            start_st_initial = self._get_station_initial(train["first_station_id"])
+            start_st_initial = first_station_initial
             if start_st_initial:
                 st_text = QGraphicsSimpleTextItem(start_st_initial)
                 st_text.setFont(font_st)

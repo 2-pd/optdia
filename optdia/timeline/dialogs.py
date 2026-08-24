@@ -109,31 +109,6 @@ class TemporaryStablingDialog(QDialog):
         self.btn_ok.clicked.connect(self._on_accept)
         self.btn_cancel.clicked.connect(self.reject)
 
-        # ウィジェットの枠線を表示するスタイルシート
-        self.setStyleSheet("""
-            QLineEdit, QSpinBox, QPlainTextEdit {
-                border: 1px solid #aaaaaa;
-                border-radius: 3px;
-                padding: 3px;
-                background-color: #ffffff;
-            }
-            QLineEdit:focus, QSpinBox:focus, QPlainTextEdit:focus {
-                border: 1px solid #3b82f6;
-            }
-            QPushButton {
-                border: 1px solid #aaaaaa;
-                border-radius: 3px;
-                padding: 5px 15px;
-                background-color: #f0f0f0;
-            }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-            }
-            QPushButton:pressed {
-                background-color: #d0d0d0;
-            }
-        """)
-
         # 初期値のセット
         self._init_values(event_data, default_start_time, default_end_time)
 
@@ -348,31 +323,6 @@ class AddDeadheadDialog(QDialog):
         self.btn_ok.clicked.connect(self._on_ok_clicked)
 
         self.btn_cancel.clicked.connect(self.reject)
-
-        self.setStyleSheet("""
-            QLineEdit, QSpinBox, QComboBox {
-                border: 1px solid #aaaaaa;
-                border-radius: 3px;
-                padding: 3px;
-                background-color: #ffffff;
-            }
-            QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
-                border: 1px solid #3b82f6;
-            }
-            QPushButton {
-                border: 1px solid #aaaaaa;
-                border-radius: 3px;
-                padding: 5px 15px;
-                background-color: #f0f0f0;
-            }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-            }
-            QPushButton:pressed {
-                background-color: #d0d0d0;
-            }
-        """)
-
         self._init_data(default_start_m, default_end_m)
 
     def _on_minute_changed(self, min_spin: QSpinBox, hour_spin: QSpinBox, val: int):
@@ -686,15 +636,6 @@ class SelectCouplingPositionDialog(QDialog):
 
             lbl_op = QLabel(f"{op_num} ({car_count_str})")
             lbl_op.setAlignment(Qt.AlignCenter)
-            lbl_op.setStyleSheet("""
-                QLabel {
-                    background-color: #f0f0f0;
-                    border: 1px solid #cccccc;
-                    border-radius: 3px;
-                    padding: 4px;
-                    font-size: 13px;
-                }
-            """)
             layout.addWidget(lbl_op)
 
             btn_insert = QPushButton("ここに追加")
@@ -704,21 +645,6 @@ class SelectCouplingPositionDialog(QDialog):
         layout.addStretch()
         scroll_area.setWidget(container)
         main_layout.addWidget(scroll_area)
-
-        self.setStyleSheet("""
-            QPushButton {
-                border: 1px solid #aaaaaa;
-                border-radius: 3px;
-                padding: 4px 8px;
-                background-color: #f8f8f8;
-            }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-            }
-            QPushButton:pressed {
-                background-color: #d0d0d0;
-            }
-        """)
 
     def _select_position(self, index: int):
         self.selected_index = index
@@ -787,35 +713,6 @@ class AddTrainToOperationDialog(QDialog):
         self.list_trains.itemDoubleClicked.connect(lambda item: self._on_ok_clicked())
         self.btn_ok.clicked.connect(self._on_ok_clicked)
         self.btn_cancel.clicked.connect(self.reject)
-
-        self.setStyleSheet("""
-            QLineEdit {
-                border: 1px solid #aaaaaa;
-                border-radius: 3px;
-                padding: 3px;
-                background-color: #ffffff;
-            }
-            QLineEdit:focus {
-                border: 1px solid #3b82f6;
-            }
-            QListWidget {
-                border: 1px solid #aaaaaa;
-                border-radius: 3px;
-                background-color: #ffffff;
-            }
-            QPushButton {
-                border: 1px solid #aaaaaa;
-                border-radius: 3px;
-                padding: 5px 15px;
-                background-color: #f0f0f0;
-            }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-            }
-            QPushButton:pressed {
-                background-color: #d0d0d0;
-            }
-        """)
 
         # 初回リスト構築
         self._refresh_train_list()

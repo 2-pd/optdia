@@ -10,7 +10,12 @@ class TimelineView(QGraphicsView):
         self.scene = TimelineScene(self)
         self.setScene(self.scene)
         self.setRenderHint(QPainter.Antialiasing)
-        self.setStyleSheet("border: none; background-color: #ffffff;")
+        self.setStyleSheet("""
+        QGraphicsView {
+            border: none;
+            background-color: #ffffff;
+        }
+        """)
         self.setAlignment(Qt.AlignLeft | Qt.AlignTop)
 
     def update_timeline(self, project, diagram_id: str, operation_group_id: str):
