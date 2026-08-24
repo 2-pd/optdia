@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 )
 from project import OptDiaProject
 from common.gui_utils import HtmlDelegate, create_color_square_pixmap
+from common.widgets import ColorPickerWidget
 
 # 路線の追加ダイアログ
 class AddLineDialog(QDialog):
@@ -730,16 +731,9 @@ class LineStationEditorDialog(QDialog):
 
         # 路線の色
         self.line_info_layout.addWidget(QLabel("路線の色:"))
-        color_picker_layout = QHBoxLayout()
-        self.color_square_label = QLabel()
-        self.color_square_label.setFixedSize(20, 20)
-        self.color_square_label.setStyleSheet("border: 1px solid #cccccc;") # 枠線で視認性を向上
-        color_picker_layout.addWidget(self.color_square_label)
-        self.color_button = QPushButton("#333333") # 初期色コード
-        self.color_button.clicked.connect(self._on_pick_color)
-        color_picker_layout.addWidget(self.color_button)
-        color_picker_layout.addStretch()
-        self.line_info_layout.addLayout(color_picker_layout)
+        self.color_picker = ColorPickerWidget("#333333")
+        self.color_picker.colorChanged.connect(self._on_line_color_changed)
+        self.line_info_layout.addWidget(self.color_picker)
 
         # 路線記号
         self.line_info_layout.addWidget(QLabel("路線記号等:"))
@@ -780,7 +774,7 @@ class LineStationEditorDialog(QDialog):
     def _set_line_editing_enabled(self, enabled: bool):
         """路線情報編集フォームのウィジェットの有効/無効を切り替える"""
         self.line_name_edit.setEnabled(enabled)
-        self.color_button.setEnabled(enabled)
+        self.color_picker.setEnabled(enabled)
         self.line_symbol_edit.setEnabled(enabled)
         self.inbound_direction_checkbox.setEnabled(enabled)
         self.station_list_widget.setEnabled(enabled)
@@ -793,8 +787,7 @@ class LineStationEditorDialog(QDialog):
             self.inbound_direction_checkbox.blockSignals(True)
             self.line_id_display.clear()
             self.line_name_edit.clear()
-            self.color_button.setText("#000000")
-            self.color_square_label.setPixmap(create_color_square_pixmap("#000000"))
+            self.color_picker.set_color("#000000")
             self.line_symbol_edit.clear()
             self.station_list_widget.clear()
             self.station_list_label.setText("<b>駅</b>")
@@ -918,8 +911,7 @@ class LineStationEditorDialog(QDialog):
         self._update_station_list_label(line_name)
         
         current_color = self.current_selected_line_data.get("line_color", "#333333")
-        self.color_button.setText(current_color)
-        self.color_square_label.setPixmap(create_color_square_pixmap(current_color))
+        self.color_picker.set_color(current_color)
 
         self.line_symbol_edit.setText(self.current_selected_line_data.get("line_symbol") or "")
         self.inbound_direction_checkbox.setChecked(self.current_selected_line_data.get("inbound_direction_is_forward_direction", True))
@@ -978,27 +970,21 @@ class LineStationEditorDialog(QDialog):
             if hasattr(self.parent(), "set_modified"):
                 self.parent().set_modified(True)
 
-    def _on_pick_color(self):
-        """色選択ダイアログを表示し、選択された色をプロジェクトデータに反映する"""
+    def _on_line_color_changed(self, new_color_hex: str):
+        """色が変更されたときにプロジェクトデータとリスト表示を更新する"""
         if self.current_selected_line_data:
-            initial_color = QColor(self.current_selected_line_data.get("line_color", "#333333"))
-            color = QColorDialog.getColor(initial_color, self)
-            if color.isValid():
-                new_color_hex = color.name()
-                self.current_selected_line_data["line_color"] = new_color_hex
-                self.color_button.setText(new_color_hex)
-                self.color_square_label.setPixmap(create_color_square_pixmap(new_color_hex))
-                
-                # リスト側の色表示も更新する
-                selected_items = self.line_list_widget.selectedItems()
-                if selected_items:
-                    symbol = self.current_selected_line_data.get("line_symbol") or ""
-                    name = self.current_selected_line_data.get("line_name", "")
-                    display_text = f"<font color='{new_color_hex}'><b>[{symbol}]</b></font> {name}" if symbol else name
-                    selected_items[0].setText(display_text)
+            self.current_selected_line_data["line_color"] = new_color_hex
+            
+            # リスト側の色表示も更新する
+            selected_items = self.line_list_widget.selectedItems()
+            if selected_items:
+                symbol = self.current_selected_line_data.get("line_symbol") or ""
+                name = self.current_selected_line_data.get("line_name", "")
+                display_text = f"<font color='{new_color_hex}'><b>[{symbol}]</b></font> {name}" if symbol else name
+                selected_items[0].setText(display_text)
 
-                if hasattr(self.parent(), "set_modified"):
-                    self.parent().set_modified(True)
+            if hasattr(self.parent(), "set_modified"):
+                self.parent().set_modified(True)
 
     def _on_add_line(self):
         """路線の追加ダイアログを表示する"""

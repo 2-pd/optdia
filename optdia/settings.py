@@ -66,3 +66,22 @@ class AppSettings:
         if isinstance(val, str):
             return val.lower() in ("true", "1")
         return bool(val)
+
+    MAX_RECENT_COLORS = 10 # 最大で10個の色選択履歴を保持
+
+    def add_recent_color(self, color_hex: str):
+        """色選択履歴に色コードを追加する"""
+        recent_colors = self.load_recent_colors()
+        if color_hex in recent_colors:
+            recent_colors.remove(color_hex)
+        recent_colors.insert(0, color_hex)
+        while len(recent_colors) > self.MAX_RECENT_COLORS:
+            recent_colors.pop()
+        self.settings.setValue("color_history/list", recent_colors)
+
+    def load_recent_colors(self) -> list[str]:
+        """色選択履歴を読み込む"""
+        colors = self.settings.value("color_history/list", [])
+        if isinstance(colors, str):
+            return [colors]
+        return list(colors) if colors is not None else []

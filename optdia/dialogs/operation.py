@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 )
 from project import OptDiaProject
 from common.gui_utils import create_color_square_pixmap
+from common.widgets import ColorPickerWidget
 
 
 class OperationHourSpinBox(QSpinBox):
@@ -276,13 +277,9 @@ class VehicleOperationEditorDialog(QDialog):
         # 表示色の選択ボタン
         color_layout = QHBoxLayout()
         color_layout.addWidget(QLabel("表示色:"))
-        self.op_color_square = QLabel()
-        self.op_color_square.setFixedSize(20, 20)
-        self.op_color_square.setStyleSheet("border: 1px solid #cccccc;")
-        color_layout.addWidget(self.op_color_square)
-        self.op_color_button = QPushButton("#ffffff")
-        self.op_color_button.clicked.connect(self._on_pick_op_color)
-        color_layout.addWidget(self.op_color_button)
+        self.op_color_picker = ColorPickerWidget("#ffffff")
+        self.op_color_picker.colorChanged.connect(self._on_op_color_changed)
+        color_layout.addWidget(self.op_color_picker)
         color_layout.addStretch()
         right_op_layout.addLayout(color_layout)
 
@@ -380,16 +377,9 @@ class VehicleOperationEditorDialog(QDialog):
         # 運用グループの表示色
         tab_group_layout.addSpacing(10)
         tab_group_layout.addWidget(QLabel("運用グループの表示色:"))
-        color_picker_layout = QHBoxLayout()
-        self.group_color_square = QLabel()
-        self.group_color_square.setFixedSize(20, 20)
-        self.group_color_square.setStyleSheet("border: 1px solid #cccccc;")
-        color_picker_layout.addWidget(self.group_color_square)
-        self.group_color_button = QPushButton("#ffffff")
-        self.group_color_button.clicked.connect(self._on_pick_group_color)
-        color_picker_layout.addWidget(self.group_color_button)
-        color_picker_layout.addStretch()
-        tab_group_layout.addLayout(color_picker_layout)
+        self.group_color_picker = ColorPickerWidget("#ffffff")
+        self.group_color_picker.colorChanged.connect(self._on_group_color_changed)
+        tab_group_layout.addWidget(self.group_color_picker)
 
         tab_group_layout.addStretch()
 
@@ -459,8 +449,7 @@ class VehicleOperationEditorDialog(QDialog):
         selected_items = self.group_list.selectedItems()
         if not selected_items:
             self.group_name_edit.clear()
-            self.group_color_button.setText("#ffffff")
-            self.group_color_square.setPixmap(create_color_square_pixmap("#ffffff"))
+            self.group_color_picker.set_color("#ffffff")
             self.op_list.clear()
             self._on_operation_selected()
             return
@@ -477,8 +466,7 @@ class VehicleOperationEditorDialog(QDialog):
         self.group_name_edit.blockSignals(False)
 
         main_color = og.get("main_color", "#ffffff")
-        self.group_color_button.setText(main_color)
-        self.group_color_square.setPixmap(create_color_square_pixmap(main_color))
+        self.group_color_picker.set_color(main_color)
 
         # 運用のクリアと読み込み
         self.op_list.blockSignals(True)
@@ -524,8 +512,7 @@ class VehicleOperationEditorDialog(QDialog):
         self.op_max_car_count_spin.setValue(op.get("max_car_count", 0))
 
         main_color = op.get("main_color", "#ffffff")
-        self.op_color_button.setText(main_color)
-        self.op_color_square.setPixmap(create_color_square_pixmap(main_color))
+        self.op_color_picker.set_color(main_color)
 
         self.start_location_edit.setText(op.get("start_location", ""))
         self.start_track_edit.setText(op.get("start_track") or "")
@@ -573,6 +560,7 @@ class VehicleOperationEditorDialog(QDialog):
         self.op_car_count_spin.blockSignals(block)
         self.op_min_car_count_spin.blockSignals(block)
         self.op_max_car_count_spin.blockSignals(block)
+        self.op_color_picker.blockSignals(block)
         self.start_location_edit.blockSignals(block)
         self.start_track_edit.blockSignals(block)
         self.start_hour_spin.blockSignals(block)
@@ -591,8 +579,7 @@ class VehicleOperationEditorDialog(QDialog):
         self.op_car_count_spin.setValue(0)
         self.op_min_car_count_spin.setValue(0)
         self.op_max_car_count_spin.setValue(0)
-        self.op_color_button.setText("#ffffff")
-        self.op_color_square.setPixmap(create_color_square_pixmap("#ffffff"))
+        self.op_color_picker.set_color("#ffffff")
         self.start_location_edit.clear()
         self.start_track_edit.clear()
         self.start_hour_spin.setValue(-1)
@@ -656,18 +643,12 @@ class VehicleOperationEditorDialog(QDialog):
             op["max_car_count"] = val
             self._set_modified()
 
-    def _on_pick_op_color(self):
+    def _on_op_color_changed(self, new_color_hex: str):
         op_id, op = self._get_current_op()
         if not op:
             return
-        initial_color = QColor(op.get("main_color", "#ffffff"))
-        color = QColorDialog.getColor(initial_color, self)
-        if color.isValid():
-            new_color_hex = color.name()
-            op["main_color"] = new_color_hex
-            self.op_color_button.setText(new_color_hex)
-            self.op_color_square.setPixmap(create_color_square_pixmap(new_color_hex))
-            self._set_modified()
+        op["main_color"] = new_color_hex
+        self._set_modified()
 
     def _on_start_location_changed(self, text: str):
         op_id, op = self._get_current_op()
@@ -993,7 +974,7 @@ class VehicleOperationEditorDialog(QDialog):
         if hasattr(self.parent(), "set_modified"):
             self.parent().set_modified(True)
 
-    def _on_pick_group_color(self):
+    def _on_group_color_changed(self, new_color_hex: str):
         selected_items = self.group_list.selectedItems()
         if not selected_items:
             return
@@ -1004,17 +985,11 @@ class VehicleOperationEditorDialog(QDialog):
         if not og:
             return
 
-        initial_color = QColor(og.get("main_color", "#ffffff"))
-        color = QColorDialog.getColor(initial_color, self)
-        if color.isValid():
-            new_color_hex = color.name()
-            og["main_color"] = new_color_hex
-            self.group_color_button.setText(new_color_hex)
-            self.group_color_square.setPixmap(create_color_square_pixmap(new_color_hex))
-            selected_items[0].setBackground(QColor(new_color_hex))
+        og["main_color"] = new_color_hex
+        selected_items[0].setBackground(QColor(new_color_hex))
 
-            if hasattr(self.parent(), "set_modified"):
-                self.parent().set_modified(True)
+        if hasattr(self.parent(), "set_modified"):
+            self.parent().set_modified(True)
 
     def _on_groups_reordered(self, parent, start, end, destination, row):
         new_order = []

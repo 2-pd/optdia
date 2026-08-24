@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 )
 from project import OptDiaProject
 from common.gui_utils import create_color_square_pixmap
+from common.widgets import ColorPickerWidget
 
 # 運転ダイヤの追加ダイアログ
 class AddDiagramDialog(QDialog):
@@ -195,16 +196,9 @@ class DiagramEditorDialog(QDialog):
         # 背景色
         edit_form_layout.addSpacing(10)
         edit_form_layout.addWidget(QLabel("背景色:"))
-        color_picker_layout = QHBoxLayout()
-        self.background_color_square = QLabel()
-        self.background_color_square.setFixedSize(20, 20)
-        self.background_color_square.setStyleSheet("border: 1px solid #cccccc;") # 枠線で視認性を向上
-        color_picker_layout.addWidget(self.background_color_square)
-        self.background_color_button = QPushButton("#cccccc") # 初期色コード
-        self.background_color_button.clicked.connect(self._on_pick_background_color)
-        color_picker_layout.addWidget(self.background_color_button)
-        color_picker_layout.addStretch()
-        edit_form_layout.addLayout(color_picker_layout)
+        self.background_color_picker = ColorPickerWidget("#cccccc")
+        self.background_color_picker.colorChanged.connect(self._on_background_color_changed)
+        edit_form_layout.addWidget(self.background_color_picker)
 
         edit_form_layout.addStretch() # 空白スペース
 
@@ -228,7 +222,7 @@ class DiagramEditorDialog(QDialog):
 
         self.diagram_name_edit.setEnabled(enabled)
         self.diagram_initial_edit.setEnabled(enabled)
-        self.background_color_button.setEnabled(enabled)
+        self.background_color_picker.setEnabled(enabled)
         self.delete_diagram_button.setEnabled(enabled)
 
     def _populate_diagram_list(self):
@@ -271,8 +265,6 @@ class DiagramEditorDialog(QDialog):
             self.diagram_id_display.clear()
             self.diagram_name_edit.clear()
             self.diagram_initial_edit.clear()
-            self.background_color_button.setText("#cccccc")
-            self.background_color_square.setPixmap(create_color_square_pixmap("#cccccc"))
             return
 
         diagram_id = selected_items[0].data(Qt.UserRole)
@@ -286,16 +278,18 @@ class DiagramEditorDialog(QDialog):
         # シグナルをブロックして更新
         self.diagram_name_edit.blockSignals(True)
         self.diagram_initial_edit.blockSignals(True)
+        self.background_color_picker.blockSignals(True)
+
         self.diagram_id_display.setText(diagram_id)
         self.diagram_name_edit.setText(diagram_data.get("diagram_name", ""))
         self.diagram_initial_edit.setText(diagram_data.get("diagram_initial", ""))
         
         current_color = diagram_data.get("background_color", "#cccccc")
-        self.background_color_button.setText(current_color)
-        self.background_color_square.setPixmap(create_color_square_pixmap(current_color))
+        self.background_color_picker.set_color(current_color)
         
         self.diagram_name_edit.blockSignals(False)
         self.diagram_initial_edit.blockSignals(False)
+        self.background_color_picker.blockSignals(False)
 
     def _on_diagram_name_changed(self, text: str):
         """ダイヤ名が変更されたときにプロジェクトデータとリスト表示を更新する"""
@@ -329,24 +323,19 @@ class DiagramEditorDialog(QDialog):
         if len(text) > 1:
             self.diagram_initial_edit.setText(text[0])
 
-    def _on_pick_background_color(self):
-        """背景色選択ダイアログを表示し、選択された色をプロジェクトデータに反映する"""
+    def _on_background_color_changed(self, new_color_hex: str):
+        """背景色が変更されたときにプロジェクトデータに反映する"""
         selected_items = self.diagram_list_widget.selectedItems()
         if not selected_items: return
         diagram_id = selected_items[0].data(Qt.UserRole)
         diagram_data = self.project.diagrams.get(diagram_id)
+        if not diagram_data: return
         
-        initial_color = QColor(diagram_data.get("background_color", "#cccccc"))
-        color = QColorDialog.getColor(initial_color, self)
-        if color.isValid():
-            new_color_hex = color.name()
-            diagram_data["background_color"] = new_color_hex
-            self.background_color_button.setText(new_color_hex)
-            self.background_color_square.setPixmap(create_color_square_pixmap(new_color_hex))
-            selected_items[0].setBackground(QColor(new_color_hex)) # リストアイテムの背景色も更新
+        diagram_data["background_color"] = new_color_hex
+        selected_items[0].setBackground(QColor(new_color_hex)) # リストアイテムの背景色も更新
 
-            if hasattr(self.parent(), "set_modified"):
-                self.parent().set_modified(True)
+        if hasattr(self.parent(), "set_modified"):
+            self.parent().set_modified(True)
 
     def _on_add_diagram(self):
         """ダイヤの追加ダイアログを表示し、データを追加する"""

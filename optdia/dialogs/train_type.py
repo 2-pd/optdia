@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 )
 from project import OptDiaProject
 from common.gui_utils import HtmlDelegate, create_color_square_pixmap
-from common.widgets import LineSampleWidget
+from common.widgets import LineSampleWidget, ColorPickerWidget
 
 # 列車種別の追加ダイアログ
 class AddTrainTypeDialog(QDialog):
@@ -67,7 +67,7 @@ class TrainTypeEditorDialog(QDialog):
         super().__init__(parent)
         self.project = project
         self.setWindowTitle("種別情報")
-        self.setFixedSize(720, 480)
+        self.setFixedSize(720, 540)
 
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -105,7 +105,7 @@ class TrainTypeEditorDialog(QDialog):
         # --- 編集フォームページ ---
         self.tt_editor_page = QWidget()
         self.tt_editor_layout = QVBoxLayout(self.tt_editor_page)
-        self.tt_editor_layout.setContentsMargins(20, 20, 20, 20)
+        self.tt_editor_layout.setContentsMargins(10, 10, 10, 10)
         
         # フォームコンテナ
         self.tt_form_container = QWidget()
@@ -125,7 +125,7 @@ class TrainTypeEditorDialog(QDialog):
         self.tt_form_layout.addRow("短縮表記:", self.tt_short_name_edit)
         
         spacer_tt_1 = QWidget()
-        spacer_tt_1.setFixedHeight(10)
+        spacer_tt_1.setFixedHeight(5)
         self.tt_form_layout.addRow(spacer_tt_1)
 
         self.tt_in_service_check = QCheckBox("営業列車")
@@ -133,36 +133,22 @@ class TrainTypeEditorDialog(QDialog):
         self.tt_form_layout.addRow("", self.tt_in_service_check)
         
         spacer_tt_2 = QWidget()
-        spacer_tt_2.setFixedHeight(10)
+        spacer_tt_2.setFixedHeight(5)
         self.tt_form_layout.addRow(spacer_tt_2)
 
         # 種別の基本色
-        self.tt_main_color_layout = QHBoxLayout()
-        self.tt_main_color_square = QLabel()
-        self.tt_main_color_square.setFixedSize(20, 20)
-        self.tt_main_color_square.setStyleSheet("border: 1px solid #cccccc;")
-        self.tt_main_color_btn = QPushButton()
-        self.tt_main_color_btn.clicked.connect(self._on_pick_tt_main_color)
-        self.tt_main_color_layout.addWidget(self.tt_main_color_square)
-        self.tt_main_color_layout.addWidget(self.tt_main_color_btn)
-        self.tt_main_color_layout.addStretch()
-        self.tt_form_layout.addRow("種別の基本色:", self.tt_main_color_layout)
+        self.tt_main_color_picker = ColorPickerWidget("#333333")
+        self.tt_main_color_picker.colorChanged.connect(self._on_tt_main_color_changed)
+        self.tt_form_layout.addRow("種別の基本色:", self.tt_main_color_picker)
         
         # 時刻表背景色
-        self.tt_bg_color_layout = QHBoxLayout()
-        self.tt_bg_color_square = QLabel()
-        self.tt_bg_color_square.setFixedSize(20, 20)
-        self.tt_bg_color_square.setStyleSheet("border: 1px solid #cccccc;")
-        self.tt_bg_color_btn = QPushButton()
-        self.tt_bg_color_btn.clicked.connect(self._on_pick_tt_bg_color)
-        self.tt_bg_color_layout.addWidget(self.tt_bg_color_square)
-        self.tt_bg_color_layout.addWidget(self.tt_bg_color_btn)
-        self.tt_bg_color_layout.addStretch()
-        self.tt_form_layout.addRow("時刻表での背景色:", self.tt_bg_color_layout)
+        self.tt_bg_color_picker = ColorPickerWidget("#ffffff")
+        self.tt_bg_color_picker.colorChanged.connect(self._on_tt_bg_color_changed)
+        self.tt_form_layout.addRow("時刻表での背景色:", self.tt_bg_color_picker)
         
         # ダイアグラム表示設定
         spacer_tt_3 = QWidget()
-        spacer_tt_3.setFixedHeight(20)
+        spacer_tt_3.setFixedHeight(10)
         self.tt_form_layout.addRow(spacer_tt_3)
 
         tt_diagram_label = QLabel("<b>ダイアグラムでの表示</b>")
@@ -275,12 +261,10 @@ class TrainTypeEditorDialog(QDialog):
         self.tt_in_service_check.setChecked(tt_data.get("is_in_service", True))
         
         main_color = tt_data.get("main_color", "#333333")
-        self.tt_main_color_btn.setText(main_color)
-        self.tt_main_color_square.setPixmap(create_color_square_pixmap(main_color))
+        self.tt_main_color_picker.set_color(main_color)
         
         bg_color = tt_data.get("background_color", "#ffffff")
-        self.tt_bg_color_btn.setText(bg_color)
-        self.tt_bg_color_square.setPixmap(create_color_square_pixmap(bg_color))
+        self.tt_bg_color_picker.set_color(bg_color)
         
         weight = tt_data.get("line_weight", "normal")
         idx_w = self.tt_weight_combo.findData(weight)
@@ -330,36 +314,28 @@ class TrainTypeEditorDialog(QDialog):
         if hasattr(self.parent(), "set_modified"):
             self.parent().set_modified(True)
 
-    def _on_pick_tt_main_color(self):
-        """基本色の選択ダイアログを表示する"""
+    def _on_tt_main_color_changed(self, new_hex: str):
+        """基本色が変更されたときの処理"""
         selected_items = self.train_type_list_widget.selectedItems()
         if not selected_items: return
         tt_id = selected_items[0].data(Qt.UserRole)
         tt_data = self.project.train_types.get(tt_id)
+        if not tt_data: return
         
-        color = QColorDialog.getColor(QColor(tt_data.get("main_color", "#333333")), self)
-        if color.isValid():
-            new_hex = color.name()
-            tt_data["main_color"] = new_hex
-            self.tt_main_color_btn.setText(new_hex)
-            self.tt_main_color_square.setPixmap(create_color_square_pixmap(new_hex))
-            self._on_train_type_form_changed()
+        tt_data["main_color"] = new_hex
+        self._on_train_type_form_changed()
 
-    def _on_pick_tt_bg_color(self):
-        """背景色の選択ダイアログを表示する"""
+    def _on_tt_bg_color_changed(self, new_hex: str):
+        """背景色が変更されたときの処理"""
         selected_items = self.train_type_list_widget.selectedItems()
         if not selected_items: return
         tt_id = selected_items[0].data(Qt.UserRole)
         tt_data = self.project.train_types.get(tt_id)
+        if not tt_data: return
         
-        color = QColorDialog.getColor(QColor(tt_data.get("background_color", "#ffffff")), self)
-        if color.isValid():
-            new_hex = color.name()
-            tt_data["background_color"] = new_hex
-            self.tt_bg_color_btn.setText(new_hex)
-            self.tt_bg_color_square.setPixmap(create_color_square_pixmap(new_hex))
-            selected_items[0].setBackground(QColor(new_hex))
-            self._on_train_type_form_changed()
+        tt_data["background_color"] = new_hex
+        selected_items[0].setBackground(QColor(new_hex))
+        self._on_train_type_form_changed()
 
     def _populate_train_type_list(self):
         """列車種別の一覧をリストに表示する"""

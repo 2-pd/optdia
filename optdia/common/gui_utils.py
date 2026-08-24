@@ -36,9 +36,5 @@ class HtmlDelegate(QStyledItemDelegate):
 # 指定した色で塗りつぶされた正方形のピクスマップを作成するヘルパー関数
 def create_color_square_pixmap(color_hex: str, size: int = 20):
     pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.transparent)
-    painter = QPainter(pixmap)
-    painter.setBrush(QColor(color_hex))
-    painter.drawRect(0, 0, size - 1, size - 1)
-    painter.end()
+    pixmap.fill(QColor(color_hex))
     return pixmap
