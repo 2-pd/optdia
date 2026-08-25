@@ -182,3 +182,68 @@ class LineSampleWidget(QWidget):
         painter.setPen(pen)
         y = self.height() / 2
         painter.drawLine(10, y, self.width() - 10, y)
+
+
+# アコーディオンウィジェット
+class AccordionWidget(QWidget):
+    toggled = Signal(bool)
+
+    def __init__(self, title: str = "", parent=None):
+        super().__init__(parent)
+        self._is_expanded = False
+
+        self._main_layout = QVBoxLayout(self)
+        self._main_layout.setContentsMargins(0, 0, 0, 0)
+        self._main_layout.setSpacing(0)
+
+        # 見出しボタン (角丸なし、背景色は薄い灰色)
+        self.header_button = QPushButton(title)
+        self.header_button.setStyleSheet("""
+            QPushButton {
+                border: 1px solid #cccccc;
+                border-radius: 0px;
+                background-color: #eeeeee;
+                text-align: left;
+                padding: 6px 10px;
+                font-size: 13px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #dddddd;
+            }
+        """)
+        self.header_button.setCursor(Qt.PointingHandCursor)
+        self.header_button.clicked.connect(self.toggle)
+        self._main_layout.addWidget(self.header_button)
+
+        # コンテンツウィジェット (初期状態は非表示)
+        self.content_widget = QWidget()
+        self.content_widget.setVisible(False)
+        self._main_layout.addWidget(self.content_widget)
+
+    def set_title(self, title: str):
+        self.header_button.setText(title)
+
+    def title(self) -> str:
+        return self.header_button.text()
+
+    def set_content_widget(self, widget: QWidget):
+        self._main_layout.removeWidget(self.content_widget)
+        self.content_widget.deleteLater()
+        self.content_widget = widget
+        self.content_widget.setVisible(self._is_expanded)
+        self._main_layout.addWidget(self.content_widget)
+
+    def set_content_layout(self, layout):
+        self.content_widget.setLayout(layout)
+
+    def toggle(self):
+        self.set_expanded(not self._is_expanded)
+
+    def set_expanded(self, expanded: bool):
+        self._is_expanded = expanded
+        self.content_widget.setVisible(self._is_expanded)
+        self.toggled.emit(self._is_expanded)
+
+    def is_expanded(self) -> bool:
+        return self._is_expanded

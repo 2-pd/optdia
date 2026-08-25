@@ -35,6 +35,8 @@ interface optdia_project_entities {
     routes: optdia_route[]; // 運行系統の情報(下記)を表示順に配列で
     train_types: optdia_train_type[]; // 各列車種別の情報(下記)を表示順に配列で
     diagrams: optdia_diagram[]; // 運転ダイヤの情報(下記)を表示順に配列で
+    calendar_periods: optdia_calendar_period[]; // 期間別の運行区分情報を期間の開始日の順に配列で
+    date_exceptions: optdia_date_exceptions; // 例外の運行日情報を連想配列で
 }
 
 
@@ -108,7 +110,7 @@ interface optdia_line_segment {
 
 // 列車IDと列車情報のペアを格納するオブジェクト
 interface optdia_train_dict {
-    [train_id: string]: optdia_train; // 各列車の情報(下記)
+    [train_id: string]: optdia_train; // 各列車の情報(下記、キーはランダムな英数字16文字)
 }
 
 
@@ -162,7 +164,7 @@ interface optdia_train {
 
 // 運転ダイヤ別の列車情報を格納するオブジェクト
 interface optdia_diagram_train {
-    train_id: string; // 列車ID(ランダムな英数字16文字)
+    train_id: string; // 列車ID
     operations: optdia_train_operation[]; // 列車の担当運用情報(下記)を前位側(方反でない場合を基準とする)から順に配列で
     car_count: null | number; // 両数(nullの場合は担当運用の所定両数の合計値が指定されたものとみなす)
     destination: null | string; // 行き先表示(nullの場合は終着駅の駅名が指定されたものとみなす)
@@ -191,7 +193,7 @@ interface optdia_train_stop {
 
 // 車両運用IDと車両運用情報のペアを格納するオブジェクト
 interface optdia_operation_dict {
-    [operation_id: string]: optdia_operation; // 各車両運用の情報(下記)
+    [operation_id: string]: optdia_operation; // 各車両運用の情報(下記、キーはランダムな英数字12文字)
 }
 
 
@@ -236,4 +238,24 @@ interface optdia_operation_group {
     operation_group_name: string; // 運用グループ名
     main_color: string; // 運用グループの表示色(デフォルト値は #ffffff)
     operations: string[]; // グループに属する車両運用のIDを表示順に配列で
+}
+
+
+// 期間別の運行区分情報を格納するためのオブジェクト
+interface optdia_calendar_period {
+    start_date: string | null; // 期間の開始日(YYYY-MM-DD形式、未定義の場合はnull)
+    end_date: string | null; // 期間の終了日(YYYY-MM-DD形式、無期限の場合はnull)
+    sunday: string | null; // 日曜に施行される運転ダイヤのID(未定義の場合はnull)
+    monday: string | null; //月曜に施行される運転ダイヤのID(未定義の場合はnull)
+    tuesday: string | null; // 火曜に施行される運転ダイヤのID(未定義の場合はnull)
+    wednesday: string | null; // 水曜に施行される運転ダイヤのID(未定義の場合はnull)
+    thursday: string | null; // 木曜に施行される運転ダイヤのID(未定義の場合はnull)
+    friday: string | null; // 金曜に施行される運転ダイヤのID(未定義の場合はnull)
+    saturday: string | null; // 土曜に施行される運転ダイヤのID(未定義の場合はnull)
+}
+
+
+// 例外の運行日情報(例外のダイヤが施行される日付とその日の運転ダイヤのIDのペア)を格納するオブジェクト
+interface optdia_date_exceptions {
+    [iso_date: string]: string; // 運転ダイヤID(キーはYYYY-MM-DD形式の日付)
 }

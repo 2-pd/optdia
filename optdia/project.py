@@ -91,6 +91,12 @@ class OptDiaProject:
                 diag.get("operation_groups", []), "operation_group_id"
             )
 
+        # 期間別の運行区分情報 (calendar_periods: optdia_calendar_period[])
+        self.calendar_periods = copy.deepcopy(entities.get("calendar_periods", []))
+
+        # 例外の運行日情報 (date_exceptions: optdia_date_exceptions)
+        self.date_exceptions = copy.deepcopy(entities.get("date_exceptions", {}))
+
         # 各マスタ列車 (optdia_train) に、その列車が運転されるダイヤのIDを配列として保持する一時キーを追加
         # このキーは保存時には除去される
         for route_id in self.routes_order:
@@ -273,7 +279,9 @@ class OptDiaProject:
                 "stations": stations_export,
                 "routes": routes_export,
                 "train_types": [self.train_types[ttid] for ttid in self.train_types_order],
-                "diagrams": diagrams_export
+                "diagrams": diagrams_export,
+                "calendar_periods": self.calendar_periods,
+                "date_exceptions": self.date_exceptions
             }
         }
 
