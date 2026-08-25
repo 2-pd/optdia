@@ -1,5 +1,5 @@
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QPainter, QPen, QPixmap, QIcon, QTransform
 from PySide6.QtWidgets import (
     QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
     QFrame, QColorDialog
@@ -196,8 +196,17 @@ class AccordionWidget(QWidget):
         self._main_layout.setContentsMargins(0, 0, 0, 0)
         self._main_layout.setSpacing(0)
 
+        # アイコンを読み込み、上下反転したアイコンを生成
+        self.accordion_pixmap = QPixmap(":/assets/accordion.png")
+        self.accordion_icon = QIcon(self.accordion_pixmap) # オリジナルのアイコン
+        transform = QTransform().scale(1, -1)
+        flipped_accordion_pixmap = self.accordion_pixmap.transformed(transform)
+        self.flipped_accordion_icon = QIcon(flipped_accordion_pixmap) # 上下反転したアイコン
+
         # 見出しボタン (角丸なし、背景色は薄い灰色)
         self.header_button = QPushButton(title)
+        self.header_button.setIcon(self.accordion_icon)
+        self.header_button.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.header_button.setStyleSheet("""
             QPushButton {
                 border: 1px solid #cccccc;
@@ -244,6 +253,11 @@ class AccordionWidget(QWidget):
         self._is_expanded = expanded
         self.content_widget.setVisible(self._is_expanded)
         self.toggled.emit(self._is_expanded)
+        
+        if expanded:
+            self.header_button.setIcon(self.flipped_accordion_icon)
+        else:
+            self.header_button.setIcon(self.accordion_icon)
 
     def is_expanded(self) -> bool:
         return self._is_expanded
