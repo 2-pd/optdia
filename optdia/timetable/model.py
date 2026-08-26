@@ -213,11 +213,12 @@ class TimetableModel(QAbstractTableModel):
                         stop_idx = len(self.full_stop_sequence) - 1
                         s_data = self.project.stations.get(sid, {})
                         name = s_data.get("station_name", sid)
+                        show_arr = is_current_segment_start or is_current_segment_end or s_data.get("show_arrival_time", False)
                         if i == 0:
                             self.station_rows.append({"name": f"{name} [発]", "stop_idx": stop_idx, "type": "dep", "line_color": line_color})
                         elif i == len(s_ids) - 1:
                             self.station_rows.append({"name": f"{name} [着]", "stop_idx": stop_idx, "type": "arr", "line_color": line_color})
-                        elif s_data.get("show_arrival_time", False):
+                        elif show_arr:
                             self.station_rows.append({"name": f"{name} [着]", "stop_idx": stop_idx, "type": "arr", "line_color": line_color})
                             self.station_rows.append({"name": f"{name} [発]", "stop_idx": stop_idx, "type": "dep", "line_color": line_color})
                         else:
@@ -552,8 +553,9 @@ class TimetableModel(QAbstractTableModel):
                     # 発時刻が編集（入力または削除）された場合、中間駅かつ着時刻非表示なら着時刻も連動させる
                     if row_def["type"] == "dep":
                         station_data = self.project.stations.get(config["station_id"], {})
-                        if not config.get("is_segment_start") and not config.get("is_segment_end") and \
-                           not station_data.get("show_arrival_time"):
+                        is_seg_boundary = config.get("is_segment_start") or config.get("is_segment_end")
+                        show_arr = is_seg_boundary or station_data.get("show_arrival_time", False)
+                        if not is_seg_boundary and not show_arr:
                             stop["arrival_time"] = formatted_value
 
                     stop["track_id"] = config["track_id"]
@@ -618,6 +620,10 @@ class TimetableModel(QAbstractTableModel):
                             t_new = self._time_to_seconds(formatted_value)
                             if t_old is not None and t_new is not None:
                                 diff = t_new - t_old
+                                if row_def["type"] == "arr" and stop.get("departure_time") is not None:
+                                    curr_dep = self._time_to_seconds(stop["departure_time"])
+                                    if curr_dep is not None:
+                                        stop["departure_time"] = self._seconds_to_time(curr_dep + diff)
                                 for sub_stop in m_train.get("stops", []):
                                     sub_idx = sub_stop.get("stop_idx")
                                     if sub_idx is not None and sub_idx > stop_idx:

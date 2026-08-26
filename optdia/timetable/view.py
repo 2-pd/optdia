@@ -9,6 +9,10 @@ from .model import StopTypeRole
 class TimetableVerticalHeader(QHeaderView):
     def __init__(self, parent=None):
         super().__init__(Qt.Vertical, parent)
+        
+        # 各行の高さのデフォルト値を24pxに縮小
+        self.setMinimumSectionSize(24)
+        self.setDefaultSectionSize(24)
 
     def paintSection(self, painter, rect, logicalIndex):
         model = self.model()

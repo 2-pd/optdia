@@ -5,11 +5,11 @@ import sys
 import os
 import subprocess
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QIcon, QAction
+from PySide6.QtGui import QIcon, QAction, QPixmap, QTransform
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QFileDialog, QMessageBox, QDialog, QLabel, QComboBox,
-    QListWidget, QListWidgetItem, QStackedWidget,
+    QListWidget, QListWidgetItem, QStackedWidget, QLineEdit,
     QTabBar, QHeaderView, QMenu, QAbstractItemView, QFrame
 )
 import assets_rc
@@ -118,6 +118,7 @@ class MainWindow(QMainWindow):
         route_header_layout.addWidget(self.btn_edit_routes)
         route_layout.addLayout(route_header_layout)
 
+        # 運行系統リスト
         self.route_list_widget = QListWidget()
         self.route_list_widget.setStyleSheet("font-size: 14px; QListWidget::item {height: 32px;}")
         self.route_list_widget.setIconSize(QSize(24, 24))
@@ -146,6 +147,7 @@ class MainWindow(QMainWindow):
         diagram_header_layout.addWidget(self.btn_edit_diagrams)
         diagram_layout.addLayout(diagram_header_layout)
 
+        # 運転ダイヤリスト
         self.diagram_list_widget = QListWidget()
         self.diagram_list_widget.setStyleSheet("font-size: 14px; QListWidget::item {height: 32px;}")
         self.diagram_list_widget.setIconSize(QSize(24, 24))
@@ -183,8 +185,10 @@ class MainWindow(QMainWindow):
         self.timetable_model.set_adjust_later_enabled(self.adjust_later_action.isChecked())
         self.timetable_model.dataChanged.connect(lambda: self.set_modified(True))
         self.timetable_model.trainsReordered.connect(lambda: self.set_modified(True))
+        self.timetable_model.modelReset.connect(self._update_train_search_state)
         self.timetable_view = TimetableView()
         self.timetable_view.setModel(self.timetable_model)
+        self.timetable_view.selectionModel().currentChanged.connect(self._on_timetable_cell_current_changed)
         
         # テーブルの外観設定
         self.timetable_view.setStyleSheet("QTableView, QHeaderView { font-size: 12px; }")
@@ -201,9 +205,73 @@ class MainWindow(QMainWindow):
         self.timetable_delegate = TimetableDelegate(self.timetable_view)
         self.timetable_view.setItemDelegate(self.timetable_delegate)
 
+        # 時刻表テーブル表示用のコンテナ（垂直レイアウト）
+        self.timetable_table_container = QWidget()
+        timetable_table_layout = QVBoxLayout(self.timetable_table_container)
+        timetable_table_layout.setContentsMargins(0, 0, 0, 0)
+        timetable_table_layout.setSpacing(0)
+
+        # 検索バーウィジェット（高さ40px）
+        self.timetable_search_bar = QWidget()
+        self.timetable_search_bar.setFixedHeight(40)
+        self.timetable_search_bar.setStyleSheet("background-color: #f7f7f7; border-bottom: 1px solid #dddddd;")
+        timetable_search_layout = QHBoxLayout(self.timetable_search_bar)
+        timetable_search_layout.setContentsMargins(10, 0, 10, 0)
+        timetable_search_layout.setSpacing(8)
+
+        timetable_search_layout.addStretch(1)
+
+        self.train_search_edit = QLineEdit()
+        self.train_search_edit.setPlaceholderText("列車番号を検索")
+        self.train_search_edit.setFixedWidth(160)
+        self.train_search_edit.setFixedHeight(30)
+        self.train_search_edit.textChanged.connect(self._on_train_search_text_changed)
+        timetable_search_layout.addWidget(self.train_search_edit)
+
+        self.train_search_label = QLabel()
+        self.train_search_label.setFixedWidth(50)
+        self.train_search_label.setStyleSheet("font-size: 12px; color: #555555;")
+        timetable_search_layout.addWidget(self.train_search_label)
+
+        borderless_btn_style = """
+            QPushButton {
+                border: none;
+                background-color: transparent;
+            }
+            QPushButton:hover {
+                background-color: #eeeeee;
+            }
+        """
+
+        # 左移動ボタン用のアイコンを読み込み、右移動ボタン用に左右反転したアイコンを生成
+        left_pixmap = QPixmap(":/assets/left.png")
+        left_icon = QIcon(left_pixmap) # 左移動ボタン用のアイコン
+        transform = QTransform().scale(-1, 1)
+        right_pixmap = left_pixmap.transformed(transform)
+        right_icon = QIcon(right_pixmap) # 右移動ボタン用のアイコン
+
+        self.btn_search_prev = QPushButton()
+        self.btn_search_prev.setIcon(right_icon)
+        self.btn_search_prev.setFixedWidth(30)
+        self.btn_search_prev.setFixedHeight(30)
+        self.btn_search_prev.setStyleSheet(borderless_btn_style)
+        self.btn_search_prev.clicked.connect(self._on_search_prev_clicked)
+        timetable_search_layout.addWidget(self.btn_search_prev)
+
+        self.btn_search_next = QPushButton()
+        self.btn_search_next.setIcon(left_icon)
+        self.btn_search_next.setFixedWidth(30)
+        self.btn_search_next.setFixedHeight(30)
+        self.btn_search_next.setStyleSheet(borderless_btn_style)
+        self.btn_search_next.clicked.connect(self._on_search_next_clicked)
+        timetable_search_layout.addWidget(self.btn_search_next)
+
+        timetable_table_layout.addWidget(self.timetable_search_bar)
+        timetable_table_layout.addWidget(self.timetable_view, stretch=1)
+
         # 時刻表テーブルと運用表示エリアを切り替えるスタックドウィジェット
         self.timetable_content_stack = QStackedWidget()
-        self.timetable_content_stack.addWidget(self.timetable_view)
+        self.timetable_content_stack.addWidget(self.timetable_table_container)
 
         # 運用表示エリア用の親ウィジェット
         self.operation_area_widget = QWidget()
@@ -692,6 +760,122 @@ class MainWindow(QMainWindow):
             self.timeline_header_view.horizontalScrollBar().setValue(
                 self.timeline_view.horizontalScrollBar().value()
             )
+
+    def _get_matching_train_columns(self, query: str):
+        """検索文字列に一致する列車番号を持つ列インデックスのリストを返す"""
+        query = query.strip()
+        if not query:
+            return []
+        
+        matches = []
+        for col in range(self.timetable_model.columnCount()):
+            num = str(self.timetable_model.data(self.timetable_model.index(0, col), Qt.DisplayRole) or "").strip()
+            if query in num:
+                matches.append(col)
+        return matches
+
+    def _update_train_search_state(self, auto_select_first=False):
+        """検索ボックスの入力状態に基づいてラベルとボタン状態を更新する"""
+        query = self.train_search_edit.text().strip()
+        if not query:
+            self.train_search_label.setText("")
+            self.train_search_label.setStyleSheet("font-size: 12px; color: #555555;")
+            self.btn_search_prev.setEnabled(False)
+            self.btn_search_next.setEnabled(False)
+            return
+
+        matches = self._get_matching_train_columns(query)
+        total = len(matches)
+
+        if total == 0:
+            self.train_search_label.setText("該当無し")
+            self.train_search_label.setStyleSheet("font-size: 12px; color: #cc3333;")
+            self.btn_search_prev.setEnabled(False)
+            self.btn_search_next.setEnabled(False)
+        else:
+            self.btn_search_prev.setEnabled(True)
+            self.btn_search_next.setEnabled(True)
+            current_col = self.timetable_view.currentIndex().column()
+            
+            if auto_select_first:
+                target_col = matches[0]
+                self._select_train_column(target_col)
+                current_rank = 1
+            else:
+                if current_col in matches:
+                    current_rank = matches.index(current_col) + 1
+                else:
+                    current_rank = "-"
+
+            self.train_search_label.setText(f"{current_rank}/{total}")
+            self.train_search_label.setStyleSheet("font-size: 12px; color: #333333;")
+
+    def _select_train_column(self, col: int):
+        """指定した列の列車番号セル（行0）を選択してスクロールする"""
+        idx = self.timetable_model.index(0, col)
+        if idx.isValid():
+            self.timetable_view.setCurrentIndex(idx)
+            self.timetable_view.scrollTo(idx, QAbstractItemView.PositionAtCenter)
+
+    def _on_train_search_text_changed(self, text: str):
+        """列車番号検索テキストが変更されたときの処理"""
+        self._update_train_search_state(auto_select_first=True)
+
+    def _on_timetable_cell_current_changed(self, current, previous):
+        """時刻表テーブルのセル選択が変更されたときに検索結果ラベルの現在位置を更新する"""
+        query = self.train_search_edit.text().strip()
+        if not query:
+            return
+        matches = self._get_matching_train_columns(query)
+        total = len(matches)
+        if total == 0:
+            return
+        current_col = current.column()
+        if current_col in matches:
+            current_rank = matches.index(current_col) + 1
+        else:
+            current_rank = "-"
+        self.train_search_label.setText(f"{current_rank}/{total}")
+
+    def _on_search_next_clicked(self):
+        """左移動ボタンがクリックされたときの処理"""
+        query = self.train_search_edit.text().strip()
+        if not query:
+            return
+        matches = self._get_matching_train_columns(query)
+        if not matches:
+            return
+
+        current_col = self.timetable_view.currentIndex().column()
+        # 現在選択中のセルより後(右側)にある最初の列車
+        next_cols = [c for c in matches if c > current_col]
+        if next_cols:
+            target_col = next_cols[0]
+        else:
+            # 検索結果の最後の列車以降のセルが選択されている場合は検索結果の最初に戻る
+            target_col = matches[0]
+
+        self._select_train_column(target_col)
+
+    def _on_search_prev_clicked(self):
+        """右移動ボタンがクリックされたときの処理"""
+        query = self.train_search_edit.text().strip()
+        if not query:
+            return
+        matches = self._get_matching_train_columns(query)
+        if not matches:
+            return
+
+        current_col = self.timetable_view.currentIndex().column()
+        # 現在選択中のセルより前(左側)にある最後の列車
+        prev_cols = [c for c in matches if c < current_col]
+        if prev_cols:
+            target_col = prev_cols[-1]
+        else:
+            # 検索結果の最初の列車以前のセルが選択されている場合は検索結果の最後に戻る
+            target_col = matches[-1]
+
+        self._select_train_column(target_col)
 
     def _update_op_group_combo(self):
         """選択されているダイヤに応じて運用グループのコンボボックス表示内容を更新する"""

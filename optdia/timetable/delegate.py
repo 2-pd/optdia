@@ -1,5 +1,5 @@
 from PySide6.QtCore import Qt, QEvent, QTimer, QRect
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QPen
 from PySide6.QtWidgets import (
     QStyledItemDelegate, QStyleOptionViewItem, QApplication, QStyle, QLineEdit, QAbstractItemDelegate, QDialog
 )
@@ -163,13 +163,21 @@ class TimetableDelegate(QStyledItemDelegate):
                     painter.drawText(text_option.rect, alignment, text)
             painter.restore()
 
-        # 通過の縦線描画
+        # 通過・運転停車の縦線描画
         if row >= num_headers and row < footer_row_idx:
             stop_type = index.data(StopTypeRole)
-            if stop_type == 0:  # 通過
+            if stop_type in (0, -1):
                 if not (option.state & QStyle.State_HasFocus):
                     painter.save()
-                    painter.fillRect(option.rect.left() + 18, option.rect.top(), 2, option.rect.height(), QColor(Qt.gray))
+                    if stop_type == -1:  # 運転停車
+                        pen = QPen(QColor(Qt.gray))
+                        pen.setWidth(2)
+                        pen.setStyle(Qt.DotLine)
+                        painter.setPen(pen)
+                        x = option.rect.left() + 19
+                        painter.drawLine(x, option.rect.top(), x, option.rect.bottom())
+                    else:  # 通過
+                        painter.fillRect(option.rect.left() + 18, option.rect.top(), 2, option.rect.height(), QColor(Qt.gray))
                     painter.restore()
 
         painter.save()
