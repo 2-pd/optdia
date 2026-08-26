@@ -1,6 +1,6 @@
 import re
 from PySide6.QtCore import Qt, QRect, QModelIndex
-from PySide6.QtGui import QColor, QPainter, QFont, QFontMetrics
+from PySide6.QtGui import QColor, QPainter, QFont, QFontMetrics, QIcon
 from PySide6.QtWidgets import QHeaderView, QStyleOptionHeader, QStyle, QTableView, QSizePolicy, QVBoxLayout, QLabel, QMenu
 from PySide6.QtGui import QActionGroup
 from .model import StopTypeRole
@@ -9,7 +9,7 @@ from .model import StopTypeRole
 class TimetableVerticalHeader(QHeaderView):
     def __init__(self, parent=None):
         super().__init__(Qt.Vertical, parent)
-        
+
         # 各行の高さのデフォルト値を24pxに縮小
         self.setMinimumSectionSize(24)
         self.setDefaultSectionSize(24)
@@ -108,13 +108,26 @@ class TimetableHorizontalHeader(QHeaderView):
         self.setSectionResizeMode(QHeaderView.Fixed)
         self.setSectionsMovable(True)
 
+        self.draggable_icon = QIcon(":/assets/draggable.png")
+
     def paintSection(self, painter, rect, logicalIndex):
         painter.save()
-        bg_color = QColor("#eeeeee")
+        bg_color = QColor("#f7f7f7")
         painter.fillRect(rect, bg_color)
         painter.setPen(QColor("#dddddd"))
         painter.drawLine(rect.right(), rect.top(), rect.right(), rect.bottom())
         painter.restore()
+
+        # ヘッダーセルの中央にアイコンを描画
+        icon_width = 10 # アイコンの幅
+        icon_height = 8 # アイコンの幅
+        pixmap = self.draggable_icon.pixmap(icon_width, icon_height)
+
+        icon_x = rect.left() + (rect.width() - icon_width) // 2
+        icon_y = rect.top() + (rect.height() - icon_height) // 2
+        target_rect = QRect(icon_x, icon_y, icon_width, icon_height)
+
+        painter.drawPixmap(target_rect, pixmap)
 
 # メインウィンドウの時刻表テーブルのビュー
 class TimetableView(QTableView):

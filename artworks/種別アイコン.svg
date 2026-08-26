@@ -26,7 +26,7 @@
      inkscape:deskcolor="#d1d1d1"
      inkscape:document-units="px"
      inkscape:zoom="10"
-     inkscape:cx="14.05"
+     inkscape:cx="13.85"
      inkscape:cy="14"
      inkscape:window-width="1920"
      inkscape:window-height="1008"
@@ -41,8 +41,8 @@
        id="path-effect2"
        is_visible="true"
        lpeversion="1"
-       nodesatellites_param="F,0,0,1,0,1.3229165,0,1 @ F,0,1,1,0,1.3229165,0,1 @ F,0,1,1,0,1.3229165,0,1 @ F,0,1,1,0,1.3229165,0,1 | F,0,1,1,0,0.7937499,0,1 @ F,0,1,1,0,0.7937499,0,1 @ F,0,1,1,0,0.7937499,0,1 @ F,0,1,1,0,0.7937499,0,1"
-       radius="3"
+       nodesatellites_param="F,0,0,1,0,0,0,1 @ F,0,1,1,0,1.3229165,0,1 @ F,0,1,1,0,1.3229165,0,1 @ F,0,0,1,0,0,0,1 @ F,0,0,1,0,0,0,1 @ F,0,0,1,0,0.7937499,0,1 @ F,0,0,1,0,0.7937499,0,1 @ F,0,0,1,0,0,0,1 | F,0,0,1,0,0,0,1 @ F,0,0,1,0,0.7937499,0,1 @ F,0,0,1,0,0.7937499,0,1 @ F,0,0,1,0,0,0,1 @ F,0,0,1,0,0,0,1 @ F,0,0,1,0,1.3229165,0,1 @ F,0,0,1,0,1.3229165,0,1 @ F,0,0,1,0,0,0,1"
+       radius="5"
        unit="px"
        method="auto"
        mode="F"
@@ -61,21 +61,21 @@
     <path
        id="rect1"
        style="fill:#999999;fill-opacity:1;stroke:none;stroke-width:0.264583;stroke-linecap:round;paint-order:stroke markers fill"
-       d="m 0,1.3229165 v 5.291666 A 1.3229165,1.3229165 45 0 0 1.3229165,7.937499 l 5.291666,0 A 1.3229165,1.3229165 135 0 0 7.937499,6.6145825 l 0,-5.291666 A 1.3229165,1.3229165 45 0 0 6.6145825,0 H 1.3229165 A 1.3229165,1.3229165 135 0 0 0,1.3229165 Z M 1.3229165,0.5291666 h 5.291666 a 0.7937499,0.7937499 45 0 1 0.7937499,0.7937499 v 5.291666 A 0.7937499,0.7937499 135 0 1 6.6145825,7.4083324 H 1.3229165 A 0.7937499,0.7937499 45 0 1 0.5291666,6.6145825 V 1.3229165 A 0.7937499,0.7937499 135 0 1 1.3229165,0.5291666 Z"
+       d="M 7.6729157,1.8520831 A 1.3229165,1.3229165 45 0 0 6.3499992,0.5291666 H 1.5874998 A 1.3229165,1.3229165 135 0 0 0.2645833,1.8520831 H 0.7937499 A 0.7937499,0.7937499 135 0 1 1.5874998,1.0583332 H 6.3499992 A 0.7937499,0.7937499 45 0 1 7.1437491,1.8520831 Z M 7.1437491,6.0854159 A 0.7937499,0.7937499 135 0 1 6.3499992,6.8791658 H 1.5874998 A 0.7937499,0.7937499 45 0 1 0.7937499,6.0854159 H 0.2645833 a 1.3229165,1.3229165 45 0 0 1.3229165,1.3229165 l 4.7624994,0 A 1.3229165,1.3229165 135 0 0 7.6729157,6.0854159 Z"
        inkscape:path-effect="#path-effect2"
-       inkscape:original-d="M 0,0 V 7.937499 H 7.937499 V 0 Z M 0.5291666,0.5291666 H 7.4083324 V 7.4083324 H 0.5291666 Z"
-       sodipodi:nodetypes="cccccccccc" />
+       inkscape:original-d="M 7.6729157,1.8520831 V 0.5291666 H 0.2645833 V 1.8520831 H 0.7937499 V 1.0583332 H 7.1437491 V 1.8520831 Z M 7.1437491,6.0854159 V 6.8791658 H 0.7937499 V 6.0854159 H 0.2645833 V 7.4083324 H 7.6729157 V 6.0854159 Z"
+       sodipodi:nodetypes="cccccccccccccccccc" />
     <text
        xml:space="preserve"
-       style="font-weight:bold;font-size:3.70417px;line-height:1.5;font-family:'Google Sans Flex';-inkscape-font-specification:'Google Sans Flex Bold';letter-spacing:0px;writing-mode:lr-tb;direction:ltr;fill:#999999;fill-opacity:1;stroke:none;stroke-width:0.264583;stroke-linecap:round;paint-order:stroke markers fill"
-       x="0.56965059"
-       y="5.0334339"
+       style="font-weight:bold;font-size:4.23333px;line-height:1.5;font-family:'Google Sans Flex';-inkscape-font-specification:'Google Sans Flex Bold';letter-spacing:0px;writing-mode:lr-tb;direction:ltr;fill:#999999;fill-opacity:1;stroke:none;stroke-width:0.264583;stroke-linecap:round;paint-order:stroke markers fill"
+       x="0.26246798"
+       y="5.2800207"
        id="text2"><tspan
          sodipodi:role="line"
          id="tspan2"
-         style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:3.70417px;font-family:'Google Sans Flex';-inkscape-font-specification:'Google Sans Flex Bold';stroke-width:0.264583"
-         x="0.56965059"
-         y="5.0334339">Exp</tspan></text>
+         style="font-style:normal;font-variant:normal;font-weight:600;font-stretch:normal;font-size:4.23333px;font-family:'Google Sans Flex';-inkscape-font-specification:'Google Sans Flex Semi-Bold';letter-spacing:0px;stroke-width:0.264583"
+         x="0.26246798"
+         y="5.2800207">Exp</tspan></text>
   </g>
   <metadata
      id="metadata1">

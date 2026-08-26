@@ -173,9 +173,14 @@ class MainWindow(QMainWindow):
 
         # 方面選択用タブバー
         self.direction_tab_bar = QTabBar()
-        self.direction_tab_bar.addTab("下り時刻表")
-        self.direction_tab_bar.addTab("上り時刻表")
+        self.direction_tab_bar.addTab(QIcon("assets/outbound.png"), "下り時刻表")
+        self.direction_tab_bar.addTab(QIcon("assets/inbound.png"), "上り時刻表")
         self.direction_tab_bar.addTab("運用表")
+        self.direction_tab_bar.setExpanding(False)
+        self.direction_tab_bar.setStyleSheet("""
+            QTabBar::tab { height: 35px; width: 135px; padding-left: 10px; padding-right: 30px; background-color: #e7e7e7; }
+            QTabBar::tab:selected { background-color: #f7f7f7; }
+        """)
         self.direction_tab_bar.currentChanged.connect(self._on_timetable_settings_changed)
         self.timetable_layout.addWidget(self.direction_tab_bar)
 
