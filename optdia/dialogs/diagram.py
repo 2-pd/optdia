@@ -1,4 +1,5 @@
 import re
+import copy
 import datetime
 from PySide6.QtCore import Qt, QDate, QRect, QEvent, Signal, QTimer
 from PySide6.QtGui import QColor, QPainter, QPen
@@ -154,6 +155,102 @@ class AddDiagramDialog(QDialog):
         diagram_initial = self.initial_edit.text().strip()
 
         self.id_edit.setStyleSheet("")
+
+        if not diagram_id:
+            self.warning_label.setText("IDを指定してください")
+            self.id_edit.setStyleSheet("background-color: #ffeeee;")
+            return
+        if not re.match(r"^[a-zA-Z0-9_]+$", diagram_id):
+            self.warning_label.setText("IDには半角英数字とアンダーバーのみが使用可能です")
+            self.id_edit.setStyleSheet("background-color: #ffeeee;")
+            return
+        if diagram_id in self.project.diagrams:
+            self.warning_label.setText("既に使用されているIDです")
+            self.id_edit.setStyleSheet("background-color: #ffeeee;")
+            return
+
+        if not diagram_initial:
+            self.warning_label.setText("1文字表記を指定してください")
+            self.initial_edit.setStyleSheet("background-color: #ffeeee;")
+            return
+
+        self.accept()
+
+
+# ダイヤの複製ダイアログ
+class DuplicateDiagramDialog(QDialog):
+    def __init__(self, parent, project: OptDiaProject, source_diagram_id: str):
+        super().__init__(parent)
+        self.project = project
+        self.source_diagram_id = source_diagram_id
+        self.setWindowTitle("ダイヤの複製")
+        self.setFixedSize(480, 320)
+
+        source_diag = project.diagrams.get(source_diagram_id, {})
+        default_id = source_diagram_id + "_copy"
+        default_name = source_diag.get("diagram_name", "") + "のコピー"
+
+        layout = QVBoxLayout(self)
+
+        # 新しいダイヤのID
+        layout.addWidget(QLabel("新しいダイヤのID:"))
+        self.id_edit = QLineEdit(default_id)
+        self.id_edit.setPlaceholderText("例) weekday")
+        self.id_edit.textChanged.connect(self._clear_id_error)
+        layout.addWidget(self.id_edit)
+
+        # 警告表示スペース
+        self.warning_label = QLabel("")
+        self.warning_label.setStyleSheet("color: red; padding-left: 5px;")
+        layout.addWidget(self.warning_label)
+
+        # 新しいダイヤ名
+        layout.addWidget(QLabel("新しいダイヤ名:"))
+        self.name_edit = QLineEdit(default_name)
+        self.name_edit.setPlaceholderText("例) 平日ダイヤ")
+        layout.addWidget(self.name_edit)
+
+        # ダイヤ名の1文字表記
+        layout.addWidget(QLabel("ダイヤ名の1文字表記:"))
+        self.initial_edit = QLineEdit()
+        self.initial_edit.setPlaceholderText("例) 平")
+        self.initial_edit.setFixedWidth(80)
+        self.initial_edit.editingFinished.connect(self._on_initial_editing_finished)
+        layout.addWidget(self.initial_edit)
+
+        layout.addStretch()
+
+        # ボタンエリア (OK / キャンセル)
+        button_layout = QHBoxLayout()
+        self.ok_button = QPushButton("OK")
+        self.cancel_button = QPushButton("キャンセル")
+
+        button_layout.addStretch()
+        button_layout.addWidget(self.ok_button)
+        button_layout.addWidget(self.cancel_button)
+        layout.addLayout(button_layout)
+
+        self.ok_button.clicked.connect(self._on_ok_clicked)
+        self.cancel_button.clicked.connect(self.reject)
+
+    def _clear_id_error(self):
+        """ID入力欄のエラー表示状態をクリアする"""
+        self.id_edit.setStyleSheet("")
+        self.warning_label.setText("")
+
+    def _on_initial_editing_finished(self):
+        """1文字表記の入力欄のフォーカスが外れたときに、2文字目以降を削除する"""
+        text = self.initial_edit.text()
+        if len(text) > 1:
+            self.initial_edit.setText(text[0])
+
+    def _on_ok_clicked(self):
+        """入力内容を検証し、問題なければ accept する"""
+        diagram_id = self.id_edit.text().strip()
+        diagram_initial = self.initial_edit.text().strip()
+
+        self.id_edit.setStyleSheet("")
+        self.initial_edit.setStyleSheet("")
 
         if not diagram_id:
             self.warning_label.setText("IDを指定してください")
@@ -575,12 +672,23 @@ class DiagramEditorDialog(QDialog):
 
         edit_form_layout.addStretch()
 
-        # ダイヤ削除ボタン
+        # ダイヤ複製・削除ボタン行
+        diagram_action_row = QHBoxLayout()
+        diagram_action_row.addStretch()
+
+        self.duplicate_diagram_button = QPushButton("このダイヤを複製")
+        self.duplicate_diagram_button.setStyleSheet("QPushButton { border: none; text-decoration: underline; background-color: transparent; }")
+        self.duplicate_diagram_button.setCursor(Qt.PointingHandCursor)
+        self.duplicate_diagram_button.clicked.connect(self._on_duplicate_diagram)
+        diagram_action_row.addWidget(self.duplicate_diagram_button)
+
         self.delete_diagram_button = QPushButton("このダイヤを削除")
         self.delete_diagram_button.setFixedSize(120, 30)
         self.delete_diagram_button.clicked.connect(self._on_delete_diagram)
         self.delete_diagram_button.setStyleSheet("QPushButton { color: #cc3333; border: none; text-decoration: underline; background-color: transparent; }")
-        edit_form_layout.addWidget(self.delete_diagram_button, alignment=Qt.AlignRight)
+        diagram_action_row.addWidget(self.delete_diagram_button)
+
+        edit_form_layout.addLayout(diagram_action_row)
 
         self.right_stack.addWidget(self.edit_form_page)
 
@@ -701,6 +809,7 @@ class DiagramEditorDialog(QDialog):
         self.diagram_name_edit.setEnabled(enabled)
         self.diagram_initial_edit.setEnabled(enabled)
         self.background_color_picker.setEnabled(enabled)
+        self.duplicate_diagram_button.setEnabled(enabled)
         self.delete_diagram_button.setEnabled(enabled)
 
     def _populate_diagram_list(self):
@@ -869,6 +978,90 @@ class DiagramEditorDialog(QDialog):
             if hasattr(self.parent(), "set_modified"):
                 self.parent().set_modified(True)
             self._refresh_calendar_tab()
+
+    def _on_duplicate_diagram(self):
+        """選択中の運転ダイヤを複製する"""
+        selected_items = self.diagram_list_widget.selectedItems()
+        if not selected_items:
+            return
+
+        source_diagram_id = selected_items[0].data(Qt.UserRole)
+
+        dialog = DuplicateDiagramDialog(self, self.project, source_diagram_id)
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        new_diagram_id = dialog.id_edit.text().strip()
+        new_diagram_name = dialog.name_edit.text().strip()
+        new_diagram_initial = dialog.initial_edit.text().strip()
+
+        # ダイヤ本体のディープコピー
+        source_diag = self.project.diagrams.get(source_diagram_id, {})
+        new_diag = copy.deepcopy(source_diag)
+        new_diag["diagram_id"] = new_diagram_id
+        new_diag["diagram_name"] = new_diagram_name
+        new_diag["diagram_initial"] = new_diagram_initial
+
+        self.project.diagrams[new_diagram_id] = new_diag
+        self.project.diagrams_order.append(new_diagram_id)
+
+        # 各運行系統のデータに対する処理
+        for route in self.project.routes.values():
+            if "trains_by_diagram" not in route:
+                route["trains_by_diagram"] = {}
+
+            # trains_by_diagram に複製したダイヤのエントリを追加
+            source_tbd = route["trains_by_diagram"].get(source_diagram_id)
+            if source_tbd is not None:
+                # to_be_saved が True の列車のみを含むようにコピー
+                new_tbd = copy.deepcopy(source_tbd)
+                for direction_key in ["inbound_trains", "outbound_trains"]:
+                    order_key = f"{direction_key}_order"
+                    if direction_key in new_tbd:
+                        # to_be_saved=True でない列車を除外
+                        filtered_ids = [
+                            tid for tid in new_tbd.get(order_key, [])
+                            if new_tbd[direction_key].get(tid, {}).get("to_be_saved") is True
+                        ]
+                        new_tbd[direction_key] = {
+                            tid: new_tbd[direction_key][tid]
+                            for tid in filtered_ids
+                        }
+                        new_tbd[order_key] = filtered_ids
+            else:
+                new_tbd = {
+                    "inbound_trains": {},
+                    "inbound_trains_order": [],
+                    "outbound_trains": {},
+                    "outbound_trains_order": []
+                }
+
+            route["trains_by_diagram"][new_diagram_id] = new_tbd
+
+            # 逆引き用に列車のマスタデータへダイヤIDを紐付ける
+            for train_key in ["inbound_trains", "outbound_trains"]:
+                d_trains = source_tbd.get(train_key, {})
+
+                for d_train_id, d_train in d_trains.items():
+                    if not d_train["to_be_saved"]:
+                        continue
+
+                    m_train = route.get(train_key, {}).get(d_train_id)
+                    if m_train is not None and new_diagram_id not in m_train["_diagram_ids"]:
+                        m_train["_diagram_ids"].append(new_diagram_id)
+
+        # リスト表示を更新し、複製されたダイヤを選択状態にする
+        self._populate_diagram_list()
+        for i in range(self.diagram_list_widget.count()):
+            if self.diagram_list_widget.item(i).data(Qt.UserRole) == new_diagram_id:
+                self.diagram_list_widget.setCurrentRow(i)
+                break
+        self._on_diagram_selected()
+
+        # メインウィンドウに変更フラグを立てる
+        if hasattr(self.parent(), "set_modified"):
+            self.parent().set_modified(True)
+        self._refresh_calendar_tab()
 
     def _on_delete_diagram(self):
         """選択中の運転ダイヤを削除する"""
