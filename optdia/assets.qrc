@@ -4,9 +4,12 @@
         <file>assets/line.png</file>
         <file>assets/train_type.png</file>
         <file>assets/route.png</file>
-        <file>assets/diagram.png</file>
+        <file>assets/dia.png</file>
         <file>assets/outbound.png</file>
         <file>assets/inbound.png</file>
+        <file>assets/diagram.png</file>
+        <file>assets/timeline.png</file>
+        <file>assets/undo.png</file>
         <file>assets/left.png</file>
         <file>assets/draggable.png</file>
         <file>assets/accordion.png</file>

@@ -2,13 +2,13 @@
 <!-- Created with Inkscape (http://www.inkscape.org/) -->
 
 <svg
-   width="24"
-   height="24"
-   viewBox="0 0 6.3499992 6.3499992"
+   width="20"
+   height="20"
+   viewBox="0 0 5.291666 5.291666"
    version="1.1"
    id="svg1"
    inkscape:version="1.4.4 (dcaf3e7d9e, 2026-05-05)"
-   sodipodi:docname="ダイヤアイコン.svg"
+   sodipodi:docname="ダイヤグラムアイコン.svg"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
    xmlns="http://www.w3.org/2000/svg"
@@ -25,10 +25,9 @@
      inkscape:pagecheckerboard="0"
      inkscape:deskcolor="#d1d1d1"
      inkscape:document-units="px"
-     showguides="false"
-     inkscape:zoom="10"
-     inkscape:cx="0.3"
-     inkscape:cy="12"
+     inkscape:zoom="30"
+     inkscape:cx="10.866667"
+     inkscape:cy="9.9"
      inkscape:window-width="1920"
      inkscape:window-height="1008"
      inkscape:window-x="0"
@@ -42,18 +41,28 @@
      inkscape:groupmode="layer"
      id="layer1">
     <path
-       style="fill:none;stroke:#999999;stroke-width:0.264583;stroke-linecap:round;stroke-dasharray:none;stroke-opacity:1;paint-order:stroke markers fill"
-       d="M 0.2645833,0.5291666 V 4.7624994 L 2.1166664,5.8208326 4.2333328,4.7624994 6.0854159,5.8208326 V 1.5874998 L 4.2333328,0.5291666 2.1166664,1.5874998 Z"
-       id="path1"
-       sodipodi:nodetypes="ccccccccc" />
+       style="fill:none;stroke:#cccccc;stroke-width:0.5291666;stroke-linecap:butt;stroke-linejoin:miter;stroke-dasharray:none;stroke-opacity:1;paint-order:stroke markers fill"
+       d="M 0,5.0270825 H 5.291666"
+       id="path5" />
     <path
-       style="fill:none;stroke:#999999;stroke-width:0.2645833;stroke-linecap:round;stroke-dasharray:none;stroke-opacity:1;paint-order:stroke markers fill"
-       d="M 2.1166664,1.5874998 V 5.8208326"
-       id="path2" />
+       style="fill:none;stroke:#cccccc;stroke-width:0.5291666;stroke-linecap:butt;stroke-linejoin:miter;stroke-dasharray:none;stroke-opacity:1;paint-order:stroke markers fill"
+       d="M 0,2.3812495 H 5.291666"
+       id="path4"
+       sodipodi:nodetypes="cc" />
     <path
-       style="fill:none;stroke:#999999;stroke-width:0.2645833;stroke-linecap:round;stroke-dasharray:none;stroke-opacity:1;paint-order:stroke markers fill"
-       d="M 4.2333328,0.5291666 V 4.7624994"
+       style="fill:none;stroke:#cccccc;stroke-width:0.5291666;stroke-linecap:butt;stroke-linejoin:miter;stroke-dasharray:none;stroke-opacity:1;paint-order:stroke markers fill"
+       d="M 1.3229165e-4,0.26458315 H 5.291666"
        id="path3" />
+    <path
+       style="fill:none;stroke:#999999;stroke-width:0.5291666;stroke-linecap:butt;stroke-linejoin:miter;stroke-dasharray:none;stroke-opacity:1;paint-order:stroke markers fill"
+       d="M 0,5.0270827 H 0.7937499 L 3.9687495,0.2645833 H 5.291666"
+       id="path2"
+       sodipodi:nodetypes="cccc" />
+    <path
+       style="fill:none;stroke:#333333;stroke-width:0.5291666;stroke-linecap:butt;stroke-linejoin:miter;stroke-dasharray:none;stroke-opacity:1;paint-order:stroke markers fill"
+       d="m 0,0.2645833 h 1.0583332 l 1.3229165,2.1166664 h 1.0583332 l 1.5874998,2.645833 H 5.291666"
+       id="path1"
+       sodipodi:nodetypes="cccccc" />
   </g>
   <metadata
      id="metadata1">

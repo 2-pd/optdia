@@ -179,7 +179,7 @@ class MainWindow(QMainWindow):
         self.direction_tab_bar = QTabBar()
         self.direction_tab_bar.addTab(QIcon("assets/outbound.png"), "下り時刻表")
         self.direction_tab_bar.addTab(QIcon("assets/inbound.png"), "上り時刻表")
-        self.direction_tab_bar.addTab("運用表")
+        self.direction_tab_bar.addTab(QIcon("assets/timeline.png"), "車両運用表")
         self.direction_tab_bar.setExpanding(False)
         self.direction_tab_bar.setStyleSheet("""
             QTabBar::tab { height: 35px; width: 135px; padding-left: 10px; padding-right: 30px; background-color: #e7e7e7; }
@@ -225,8 +225,45 @@ class MainWindow(QMainWindow):
         self.timetable_search_bar.setFixedHeight(40)
         self.timetable_search_bar.setStyleSheet("background-color: #f7f7f7; border-bottom: 1px solid #dddddd;")
         timetable_search_layout = QHBoxLayout(self.timetable_search_bar)
-        timetable_search_layout.setContentsMargins(10, 0, 10, 0)
-        timetable_search_layout.setSpacing(8)
+        timetable_search_layout.setContentsMargins(5, 0, 5, 0)
+        timetable_search_layout.setSpacing(0)
+
+        flip_h_transform = QTransform().scale(-1, 1)
+        borderless_btn_style = """
+            QPushButton {
+                border: none;
+                background-color: transparent;
+            }
+            QPushButton:hover {
+                background-color: #eeeeee;
+            }
+        """
+
+        # 元に戻すボタン用のアイコンを読み込み、やり直しボタン用に左右反転したアイコンを生成
+        undo_pixmap = QPixmap(":/assets/undo.png")
+        undo_icon = QIcon(undo_pixmap) # 元に戻すボタン用のアイコン
+        redo_pixmap = undo_pixmap.transformed(flip_h_transform)
+        redo_icon = QIcon(redo_pixmap) # やり直しボタン用のアイコン
+
+        self.btn_undo = QPushButton()
+        self.btn_undo.setIcon(undo_icon)
+        self.btn_undo.setFixedWidth(30)
+        self.btn_undo.setFixedHeight(30)
+        self.btn_undo.setStyleSheet(borderless_btn_style)
+        self.btn_undo.clicked.connect(self._on_undo)
+        self.btn_undo.setToolTip("元に戻す")
+        timetable_search_layout.addWidget(self.btn_undo)
+        self.btn_undo.setEnabled(False)
+
+        self.btn_redo = QPushButton()
+        self.btn_redo.setIcon(redo_icon)
+        self.btn_redo.setFixedWidth(30)
+        self.btn_redo.setFixedHeight(30)
+        self.btn_redo.setStyleSheet(borderless_btn_style)
+        self.btn_redo.clicked.connect(self._on_redo)
+        self.btn_redo.setToolTip("やり直し")
+        timetable_search_layout.addWidget(self.btn_redo)
+        self.btn_redo.setEnabled(False)
 
         timetable_search_layout.addStretch(1)
 
@@ -242,21 +279,10 @@ class MainWindow(QMainWindow):
         self.train_search_label.setStyleSheet("font-size: 12px; color: #555555;")
         timetable_search_layout.addWidget(self.train_search_label)
 
-        borderless_btn_style = """
-            QPushButton {
-                border: none;
-                background-color: transparent;
-            }
-            QPushButton:hover {
-                background-color: #eeeeee;
-            }
-        """
-
         # 左移動ボタン用のアイコンを読み込み、右移動ボタン用に左右反転したアイコンを生成
         left_pixmap = QPixmap(":/assets/left.png")
         left_icon = QIcon(left_pixmap) # 左移動ボタン用のアイコン
-        transform = QTransform().scale(-1, 1)
-        right_pixmap = left_pixmap.transformed(transform)
+        right_pixmap = left_pixmap.transformed(flip_h_transform)
         right_icon = QIcon(right_pixmap) # 右移動ボタン用のアイコン
 
         self.btn_search_prev = QPushButton()
@@ -436,7 +462,7 @@ class MainWindow(QMainWindow):
         for did in self.project.diagrams_order:
             diag = self.project.diagrams[did]
             item = QListWidgetItem(diag.get("diagram_name", did))
-            item.setIcon(QIcon(':/assets/diagram.png'))
+            item.setIcon(QIcon(':/assets/dia.png'))
             item.setData(Qt.UserRole, did)
             self.diagram_list_widget.addItem(item)
 
@@ -561,6 +587,8 @@ class MainWindow(QMainWindow):
     def _update_undo_redo_actions(self):
         self.undo_action.setEnabled(self.history_manager.can_undo())
         self.redo_action.setEnabled(self.history_manager.can_redo())
+        self.btn_undo.setEnabled(self.history_manager.can_undo())
+        self.btn_redo.setEnabled(self.history_manager.can_redo())
 
     def _on_undo(self):
         if self.history_manager.undo(self.project):
