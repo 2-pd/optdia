@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QCalendarWidget, QDateEdit, QComboBox,
     QGridLayout, QFrame, QTableView
 )
-from project import OptDiaProject
+from core.project import OptDiaProject
 from common.gui_utils import create_color_square_pixmap
 from common.widgets import ColorPickerWidget, AccordionWidget
 

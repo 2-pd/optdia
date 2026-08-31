@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QListWidget, QListWidgetItem, QCheckBox, QStackedWidget,
     QRadioButton, QComboBox, QGroupBox, QFormLayout, QSpinBox, QWidget, QTabWidget
 )
-from project import OptDiaProject
+from core.project import OptDiaProject
 from common.gui_utils import HtmlDelegate, create_color_square_pixmap
 from common.widgets import ColorPickerWidget
 

@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QListWidget, QListWidgetItem, QStackedWidget, QComboBox, QFormLayout,
     QWidget, QPushButton, QSizePolicy, QScrollArea
 )
-from project import OptDiaProject
+from core.project import OptDiaProject
 
 # 運行系統の追加ダイアログ
 class AddRouteDialog(QDialog):

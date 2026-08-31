@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QCheckBox, QPlainTextEdit, QMessageBox
 )
 from common.gui_utils import HtmlDelegate
-from project import OptDiaProject
+from core.project import OptDiaProject
 from dialogs.operation import VehicleOperationEditorDialog
 
 # 列車を選択するためのポップアップダイアログ
@@ -196,6 +196,8 @@ class DiagramPicker(QDialog):
         order_key = train_key + "_order"
         m_train = route.get(train_key, {}).get(self.train_id)
         
+        events_to_push = []
+
         # 現在のダイヤでダミー列車（未保存）だった場合、他のダイヤへの割り当て等により保存対象へ昇格させる
         current_tbd = route.get("trains_by_diagram", {}).get(self.current_diagram_id, {})
         current_d_train = current_tbd.get(train_key, {}).get(self.train_id)
@@ -204,6 +206,8 @@ class DiagramPicker(QDialog):
             has_changed = True
         elif current_d_train and current_d_train.get("to_be_saved") and not self._initial_checkbox_states.get(self.current_diagram_id, False):
             has_changed = True # 現在のダイヤが元々to_be_saved=Falseだったが、今回to_be_saved=Trueになった場合
+
+        from core.events import AddTrainDiagramEvent, RemoveTrainDiagramEvent
 
         for did, cb in self.checkboxes.items():
             if did == self.current_diagram_id: continue # 現在のダイヤはスキップ
@@ -214,10 +218,11 @@ class DiagramPicker(QDialog):
             # チェック状態が変更されたか、または初期状態と異なるかを確認
             if cb.isChecked() and self.train_id not in d_trains:
                 # ダイヤへの追加: 列車ID以外のキーはNoneまたは空配列で初期化
-                d_trains[self.train_id] = {
+                new_d_train = {
                     "train_id": self.train_id, "operations": [], "car_count": None,
                     "destination": None, "subsequent_trains": [], "to_be_saved": True
                 }
+                d_trains[self.train_id] = new_d_train
                 # 挿入位置の決定: 末尾のダミー列車(to_be_saved=False)より前に挿入
                 insert_idx = len(order)
                 for i, tid in enumerate(order):
@@ -226,17 +231,27 @@ class DiagramPicker(QDialog):
                         break
                 order.insert(insert_idx, self.train_id)
                 if did not in m_train["_diagram_ids"]: m_train["_diagram_ids"].append(did)
+                events_to_push.append(AddTrainDiagramEvent(self.route_id, self.direction, self.train_id, did, insert_idx, new_d_train))
                 has_changed = True
             elif not cb.isChecked() and self.train_id in d_trains:
                 # ダイヤからの削除
+                old_d_train = copy.deepcopy(d_trains[self.train_id])
+                old_idx = order.index(self.train_id) if self.train_id in order else 0
                 if self.train_id in order: order.remove(self.train_id)
                 del d_trains[self.train_id]
                 if did in m_train["_diagram_ids"]: m_train["_diagram_ids"].remove(did)
+                events_to_push.append(RemoveTrainDiagramEvent(self.route_id, self.direction, self.train_id, did, old_idx, old_d_train))
                 has_changed = True
 
         # 逆引き用ダイヤIDリストをプロジェクト順でソート
         m_train["_diagram_ids"].sort(key=lambda x: self.project.diagrams_order.index(x) if x in self.project.diagrams_order else 999)
         
+        view = self.parent()
+        if view and hasattr(view, "model"):
+            model = view.model()
+            if hasattr(model, "history_manager") and model.history_manager and events_to_push:
+                model.history_manager.push_events(events_to_push)
+
         if has_changed:
             self._set_modified()
         self.accept()
@@ -550,6 +565,9 @@ class OperationPickerDialog(QDialog):
         if not self.d_train:
             return
 
+        from core.events import ChangeTrainOperationEvent
+        old_ops = copy.deepcopy(self.d_train.get("operations", []))
+
         ops = []
         has_valid = False
         for i in range(self.list_widget.count()):
@@ -574,6 +592,14 @@ class OperationPickerDialog(QDialog):
         self.d_train["operations"] = ops
         if has_valid:
             self.d_train["to_be_saved"] = True
+
+        if old_ops != ops:
+            view = self.parent()
+            if view and hasattr(view, "model"):
+                model = view.model()
+                if hasattr(model, "history_manager") and model.history_manager:
+                    ev = ChangeTrainOperationEvent(self.route_id, self.direction, self.train_id, self.diagram_id, old_ops, ops)
+                    model.history_manager.push_events([ev])
 
         # メインウィンドウに変更を通知
         view = self.parent()
@@ -708,6 +734,9 @@ class SubsequentTrainDialog(QDialog):
 
     def _on_add_clicked(self):
         """新しい連続列車のエントリを追加して再描画する"""
+        from core.events import ChangeSubsequentTrainEvent
+        old_subs = copy.deepcopy(self.d_train.get("subsequent_trains", []))
+
         if "subsequent_trains" not in self.d_train or self.d_train["subsequent_trains"] is None:
             self.d_train["subsequent_trains"] = []
         
@@ -716,6 +745,8 @@ class SubsequentTrainDialog(QDialog):
             "direction": self.direction,
             "train_id": None
         })
+
+        self._record_subs_change(old_subs, self.d_train["subsequent_trains"])
         self._refresh_list()
         self._set_modified()
 
@@ -774,12 +805,24 @@ class SubsequentTrainDialog(QDialog):
 
         return group
 
+    def _record_subs_change(self, old_subs, new_subs):
+        from core.events import ChangeSubsequentTrainEvent
+        view = self.parent()
+        if view and hasattr(view, "model"):
+            model = view.model()
+            if hasattr(model, "history_manager") and model.history_manager:
+                train_id = self.d_train.get("train_id")
+                ev = ChangeSubsequentTrainEvent(self.route_id, self.direction, train_id, self.diagram_id, old_subs, new_subs)
+                model.history_manager.push_events([ev])
+
     def _on_route_changed(self, index, new_route_id):
         """運行系統が変更されたら、選択中の列車をクリアする"""
         item = self.d_train["subsequent_trains"][index]
         if item["route_id"] != new_route_id:
+            old_subs = copy.deepcopy(self.d_train.get("subsequent_trains", []))
             item["route_id"] = new_route_id
             item["train_id"] = None
+            self._record_subs_change(old_subs, self.d_train["subsequent_trains"])
             self._refresh_list()
             self._set_modified()
 
@@ -787,8 +830,10 @@ class SubsequentTrainDialog(QDialog):
         """方面が変更されたら、選択中の列車をクリアする"""
         item = self.d_train["subsequent_trains"][index]
         if item["direction"] != new_direction:
+            old_subs = copy.deepcopy(self.d_train.get("subsequent_trains", []))
             item["direction"] = new_direction
             item["train_id"] = None
+            self._record_subs_change(old_subs, self.d_train["subsequent_trains"])
             self._refresh_list()
             self._set_modified()
 
@@ -819,7 +864,9 @@ class SubsequentTrainDialog(QDialog):
         picker.move(pos)
         
         if picker.exec() == QDialog.Accepted:
+            old_subs = copy.deepcopy(self.d_train.get("subsequent_trains", []))
             item["train_id"] = picker.selected_train_id
+            self._record_subs_change(old_subs, self.d_train["subsequent_trains"])
             # ボタン内部のラベルを探して更新
             label = button.findChild(QLabel)
             if label:
@@ -829,7 +876,9 @@ class SubsequentTrainDialog(QDialog):
     def _on_delete_subsequent(self, index):
         """指定されたインデックスの連続列車設定を削除して再描画する"""
         if "subsequent_trains" in self.d_train:
+            old_subs = copy.deepcopy(self.d_train.get("subsequent_trains", []))
             self.d_train["subsequent_trains"].pop(index)
+            self._record_subs_change(old_subs, self.d_train["subsequent_trains"])
             self._refresh_list()
             self._set_modified()
 
@@ -1020,6 +1069,10 @@ def split_train_at_cell(parent, model, index):
     if reply != QMessageBox.Yes:
         return
 
+    from core.events import AddTrainEvent, ChangeTrainStopEvent, RemoveTrainStopEvent, ChangeSubsequentTrainEvent
+    events_to_push = []
+    old_m_stops = copy.deepcopy(m_train.get("stops", []))
+
     # 列車の分割
     # 1. 新しい列車IDを生成
     chars = string.ascii_letters + string.digits
@@ -1069,6 +1122,7 @@ def split_train_at_cell(parent, model, index):
         d_order_for_did = tbd_for_did.get(f"{train_key}_order", [])
         if train_id in d_trains_for_did and d_trains_for_did[train_id].get("to_be_saved") is True:
             orig_d_train = d_trains_for_did[train_id]
+            old_orig_subs = copy.deepcopy(orig_d_train.get("subsequent_trains", []))
             # 運転ダイヤ別の列車情報をコピー
             new_d_train = copy.deepcopy(orig_d_train)
             new_d_train["train_id"] = new_train_id
@@ -1080,19 +1134,35 @@ def split_train_at_cell(parent, model, index):
                 "direction": direction,
                 "train_id": new_train_id
             }]
+            events_to_push.append(ChangeSubsequentTrainEvent(route_id, direction, train_id, did, old_orig_subs, orig_d_train["subsequent_trains"]))
             
             # オリジナルの列車データのIDの直後にコピーの列車のIDを挿入
             if train_id in d_order_for_did:
                 idx = d_order_for_did.index(train_id)
                 d_order_for_did.insert(idx + 1, new_train_id)
+                insert_idx = idx + 1
             else:
                 d_order_for_did.append(new_train_id)
+                insert_idx = len(d_order_for_did) - 1
                 
             d_trains_for_did[new_train_id] = new_d_train
+            events_to_push.append(AddTrainEvent(route_id, direction, new_train_id, did, insert_idx, new_d_train, new_m_train))
+
+    # オリジナル列車の stop 変更イベント
+    for old_s in old_m_stops:
+        s_idx = old_s.get("stop_idx")
+        matching = next((s for s in m_train["stops"] if s.get("stop_idx") == s_idx), None)
+        if not matching:
+            events_to_push.append(RemoveTrainStopEvent(route_id, direction, train_id, s_idx, old_s))
+        elif matching != old_s:
+            events_to_push.append(ChangeTrainStopEvent(route_id, direction, train_id, s_idx, old_s, matching))
 
     # 経由駅情報の正規化
     model._normalize_train_stops(m_train)
     model._normalize_train_stops(new_m_train)
+
+    if model.history_manager and events_to_push:
+        model.history_manager.push_events(events_to_push)
 
     # 時刻表テーブルのモデルを更新
     model.update_data(model.route_id, model.diagram_id, model.direction)

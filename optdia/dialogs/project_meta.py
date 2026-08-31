@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, QTextEdit, QDialogButtonBox
-from project import OptDiaProject
+from core.project import OptDiaProject
 
 # プロジェクトのメタデータを編集するダイアログ
 class ProjectPropertiesDialog(QDialog):

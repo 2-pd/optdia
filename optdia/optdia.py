@@ -14,7 +14,8 @@ from PySide6.QtWidgets import (
 )
 import assets_rc
 from version import APP_NAME, __version__
-from project import OptDiaProject, load_project, SchemaVersionError
+from core.project import OptDiaProject, load_project, SchemaVersionError
+from core.history_manager import HistoryManager
 from settings import AppSettings
 from common.gui_utils import HtmlDelegate, create_color_square_pixmap
 from common.widgets import LineSampleWidget
@@ -37,6 +38,9 @@ class MainWindow(QMainWindow):
         self.project = project
         self.filepath = filepath
         self.is_modified = False
+
+        # 履歴管理クラスの初期化
+        self.history_manager = HistoryManager(self)
 
         # 設定管理クラスの初期化
         self.app_settings = AppSettings()
@@ -185,7 +189,7 @@ class MainWindow(QMainWindow):
         self.timetable_layout.addWidget(self.direction_tab_bar)
 
         # 時刻表テーブル
-        self.timetable_model = TimetableModel(self.project)
+        self.timetable_model = TimetableModel(self.project, self.history_manager)
         self.timetable_model.set_auto_fill_enabled(self.auto_fill_action.isChecked())
         self.timetable_model.set_adjust_later_enabled(self.adjust_later_action.isChecked())
         self.timetable_model.dataChanged.connect(lambda: self.set_modified(True))
@@ -359,6 +363,7 @@ class MainWindow(QMainWindow):
 
         # 運用ガントチャート
         self.timeline_view = TimelineView()
+        self.timeline_view.scene.set_history_manager(self.history_manager)
         self.timeline_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         op_body_layout.addWidget(self.timeline_view, stretch=1)
 
@@ -519,6 +524,22 @@ class MainWindow(QMainWindow):
         # 編集(E)
         edit_menu = menu_bar.addMenu("編集(&E)")
 
+        # 「元に戻す」
+        self.undo_action = edit_menu.addAction("元に戻す(&U)")
+        self.undo_action.setShortcut("Ctrl+Z")
+        self.undo_action.triggered.connect(self._on_undo)
+        self.undo_action.setEnabled(False)
+
+        # 「やり直し」
+        self.redo_action = edit_menu.addAction("やり直し(&R)")
+        self.redo_action.setShortcut("Ctrl+Y")
+        self.redo_action.triggered.connect(self._on_redo)
+        self.redo_action.setEnabled(False)
+
+        self.history_manager.historyChanged.connect(self._update_undo_redo_actions)
+
+        edit_menu.addSeparator()
+
         # 「同じ種別の列車から時刻を補完」チェックボックス
         self.auto_fill_action = QAction("同じ種別の列車から時刻を補完", self, checkable=True)
         self.auto_fill_action.setChecked(self.app_settings.load_auto_fill_enabled())
@@ -536,6 +557,18 @@ class MainWindow(QMainWindow):
         help_menu = menu_bar.addMenu("ヘルプ(&H)")
         about_action = help_menu.addAction(f"{APP_NAME}について(&A)")
         about_action.triggered.connect(self._on_about)
+
+    def _update_undo_redo_actions(self):
+        self.undo_action.setEnabled(self.history_manager.can_undo())
+        self.redo_action.setEnabled(self.history_manager.can_redo())
+
+    def _on_undo(self):
+        if self.history_manager.undo(self.project):
+            self.set_modified(True)
+
+    def _on_redo(self):
+        if self.history_manager.redo(self.project):
+            self.set_modified(True)
 
     def _on_auto_fill_triggered(self, checked: bool):
         """「同じ種別の列車から時刻を補完」チェックボックスのトリガーハンドラ"""
@@ -655,6 +688,7 @@ class MainWindow(QMainWindow):
         """現在のウィンドウでプロジェクトをロードする"""
         try:
             self.project = load_project(filepath)
+            self.history_manager.clear()
             self.timetable_model.project = self.project
             self.filepath = filepath
             self.set_modified(False)

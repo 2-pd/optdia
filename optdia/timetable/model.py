@@ -1,9 +1,20 @@
 import random
 import string
 import re
+import copy
 from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QTimer, Signal
 from PySide6.QtGui import QColor
-from project import OptDiaProject
+from core.project import OptDiaProject
+from core.history_manager import HistoryManager
+from core.events import (
+    BaseEvent, AddTrainEvent, ReorderTrainsEvent, ChangeTrainNumberEvent,
+    AddTrainDiagramEvent, RemoveTrainDiagramEvent, AddTrainOperationEvent,
+    RemoveTrainOperationEvent, ChangeTrainOperationEvent, ChangeTrainCarCountEvent,
+    ChangeTrainTypeEvent, ChangeTrainNamedNumberEvent, ChangeTrainDestinationEvent,
+    AddTrainStopEvent, RemoveTrainStopEvent, ChangeTrainStopEvent,
+    AddSubsequentTrainEvent, RemoveSubsequentTrainEvent, ChangeSubsequentTrainEvent,
+    ChangeTrainNoteEvent
+)
 
 TrackIdRole = Qt.UserRole + 100
 StopTypeRole = Qt.UserRole + 101
@@ -13,9 +24,10 @@ StopTypeRole = Qt.UserRole + 101
 class TimetableModel(QAbstractTableModel):
     trainsReordered = Signal()
 
-    def __init__(self, project: OptDiaProject):
+    def __init__(self, project: OptDiaProject, history_manager: Optional[HistoryManager] = None):
         super().__init__()
         self.project = project
+        self.history_manager = history_manager
         self.route_id = None
         self.diagram_id = None
         self.direction = "outbound"
@@ -28,6 +40,53 @@ class TimetableModel(QAbstractTableModel):
         self._dest_cache = {}    # 行き先表示高速化用
         self.auto_fill_enabled = False
         self.adjust_later_enabled = False
+
+        if self.history_manager:
+            self.history_manager.undone.connect(self._on_history_changed)
+            self.history_manager.redone.connect(self._on_history_changed)
+
+    def set_history_manager(self, history_manager: HistoryManager):
+        if self.history_manager:
+            try:
+                self.history_manager.undone.disconnect(self._on_history_changed)
+                self.history_manager.redone.disconnect(self._on_history_changed)
+            except Exception:
+                pass
+        self.history_manager = history_manager
+        if self.history_manager:
+            self.history_manager.undone.connect(self._on_history_changed)
+            self.history_manager.redone.connect(self._on_history_changed)
+
+    def _on_history_changed(self, events: list):
+        """Undo/Redo 実行時に表示を更新する。変更のあった列以外の表示は更新しない"""
+        self.clear_destination_cache()
+
+        # 構造的な変更（列車の追加/削除/並び替え/運転日追加・削除など）があるかチェック
+        structural = False
+        affected_train_ids = set()
+        for ev in events:
+            affected_train_ids.add(ev.train_id)
+            if isinstance(ev, (AddTrainEvent, ReorderTrainsEvent, AddTrainDiagramEvent, RemoveTrainDiagramEvent)):
+                structural = True
+
+        if structural:
+            self.update_data(self.route_id, self.diagram_id, self.direction)
+        else:
+            # マスタ列車の stops 逆引きマップを再構築
+            if self.route_id:
+                route = self.project.routes.get(self.route_id, {})
+                train_key = "inbound_trains" if self.direction == "inbound" else "outbound_trains"
+                for tid in affected_train_ids:
+                    m_train = route.get(train_key, {}).get(tid)
+                    if m_train:
+                        self._normalize_train_stops(m_train)
+
+            # 影響を受けた列のみ dataChanged を発行
+            for tid in affected_train_ids:
+                if tid in self.train_ids:
+                    col = self.train_ids.index(tid)
+                    self.dataChanged.emit(self.index(0, col), self.index(self.rowCount() - 1, col), [Qt.DisplayRole, Qt.EditRole, Qt.ForegroundRole, Qt.BackgroundRole, StopTypeRole])
+
 
     def set_auto_fill_enabled(self, enabled):
         self.auto_fill_enabled = enabled
@@ -48,10 +107,12 @@ class TimetableModel(QAbstractTableModel):
         if from_idx == to_idx:
             return
 
+        tid_to_move = self.train_ids[from_idx]
         item = self.train_ids.pop(from_idx)
         self.train_ids.insert(to_idx, item)
 
         converted = False
+        converted_tids = []
         if self.route_id and self.diagram_id:
             route = self.project.routes.get(self.route_id)
             if route:
@@ -76,7 +137,12 @@ class TimetableModel(QAbstractTableModel):
                             t = d_trains.get(tid)
                             if t and not t.get("to_be_saved"):
                                 t["to_be_saved"] = True
+                                converted_tids.append(tid)
                                 converted = True
+
+        if self.history_manager and self.route_id and self.diagram_id:
+            ev = ReorderTrainsEvent(self.route_id, self.direction, tid_to_move, self.diagram_id, from_idx, to_idx, converted_tids)
+            self.history_manager.push_events([ev])
 
         if converted:
             self.update_data(self.route_id, self.diagram_id, self.direction)
@@ -368,6 +434,7 @@ class TimetableModel(QAbstractTableModel):
         m_train = m_trains.get(train_id)
         if not d_train or not m_train: return False
         
+        events_to_push = []
         changed = False
         if role == StopTypeRole:
             if row >= len(self.row_headers):
@@ -392,9 +459,12 @@ class TimetableModel(QAbstractTableModel):
                             "stop_idx": stop_idx
                         }
                         m_train["stops"].append(stop)
+                        events_to_push.append(AddTrainStopEvent(self.route_id, self.direction, train_id, len(m_train["stops"]) - 1, stop))
                         changed = True
                     elif stop.get("stop_type") != value:
+                        old_stop = copy.deepcopy(stop)
                         stop["stop_type"] = value
+                        events_to_push.append(ChangeTrainStopEvent(self.route_id, self.direction, train_id, stop_idx, old_stop, stop))
                         changed = True
                         
                     if changed:
@@ -404,14 +474,20 @@ class TimetableModel(QAbstractTableModel):
                             if curr_idx > 0:
                                 prev_stop = m_train["stops"][curr_idx - 1]
                                 if prev_stop.get("station_id") == stop.get("station_id"):
+                                    old_p = copy.deepcopy(prev_stop)
                                     prev_stop["stop_type"] = value
+                                    events_to_push.append(ChangeTrainStopEvent(self.route_id, self.direction, train_id, prev_stop.get("stop_idx"), old_p, prev_stop))
                             if curr_idx < len(m_train["stops"]) - 1:
                                 next_stop = m_train["stops"][curr_idx + 1]
                                 if next_stop.get("station_id") == stop.get("station_id"):
+                                    old_n = copy.deepcopy(next_stop)
                                     next_stop["stop_type"] = value
+                                    events_to_push.append(ChangeTrainStopEvent(self.route_id, self.direction, train_id, next_stop.get("stop_idx"), old_n, next_stop))
                         except ValueError:
                             pass
                         
+                        if self.history_manager and events_to_push:
+                            self.history_manager.push_events(events_to_push)
                         self._trigger_update(col, d_trains, index)
                     return changed
             return False
@@ -419,7 +495,9 @@ class TimetableModel(QAbstractTableModel):
         changed = False
         if row == 0: # 列車番号
             if m_train.get("train_number") != value:
+                old_num = m_train.get("train_number", "")
                 m_train["train_number"] = value
+                events_to_push.append(ChangeTrainNumberEvent(self.route_id, self.direction, train_id, old_num, value))
                 changed = True
         elif row == 1 or row == 2: # 運転日または運用番号 (ボタンなので直接編集不可)
             # 運用番号はデリゲートで処理されるため、直接のテキスト入力は受け付けない
@@ -428,29 +506,39 @@ class TimetableModel(QAbstractTableModel):
             try:
                 val = int(value) if value and value.strip() else None
                 if d_train.get("car_count") != val:
+                    old_cc = d_train.get("car_count")
                     d_train["car_count"] = val
+                    events_to_push.append(ChangeTrainCarCountEvent(self.route_id, self.direction, train_id, self.diagram_id, old_cc, val))
                     changed = True
             except ValueError: return False
         elif row == 4: # 種別・愛称
             if m_train.get("train_type_id") != value:
+                old_tt = m_train.get("train_type_id")
                 m_train["train_type_id"] = value
+                events_to_push.append(ChangeTrainTypeEvent(self.route_id, self.direction, train_id, old_tt, value))
                 changed = True
         elif row == 5: # 号数
             try:
                 val = int(value) if value and value.strip() else None
                 if m_train.get("named_train_number") != val:
+                    old_n = m_train.get("named_train_number")
                     m_train["named_train_number"] = val
+                    events_to_push.append(ChangeTrainNamedNumberEvent(self.route_id, self.direction, train_id, old_n, val))
                     changed = True
             except ValueError: return False
         elif row == 6: # 行き先
             # 空文字列の場合は None に置き換えて保持する
             val = value if value else None
             if d_train.get("destination") != val:
+                old_dest = d_train.get("destination")
                 d_train["destination"] = val
+                events_to_push.append(ChangeTrainDestinationEvent(self.route_id, self.direction, train_id, self.diagram_id, old_dest, val))
                 changed = True
         elif row == len(self.row_headers) + len(self.station_rows) + 1: # 備考
             if m_train.get("note") != value:
+                old_note = m_train.get("note", "")
                 m_train["note"] = value
+                events_to_push.append(ChangeTrainNoteEvent(self.route_id, self.direction, train_id, old_note, value))
                 changed = True
         elif row >= len(self.row_headers):
             row_idx = row - len(self.row_headers)
@@ -475,12 +563,17 @@ class TimetableModel(QAbstractTableModel):
                             "stop_type": 1, "stop_idx": stop_idx
                         }
                         m_train["stops"].append(stop)
+                        events_to_push.append(AddTrainStopEvent(self.route_id, self.direction, train_id, len(m_train["stops"]) - 1, stop))
                         changed = True
                     elif stop.get("track_id") != value:
+                        old_s = copy.deepcopy(stop)
                         stop["track_id"] = value
+                        events_to_push.append(ChangeTrainStopEvent(self.route_id, self.direction, train_id, stop_idx, old_s, stop))
                         changed = True
                     
                     if changed:
+                        if self.history_manager and events_to_push:
+                            self.history_manager.push_events(events_to_push)
                         self._trigger_update(col, d_trains, index)
                     return changed
 
@@ -502,6 +595,7 @@ class TimetableModel(QAbstractTableModel):
                 
                 # 管理用インデックス stop_idx を使用して、該当する駅訪問データを特定
                 stop = next((s for s in m_train["stops"] if s.get("stop_idx") == stop_idx), None)
+                old_stop_snapshot = copy.deepcopy(stop) if stop else None
 
                 if not stop:
                     # 時刻が入力されていない場合は、新しいstopを作成しない
@@ -539,6 +633,9 @@ class TimetableModel(QAbstractTableModel):
                 time_key = "arrival_time" if row_def["type"] == "arr" else "departure_time"
                 other_key = "departure_time" if row_def["type"] == "arr" else "arrival_time"
                 old_time_str = stop.get(time_key)
+
+                # 他のストップが変更される可能性に備えて、全ストップの事前スナップショットを記録
+                all_stops_before = {s["stop_idx"]: copy.deepcopy(s) for s in m_train.get("stops", []) if "stop_idx" in s}
 
                 if stop.get(time_key) != formatted_value:
                     stop[time_key] = formatted_value
@@ -633,10 +730,23 @@ class TimetableModel(QAbstractTableModel):
                                         if sub_stop.get("departure_time") is not None:
                                             sub_dep = self._time_to_seconds(sub_stop["departure_time"])
                                             sub_stop["departure_time"] = self._seconds_to_time(sub_dep + diff)
+
+                if changed:
+                    # stops の差分からイベントを構築
+                    for s in m_train.get("stops", []):
+                        s_idx = s.get("stop_idx")
+                        if s_idx not in all_stops_before:
+                            events_to_push.append(AddTrainStopEvent(self.route_id, self.direction, train_id, m_train["stops"].index(s), s))
+                        elif all_stops_before[s_idx] != s:
+                            events_to_push.append(ChangeTrainStopEvent(self.route_id, self.direction, train_id, s_idx, all_stops_before[s_idx], s))
+
         if changed:
+            if self.history_manager and events_to_push:
+                self.history_manager.push_events(events_to_push)
             self._trigger_update(col, d_trains, index)
             return True
         return False
+
 
     def clear_destination_cache(self):
         """行き先の表示キャッシュをクリアする"""

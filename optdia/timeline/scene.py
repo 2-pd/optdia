@@ -359,11 +359,28 @@ class TimelineScene(QGraphicsScene):
     LABEL_TOP_OFFSET = 16
     TIMELINE_WIDTH = 2160  # 36 hours * 60 minutes/hour = 2160px
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, history_manager=None):
         super().__init__(parent)
         self.project = None
         self.diagram_id = None
         self.operation_group_id = None
+        self.history_manager = history_manager
+
+        if self.history_manager:
+            self.history_manager.undone.connect(lambda _: self.refresh())
+            self.history_manager.redone.connect(lambda _: self.refresh())
+
+    def set_history_manager(self, history_manager):
+        if self.history_manager:
+            try:
+                self.history_manager.undone.disconnect(self.refresh)
+                self.history_manager.redone.disconnect(self.refresh)
+            except Exception:
+                pass
+        self.history_manager = history_manager
+        if self.history_manager:
+            self.history_manager.undone.connect(lambda _: self.refresh())
+            self.history_manager.redone.connect(lambda _: self.refresh())
 
     def refresh(self):
         if self.project and self.diagram_id and self.operation_group_id:
