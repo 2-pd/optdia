@@ -1,9 +1,11 @@
+import copy
 from PySide6.QtWidgets import (
     QGraphicsScene, QGraphicsRectItem, QGraphicsSimpleTextItem, QGraphicsLineItem, QMenu, QDialog, QMessageBox
 )
 from PySide6.QtGui import QColor, QFont, QPen, QBrush
 from PySide6.QtCore import Qt, QRectF
 from .dialogs import TemporaryStablingDialog, AddDeadheadDialog, AddTrainToOperationDialog
+
 
 
 # 列車を表す矩形アイテム
@@ -82,11 +84,35 @@ class TrainTimelineItem(QGraphicsRectItem):
                 d_trains = tbd.get(self.direction_key, {})
                 d_train = d_trains.get(self.train_id)
                 if d_train and "operations" in d_train:
+                    old_ops = copy.deepcopy(d_train["operations"])
+                    # 削除対象のインデックスと内容を探す
+                    target_idx = -1
+                    target_op = None
+                    for i, op in enumerate(d_train["operations"]):
+                        oid = op.get("operation_id") if isinstance(op, dict) else op
+                        if oid == self.operation_id:
+                            target_idx = i
+                            target_op = copy.deepcopy(op)
+                            break
+
                     d_train["operations"] = [
                         op for op in d_train["operations"]
                         if (op.get("operation_id") if isinstance(op, dict) else op) != self.operation_id
                     ]
                     d_train["to_be_saved"] = True
+
+                    if self.timeline_scene.history_manager and target_idx != -1 and target_op is not None:
+                        from core.events import RemoveTrainOperationEvent
+                        ev = RemoveTrainOperationEvent(
+                            route_id=self.route_id,
+                            direction=self.direction_key.replace("_trains", ""),
+                            train_id=self.train_id,
+                            diagram_id=self.timeline_scene.diagram_id,
+                            index=target_idx,
+                            operation=target_op
+                        )
+                        self.timeline_scene.history_manager.push_events([ev])
+
                     self.timeline_scene.refresh()
                     if parent_widget:
                         if hasattr(parent_widget, "timetable_model") and parent_widget.timetable_model:
@@ -101,10 +127,11 @@ class TrainTimelineItem(QGraphicsRectItem):
 
 # 一時入庫を表す矩形アイテム
 class TemporaryStablingItem(QGraphicsRectItem):
-    def __init__(self, x: float, y: float, w: float, h: float, event_data: dict, operation: dict, scene: "TimelineScene"):
+    def __init__(self, x: float, y: float, w: float, h: float, event_data: dict, operation: dict, operation_id: str, scene: "TimelineScene"):
         super().__init__(x, y, w, h)
         self.event_data = event_data
         self.operation = operation
+        self.operation_id = operation_id
         self.timeline_scene = scene
 
         self.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemClipsChildrenToShape, True)
@@ -163,11 +190,27 @@ class TemporaryStablingItem(QGraphicsRectItem):
             parent_widget = self.timeline_scene.views()[0].window() if self.timeline_scene and self.timeline_scene.views() else None
             dialog = TemporaryStablingDialog(parent_widget, event_data=self.event_data)
             if dialog.exec() == QDialog.Accepted:
+                old_event_data = copy.deepcopy(self.event_data)
                 new_data = dialog.get_data()
+                
+                events = self.operation.get("temporary_stabling_events", [])
+                event_idx = events.index(self.event_data) if self.event_data in events else -1
+
                 self.event_data.update(new_data)
                 # start_time順にソート
-                events = self.operation.get("temporary_stabling_events", [])
                 events.sort(key=lambda e: e.get("start_time", ""))
+
+                if self.timeline_scene.history_manager and event_idx != -1:
+                    from core.events import ChangeTemporaryStablingEvent
+                    ev = ChangeTemporaryStablingEvent(
+                        diagram_id=self.timeline_scene.diagram_id,
+                        operation_id=self.operation_id,
+                        index=event_idx,
+                        old_stabling_event=old_event_data,
+                        new_stabling_event=new_data
+                    )
+                    self.timeline_scene.history_manager.push_events([ev])
+
                 self.timeline_scene.refresh()
                 if parent_widget and hasattr(parent_widget, "set_modified"):
                     parent_widget.set_modified(True)
@@ -193,7 +236,20 @@ class TemporaryStablingItem(QGraphicsRectItem):
             if reply == QMessageBox.Yes:
                 events = self.operation.get("temporary_stabling_events", [])
                 if self.event_data in events:
+                    del_idx = events.index(self.event_data)
+                    del_data = copy.deepcopy(self.event_data)
                     events.remove(self.event_data)
+
+                    if self.timeline_scene.history_manager:
+                        from core.events import RemoveTemporaryStablingEvent
+                        ev = RemoveTemporaryStablingEvent(
+                            diagram_id=self.timeline_scene.diagram_id,
+                            operation_id=self.operation_id,
+                            index=del_idx,
+                            stabling_event=del_data
+                        )
+                        self.timeline_scene.history_manager.push_events([ev])
+
                 self.timeline_scene.refresh()
                 if parent_widget and hasattr(parent_widget, "set_modified"):
                     parent_widget.set_modified(True)
@@ -248,7 +304,8 @@ class BlankSpaceItem(QGraphicsRectItem):
                 diagram_id=self.timeline_scene.diagram_id,
                 target_op_id=self.operation_id,
                 start_m=self.start_m,
-                prev_last_station_id=prev_last_station_id
+                prev_last_station_id=prev_last_station_id,
+                history_manager=self.timeline_scene.history_manager
             )
             if dialog.exec() == QDialog.Accepted:
                 self.timeline_scene.refresh()
@@ -270,7 +327,8 @@ class BlankSpaceItem(QGraphicsRectItem):
                 diagram_id=self.timeline_scene.diagram_id,
                 operation_id=self.operation_id,
                 default_start_m=self.start_m,
-                default_end_m=self.end_m
+                default_end_m=self.end_m,
+                history_manager=self.timeline_scene.history_manager
             )
             if dialog.exec() == QDialog.Accepted:
                 self.timeline_scene.refresh()
@@ -304,6 +362,18 @@ class BlankSpaceItem(QGraphicsRectItem):
                     self.operation["temporary_stabling_events"] = []
                 self.operation["temporary_stabling_events"].append(new_data)
                 self.operation["temporary_stabling_events"].sort(key=lambda e: e.get("start_time", ""))
+
+                insert_idx = self.operation["temporary_stabling_events"].index(new_data)
+                if self.timeline_scene.history_manager:
+                    from core.events import AddTemporaryStablingEvent
+                    ev = AddTemporaryStablingEvent(
+                        diagram_id=self.timeline_scene.diagram_id,
+                        operation_id=self.operation_id,
+                        index=insert_idx,
+                        stabling_event=new_data
+                    )
+                    self.timeline_scene.history_manager.push_events([ev])
+
                 self.timeline_scene.refresh()
                 if parent_widget and hasattr(parent_widget, "set_modified"):
                     parent_widget.set_modified(True)
@@ -365,22 +435,69 @@ class TimelineScene(QGraphicsScene):
         self.diagram_id = None
         self.operation_group_id = None
         self.history_manager = history_manager
+        self.row_items = {}  # op_id -> list of QGraphicsItem
 
         if self.history_manager:
-            self.history_manager.undone.connect(lambda _: self.refresh())
-            self.history_manager.redone.connect(lambda _: self.refresh())
+            self.history_manager.undone.connect(self._on_history_changed)
+            self.history_manager.redone.connect(self._on_history_changed)
 
     def set_history_manager(self, history_manager):
         if self.history_manager:
             try:
-                self.history_manager.undone.disconnect(self.refresh)
-                self.history_manager.redone.disconnect(self.refresh)
+                self.history_manager.undone.disconnect(self._on_history_changed)
+                self.history_manager.redone.disconnect(self._on_history_changed)
             except Exception:
                 pass
         self.history_manager = history_manager
         if self.history_manager:
-            self.history_manager.undone.connect(lambda _: self.refresh())
-            self.history_manager.redone.connect(lambda _: self.refresh())
+            self.history_manager.undone.connect(self._on_history_changed)
+            self.history_manager.redone.connect(self._on_history_changed)
+
+    def _on_history_changed(self, events: list):
+        """Undo/Redo 実行時に変更のあった運用の行のみを差分更新する"""
+        if not self.project or not self.diagram_id or not self.operation_group_id:
+            return
+
+        diagram = self.project.diagrams.get(self.diagram_id, {})
+        op_groups = diagram.get("operation_groups", {})
+        og = op_groups.get(self.operation_group_id, {})
+        current_op_ids = set(og.get("operations", []))
+
+        # イベントに関連する op_id または train_id を収集
+        affected_op_ids = set()
+        for ev in events:
+            if hasattr(ev, "operation_id") and ev.operation_id in current_op_ids:
+                affected_op_ids.add(ev.operation_id)
+            elif hasattr(ev, "train_id"):
+                # プロジェクト全体からこの列車に割り当てられている op_id を探索
+                for did, d_train_id, target_op_id in self._find_op_ids_for_train(ev.train_id):
+                    if did == self.diagram_id and target_op_id in current_op_ids:
+                        affected_op_ids.add(target_op_id)
+
+        # 影響を受けた運用行のみ再描画
+        if affected_op_ids:
+            for op_id in affected_op_ids:
+                self._redraw_operation_row(op_id)
+        else:
+            # 念のため該当行が特定できなかった場合は全更新
+            self.refresh()
+
+    def _find_op_ids_for_train(self, train_id: str):
+        """列車IDが割り当てられている運用のリストを返す (diagram_id, train_id, op_id)"""
+        results = []
+        if not self.project:
+            return results
+        for route in self.project.routes.values():
+            tbd = route.get("trains_by_diagram", {})
+            for did, dt in tbd.items():
+                for dkey in ["inbound_trains", "outbound_trains"]:
+                    d_train = dt.get(dkey, {}).get(train_id)
+                    if d_train:
+                        for op in d_train.get("operations", []):
+                            op_id = op.get("operation_id") if isinstance(op, dict) else op
+                            if op_id:
+                                results.append((did, train_id, op_id))
+        return results
 
     def refresh(self):
         if self.project and self.diagram_id and self.operation_group_id:
@@ -391,6 +508,7 @@ class TimelineScene(QGraphicsScene):
         self.diagram_id = diagram_id
         self.operation_group_id = operation_group_id
         self.clear()
+        self.row_items.clear()
 
         if not self.project or not self.diagram_id or not self.operation_group_id:
             self.setSceneRect(0, 0, self.TIMELINE_WIDTH, 0)
@@ -398,8 +516,6 @@ class TimelineScene(QGraphicsScene):
 
         diagram = self.project.diagrams.get(self.diagram_id, {})
         op_groups = diagram.get("operation_groups", {})
-        operations = diagram.get("operations", {})
-
         og = op_groups.get(self.operation_group_id, {})
         op_ids = og.get("operations", [])
 
@@ -426,42 +542,76 @@ class TimelineScene(QGraphicsScene):
 
         # 2. 各運用のガントチャート要素を描画
         for row_idx, op_id in enumerate(op_ids):
-            op = operations.get(op_id, {})
-            y_base = row_idx * self.ROW_HEIGHT
+            self._draw_operation_row(op_id, row_idx)
 
-            # 出庫・入庫テキストを描画
-            self._draw_operation_start_end(op, y_base)
+    def _draw_operation_row(self, op_id: str, row_idx: int):
+        diagram = self.project.diagrams.get(self.diagram_id, {})
+        operations = diagram.get("operations", {})
+        op = operations.get(op_id, {})
+        y_base = row_idx * self.ROW_HEIGHT
 
-            # 出庫・入庫時刻が未設定の場合はそれぞれ0分(0時0分)、2160分(36時0分)とみなして範囲を設定
-            start_m = self._time_to_minutes(op.get("start_time"))
-            eff_start = start_m if start_m is not None else 0
-            end_m = self._time_to_minutes(op.get("end_time"))
-            eff_end = end_m if end_m is not None else 2160
+        created_items = []
 
-            elements = [(eff_start, eff_start)]
+        # 出庫・入庫テキストを描画
+        start_end_items = self._draw_operation_start_end(op, y_base)
+        created_items.extend(start_end_items)
 
-            # 運用に割り振られている列車の矩形を描画し要素範囲を記録
-            train_elems = self._draw_operation_trains(op_id, y_base)
-            elements.extend(train_elems)
+        # 出庫・入庫時刻が未設定の場合はそれぞれ0分(0時0分)、2160分(36時0分)とみなして範囲を設定
+        start_m = self._time_to_minutes(op.get("start_time"))
+        eff_start = start_m if start_m is not None else 0
+        end_m = self._time_to_minutes(op.get("end_time"))
+        eff_end = end_m if end_m is not None else 2160
 
-            # 一時入庫の矩形を描画し要素範囲を記録
-            stabling_elems = self._draw_operation_stabling(op, y_base)
-            elements.extend(stabling_elems)
+        elements = [(eff_start, eff_start)]
 
-            elements.append((eff_end, eff_end))
+        # 運用に割り振られている列車の矩形を描画し要素範囲を記録
+        train_elems, train_items = self._draw_operation_trains(op_id, y_base)
+        elements.extend(train_elems)
+        created_items.extend(train_items)
 
-            # 各要素間の空白部分に透明な矩形を配置
-            max_end = None
-            for s, e in sorted(elements, key=lambda x: (x[0], x[1])):
-                if max_end is not None:
-                    if s > max_end:
-                        blank_item = BlankSpaceItem(max_end, s, y_base, self.BAR_TOP_OFFSET, self.BAR_HEIGHT, op, op_id, self)
-                        self.addItem(blank_item)
-                        max_end = max(max_end, e)
-                    else:
-                        max_end = max(max_end, e)
+        # 一時入庫の矩形を描画し要素範囲を記録
+        stabling_elems, stabling_items = self._draw_operation_stabling(op, op_id, y_base)
+        elements.extend(stabling_elems)
+        created_items.extend(stabling_items)
+
+        elements.append((eff_end, eff_end))
+
+        # 各要素間の空白部分に透明な矩形を配置
+        max_end = None
+        for s, e in sorted(elements, key=lambda x: (x[0], x[1])):
+            if max_end is not None:
+                if s > max_end:
+                    blank_item = BlankSpaceItem(max_end, s, y_base, self.BAR_TOP_OFFSET, self.BAR_HEIGHT, op, op_id, self)
+                    self.addItem(blank_item)
+                    created_items.append(blank_item)
+                    max_end = max(max_end, e)
                 else:
-                    max_end = e
+                    max_end = max(max_end, e)
+            else:
+                max_end = e
+
+        self.row_items[op_id] = created_items
+
+    def _redraw_operation_row(self, op_id: str):
+        """指定された運用の行のみ既存アイテムを削除し再描画する"""
+        if not self.project or not self.diagram_id or not self.operation_group_id:
+            return
+        diagram = self.project.diagrams.get(self.diagram_id, {})
+        op_groups = diagram.get("operation_groups", {})
+        og = op_groups.get(self.operation_group_id, {})
+        op_ids = og.get("operations", [])
+        if op_id not in op_ids:
+            return
+
+        # 既存アイテムの削除
+        if op_id in self.row_items:
+            for item in self.row_items[op_id]:
+                self.removeItem(item)
+            del self.row_items[op_id]
+
+        row_idx = op_ids.index(op_id)
+        self._draw_operation_row(op_id, row_idx)
+
 
     def _time_to_minutes(self, time_str: str):
         if not time_str:
@@ -483,7 +633,8 @@ class TimelineScene(QGraphicsScene):
         st_name = st.get("station_name", "")
         return st_name[0] if st_name else ""
 
-    def _draw_operation_start_end(self, op: dict, y_base: float):
+    def _draw_operation_start_end(self, op: dict, y_base: float) -> list:
+        items = []
         start_time_str = op.get("start_time")
         if start_time_str:
             start_m = self._time_to_minutes(start_time_str)
@@ -498,6 +649,7 @@ class TimelineScene(QGraphicsScene):
                 text_item.setPos(start_m - rect.width(), y_base + self.LABEL_TOP_OFFSET)
                 text_item.setZValue(2)
                 self.addItem(text_item)
+                items.append(text_item)
 
         end_time_str = op.get("end_time")
         if end_time_str:
@@ -512,9 +664,12 @@ class TimelineScene(QGraphicsScene):
                 text_item.setPos(end_m, y_base + self.LABEL_TOP_OFFSET)
                 text_item.setZValue(2)
                 self.addItem(text_item)
+                items.append(text_item)
+        return items
 
-    def _draw_operation_stabling(self, op: dict, y_base: float) -> list:
+    def _draw_operation_stabling(self, op: dict, op_id: str, y_base: float) -> tuple:
         elements = []
+        items = []
         events = op.get("temporary_stabling_events", [])
         for ev in events:
             start_m = self._time_to_minutes(ev.get("start_time"))
@@ -528,14 +683,17 @@ class TimelineScene(QGraphicsScene):
                     float(self.BAR_HEIGHT),
                     ev,
                     op,
+                    op_id,
                     self
                 )
                 self.addItem(stabling_item)
+                items.append(stabling_item)
                 elements.append((start_m, end_m))
-        return elements
+        return elements, items
 
-    def _draw_operation_trains(self, target_op_id: str, y_base: float) -> list:
+    def _draw_operation_trains(self, target_op_id: str, y_base: float) -> tuple:
         elements = []
+        items = []
         matched_trains = []
 
         for route_id, route in self.project.routes.items():
@@ -643,6 +801,7 @@ class TimelineScene(QGraphicsScene):
                 all_op_ids=train["all_op_ids"],
             )
             self.addItem(rect_item)
+            items.append(rect_item)
 
             # 始発駅の1文字表記
             start_st_initial = first_station_initial
@@ -661,10 +820,12 @@ class TimelineScene(QGraphicsScene):
                 st_text.setPos(rect_x - (rect.width() / 2), rect_y + rect_h)
                 st_text.setZValue(2)
                 self.addItem(st_text)
+                items.append(st_text)
 
             prev_last_station_id = train["last_station_id"]
 
-        return elements
+        return elements, items
+
 
 
 # 運用ガントチャートの見出しのシーン

@@ -192,7 +192,7 @@ class TemporaryStablingDialog(QDialog):
 class AddDeadheadDialog(QDialog):
     """回送の追加ダイアログ"""
 
-    def __init__(self, parent=None, project=None, diagram_id: str = None, operation_id: str = None, default_start_m: float = 0, default_end_m: float = 0):
+    def __init__(self, parent=None, project=None, diagram_id: str = None, operation_id: str = None, default_start_m: float = 0, default_end_m: float = 0, history_manager=None):
         super().__init__(parent)
         self.setWindowTitle("回送の追加")
         self.resize(400, 500)
@@ -200,10 +200,12 @@ class AddDeadheadDialog(QDialog):
         self.project = project
         self.diagram_id = diagram_id
         self.operation_id = operation_id
+        self.history_manager = history_manager
 
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
         layout.setContentsMargins(15, 15, 15, 15)
+
 
         # 1. 列車番号:
         lbl_train_num = QLabel("列車番号:")
@@ -577,6 +579,19 @@ class AddDeadheadDialog(QDialog):
 
         order.insert(insert_idx, new_train_id)
 
+        if self.history_manager:
+            from core.events import AddTrainEvent
+            ev = AddTrainEvent(
+                route_id=route_id,
+                direction=direction_key,
+                train_id=new_train_id,
+                diagram_id=self.diagram_id,
+                index=insert_idx,
+                d_train=d_trains[new_train_id],
+                m_train=m_trains[new_train_id]
+            )
+            self.history_manager.push_events([ev])
+
         self.accept()
 
 
@@ -658,7 +673,7 @@ class AddTrainToOperationDialog(QDialog):
     """列車の登録ダイアログ"""
 
     def __init__(self, parent=None, project=None, diagram_id: str = None, target_op_id: str = None,
-                 start_m: float = 0.0, prev_last_station_id: str = None):
+                 start_m: float = 0.0, prev_last_station_id: str = None, history_manager=None):
         super().__init__(parent)
         self.setWindowTitle("列車の登録")
         self.setFixedSize(300, 400)
@@ -668,11 +683,13 @@ class AddTrainToOperationDialog(QDialog):
         self.target_op_id = target_op_id
         self.start_m = start_m
         self.prev_last_station_id = prev_last_station_id
+        self.history_manager = history_manager
 
         # 垂直レイアウト
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
+
 
         # 1. 列車番号で絞り込み 1行テキストボックス
         self.txt_search = QLineEdit()
@@ -911,6 +928,8 @@ class AddTrainToOperationDialog(QDialog):
             "formation_is_reversed": self.chk_reversed.isChecked()
         }
 
+        direction_key = "inbound" if direction == "inbound_trains" else "outbound"
+
         if len(ops) > 0:
             dialog = SelectCouplingPositionDialog(
                 self,
@@ -923,8 +942,31 @@ class AddTrainToOperationDialog(QDialog):
                 if insert_idx is not None:
                     ops.insert(insert_idx, op_entry)
                     d_train["to_be_saved"] = True
+                    if self.history_manager:
+                        from core.events import AddTrainOperationEvent
+                        ev = AddTrainOperationEvent(
+                            route_id=route_id,
+                            direction=direction_key,
+                            train_id=train_id,
+                            diagram_id=self.diagram_id,
+                            index=insert_idx,
+                            operation=op_entry
+                        )
+                        self.history_manager.push_events([ev])
                     self.accept()
         else:
             ops.append(op_entry)
             d_train["to_be_saved"] = True
+            if self.history_manager:
+                from core.events import AddTrainOperationEvent
+                ev = AddTrainOperationEvent(
+                    route_id=route_id,
+                    direction=direction_key,
+                    train_id=train_id,
+                    diagram_id=self.diagram_id,
+                    index=0,
+                    operation=op_entry
+                )
+                self.history_manager.push_events([ev])
             self.accept()
+
