@@ -199,16 +199,8 @@ class MainWindow(QMainWindow):
         self.timetable_view.setModel(self.timetable_model)
         self.timetable_view.selectionModel().currentChanged.connect(self._on_timetable_cell_current_changed)
         
-        # テーブルの外観設定
-        self.timetable_view.setStyleSheet("QTableView, QHeaderView { font-size: 12px; }")
-        self.timetable_view.setShowGrid(False)
-        
         v_header = TimetableVerticalHeader(self.timetable_view)
-        # padding: top right bottom left (左8px = 縦線6px + 余白2px、右4px)
-        v_header.setStyleSheet("QHeaderView::section { padding: 0px 4px 0px 8px; margin: 0px; }")
-        v_header.setDefaultAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.timetable_view.setVerticalHeader(v_header)
-        # 行の高さは固定のため ResizeToContents は設定しない
         
         # ボタン用デリゲートの適用
         self.timetable_delegate = TimetableDelegate(self.timetable_view)
@@ -276,7 +268,7 @@ class MainWindow(QMainWindow):
 
         self.train_search_label = QLabel()
         self.train_search_label.setFixedWidth(50)
-        self.train_search_label.setStyleSheet("font-size: 12px; color: #555555;")
+        self.train_search_label.setStyleSheet("font-size: 12px;")
         timetable_search_layout.addWidget(self.train_search_label)
 
         # 左移動ボタン用のアイコンを読み込み、右移動ボタン用に左右反転したアイコンを生成
@@ -390,7 +382,6 @@ class MainWindow(QMainWindow):
         # 運用ガントチャート
         self.timeline_view = TimelineView()
         self.timeline_view.scene.set_history_manager(self.history_manager)
-        self.timeline_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         op_body_layout.addWidget(self.timeline_view, stretch=1)
 
         op_area_layout.addWidget(op_body_widget, stretch=1)

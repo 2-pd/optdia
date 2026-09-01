@@ -639,12 +639,15 @@ class TimetableModel(QAbstractTableModel):
 
                 if stop.get(time_key) != formatted_value:
                     stop[time_key] = formatted_value
-                    # ユーザーが時刻を入力し、かつ、もう一方の時刻が未入力（None）の場合のみ自動補完する
+                    # ユーザーが着時刻または発時刻を入力し、かつ、もう一方の時刻が未入力（None）の場合のみ自動補完する
                     # 運行系統内の各路線の始点・終点での「着のみ」「発のみ」の定義を壊さないように判定
                     if formatted_value is not None and stop.get(other_key) is None:
                         config_for_stop = self.full_stop_configs[stop_idx]
+                        station_data_for_stop = self.project.stations.get(config_for_stop["station_id"], {})
+                        is_seg_boundary = config_for_stop.get("is_segment_start") or config_for_stop.get("is_segment_end")
+                        show_arr_for_stop = is_seg_boundary or station_data_for_stop.get("show_arrival_time", False)
                         if (row_def["type"] == "arr" and not config_for_stop.get("is_segment_end")) or \
-                           (row_def["type"] == "dep" and not config_for_stop.get("is_segment_start")):
+                           (row_def["type"] == "dep" and not is_seg_boundary and not show_arr_for_stop):
                             stop[other_key] = formatted_value
 
                     # 発時刻が編集（入力または削除）された場合、中間駅かつ着時刻非表示なら着時刻も連動させる

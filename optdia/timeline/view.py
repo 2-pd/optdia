@@ -17,6 +17,7 @@ class TimelineView(QGraphicsView):
         }
         """)
         self.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
 
     def update_timeline(self, project, diagram_id: str, operation_group_id: str):
         self.scene.update_timeline(project, diagram_id, operation_group_id)

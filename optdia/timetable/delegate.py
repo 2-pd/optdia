@@ -190,6 +190,20 @@ class TimetableDelegate(QStyledItemDelegate):
             painter.drawLine(rect.left(), rect.bottom(), rect.right(), rect.bottom())
         elif row < num_headers:
             painter.drawLine(rect.left(), rect.bottom(), rect.right(), rect.bottom())
+
+        # セルが選択されていれば濃い枠線を描画
+        if option.state & QStyle.State_Selected:
+            # ハイライト枠線の色と太さを設定
+            pen = QPen(QColor("#333333"))
+            pen.setWidth(1)
+            painter.setPen(pen)
+
+            # 太さの分だけ内側に補正してセルの内側に枠線を描画
+            rect = option.rect
+            painter.drawRect(
+                rect.x() + 0.5, rect.y() + 0.5, rect.width() - 1, rect.height() - 1
+            )
+
         painter.restore()
 
     def sizeHint(self, option, index):

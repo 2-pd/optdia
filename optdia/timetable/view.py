@@ -14,6 +14,11 @@ class TimetableVerticalHeader(QHeaderView):
         self.setMinimumSectionSize(24)
         self.setDefaultSectionSize(24)
 
+        # 行の高さは固定のため ResizeToContents は設定しない
+        # padding: top right bottom left (左8px = 縦線6px + 余白2px、右4px)
+        self.setStyleSheet("QHeaderView::section { padding: 0px 4px 0px 8px; margin: 0px; }")
+        self.setDefaultAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
     def paintSection(self, painter, rect, logicalIndex):
         model = self.model()
         if not model or not hasattr(model, 'row_headers') or not hasattr(model, 'station_rows'):
@@ -28,10 +33,10 @@ class TimetableVerticalHeader(QHeaderView):
         option_header.orientation = self.orientation()
         option_header.text = ""
 
-        # フォーカスされている（カレントセルがある）行の背景色を #cccccc にする
+        # フォーカスされている（カレントセルがある）行の背景色を #dddddd にする
         view = self.parent()
         is_current = view and view.currentIndex().isValid() and view.currentIndex().row() == logicalIndex
-        bg_color = QColor("#eeeeee") if is_current else option_header.palette.button().color()
+        bg_color = QColor("#dddddd") if is_current else option_header.palette.button().color()
 
         # 標準のヘッダー描画(CE_Header)を使うと上下に線が出るため、背景と右側の境界線を個別に描画する
         # これにより上下の枠線が非表示になる
@@ -144,6 +149,10 @@ class TimetableView(QTableView):
             model.modelReset.connect(self.update_row_heights)
             model.layoutChanged.connect(self.update_row_heights)
 
+        # テーブルの外観設定
+        self.setStyleSheet("QTableView, QHeaderView { font-size: 12px; }")
+        self.setShowGrid(False)
+
         # セルの選択（カレント）状態が変わったときに垂直ヘッダーを再描画して背景色を更新する
         self.selectionModel().currentChanged.connect(lambda: self.verticalHeader().update())
 
@@ -220,9 +229,227 @@ class TimetableView(QTableView):
         return False
 
     def keyPressEvent(self, event):
+        model = self.model()
+        if not model:
+            super().keyPressEvent(event)
+            return
+
+        current = self.currentIndex()
+        num_headers = len(model.row_headers) if hasattr(model, 'row_headers') else 0
+        num_stations = len(model.station_rows) if hasattr(model, 'station_rows') else 0
+        footer_subsequent_row = num_headers + num_stations
+        footer_note_row = num_headers + num_stations + 1
+
         if event.key() in (Qt.Key_Return, Qt.Key_Enter):
-            if self.move_to_next_cell_and_edit(): return
+            if current.isValid():
+                r = current.row()
+                delegate = self.itemDelegate(current)
+                if hasattr(delegate, "_show_diagram_picker_menu") and r == 1:
+                    delegate._show_diagram_picker_menu(current, model, self)
+                    return
+                elif hasattr(delegate, "_show_operation_picker_menu") and r == 2:
+                    delegate._show_operation_picker_menu(current, model, self)
+                    return
+                elif hasattr(delegate, "_show_train_type_menu") and r == 4:
+                    delegate._show_train_type_menu(current, model, self)
+                    return
+                elif hasattr(delegate, "_show_subsequent_train_dialog") and r == footer_subsequent_row:
+                    delegate._show_subsequent_train_dialog(current, model, self)
+                    return
+                elif hasattr(delegate, "_show_note_popup") and r == footer_note_row:
+                    delegate._show_note_popup(current, model, self)
+                    return
+
+            if self.move_to_next_cell_and_edit():
+                return
+
+        elif event.key() == Qt.Key_Delete:
+            if self.clear_selected_cells():
+                return
+
         super().keyPressEvent(event)
+
+    def clear_selected_cells(self):
+        """選択されているセル（運転日行以外）のデータをクリアし、履歴イベントを登録する"""
+        model = self.model()
+        if not model or not hasattr(model, 'project') or not model.route_id or not model.diagram_id:
+            return False
+
+        indexes = self.selectedIndexes()
+        if not indexes:
+            return False
+
+        from core.events import (
+            ChangeTrainNumberEvent, RemoveTrainOperationEvent,
+            ChangeTrainCarCountEvent, ChangeTrainTypeEvent,
+            ChangeTrainNamedNumberEvent, ChangeTrainDestinationEvent,
+            RemoveTrainStopEvent, ChangeTrainStopEvent,
+            RemoveSubsequentTrainEvent, ChangeTrainNoteEvent
+        )
+        import copy
+
+        num_headers = len(model.row_headers)
+        num_stations = len(model.station_rows)
+        footer_subsequent_row = num_headers + num_stations
+        footer_note_row = num_headers + num_stations + 1
+
+        route = model.project.routes.get(model.route_id, {})
+        tbd = route.get("trains_by_diagram", {}).get(model.diagram_id, {})
+        train_key = "inbound_trains" if model.direction == "inbound" else "outbound_trains"
+        d_trains = tbd.get(train_key, {})
+        m_trains = route.get(train_key, {})
+
+        # 列ごとに選択されたインデックスを整理
+        cols_map = {}
+        for idx in indexes:
+            cols_map.setdefault(idx.column(), []).append(idx)
+
+        events_to_push = []
+        affected_cols = set()
+
+        for col, col_indexes in cols_map.items():
+            if col >= len(model.train_ids):
+                continue
+            train_id = model.train_ids[col]
+            d_train = d_trains.get(train_id)
+            m_train = m_trains.get(train_id)
+            if not d_train or not m_train:
+                continue
+
+            col_changed = False
+            col_events = []
+
+            # 行ごとにソート
+            col_indexes.sort(key=lambda x: x.row())
+
+            # ストップ変更処理用の事前スナップショット（駅行が含まれる場合）
+            all_stops_before = {s["stop_idx"]: copy.deepcopy(s) for s in m_train.get("stops", []) if "stop_idx" in s}
+
+            for idx in col_indexes:
+                row = idx.row()
+                if row == 1:
+                    # 運転日行はクリア対象外
+                    continue
+
+                if row == 0:  # 列車番号
+                    old_num = m_train.get("train_number", "")
+                    if old_num != "":
+                        m_train["train_number"] = ""
+                        col_events.append(ChangeTrainNumberEvent(model.route_id, model.direction, train_id, old_num, ""))
+                        col_changed = True
+
+                elif row == 2:  # 運用番号
+                    ops = d_train.get("operations", [])
+                    if ops:
+                        for i, op in reversed(list(enumerate(ops))):
+                            col_events.append(RemoveTrainOperationEvent(model.route_id, model.direction, train_id, model.diagram_id, i, op))
+                        d_train["operations"] = []
+                        col_changed = True
+
+                elif row == 3:  # 両数
+                    old_val = d_train.get("car_count")
+                    if old_val is not None:
+                        d_train["car_count"] = None
+                        col_events.append(ChangeTrainCarCountEvent(model.route_id, model.direction, train_id, model.diagram_id, old_val, None))
+                        col_changed = True
+
+                elif row == 4:  # 種別・愛称
+                    old_val = m_train.get("train_type_id")
+                    if old_val is not None:
+                        m_train["train_type_id"] = None
+                        col_events.append(ChangeTrainTypeEvent(model.route_id, model.direction, train_id, old_val, None))
+                        col_changed = True
+
+                elif row == 5:  # 号数
+                    old_val = m_train.get("named_train_number")
+                    if old_val is not None:
+                        m_train["named_train_number"] = None
+                        col_events.append(ChangeTrainNamedNumberEvent(model.route_id, model.direction, train_id, old_val, None))
+                        col_changed = True
+
+                elif row == 6:  # 行き先
+                    old_val = d_train.get("destination")
+                    if old_val is not None:
+                        d_train["destination"] = None
+                        col_events.append(ChangeTrainDestinationEvent(model.route_id, model.direction, train_id, model.diagram_id, old_val, None))
+                        col_changed = True
+
+                elif row == footer_subsequent_row:  # 連続する列車
+                    subs = d_train.get("subsequent_trains", [])
+                    if subs:
+                        for i, sub in reversed(list(enumerate(subs))):
+                            col_events.append(RemoveSubsequentTrainEvent(model.route_id, model.direction, train_id, model.diagram_id, i, sub))
+                        d_train["subsequent_trains"] = []
+                        col_changed = True
+
+                elif row == footer_note_row:  # 備考
+                    old_note = m_train.get("note", "")
+                    if old_note != "":
+                        m_train["note"] = ""
+                        col_events.append(ChangeTrainNoteEvent(model.route_id, model.direction, train_id, old_note, ""))
+                        col_changed = True
+
+                elif num_headers <= row < footer_subsequent_row:  # 駅行
+                    row_idx = row - num_headers
+                    if 0 <= row_idx < len(model.station_rows):
+                        row_def = model.station_rows[row_idx]
+                        stop_idx = row_def["stop_idx"]
+                        config = model.full_stop_configs[stop_idx]
+                        station_data = model.project.stations.get(config["station_id"], {})
+                        is_seg_boundary = config.get("is_segment_start") or config.get("is_segment_end")
+                        show_arr = is_seg_boundary or station_data.get("show_arrival_time", False)
+
+                        stop = next((s for s in m_train.get("stops", []) if s.get("stop_idx") == stop_idx), None)
+                        if stop:
+                            time_key = "arrival_time" if row_def["type"] == "arr" else "departure_time"
+                            if stop.get(time_key) is not None:
+                                stop[time_key] = None
+                                col_changed = True
+                                # 中間駅で着時刻非表示の場合、発時刻のクリアに合わせて着時刻もクリア
+                                if row_def["type"] == "dep" and not is_seg_boundary and not show_arr:
+                                    stop["arrival_time"] = None
+
+            # 駅行の変更差分をイベント化
+            if col_changed and "stops" in m_train:
+                # 完全に発着時刻が空になったstopの整理
+                new_stops = []
+                for s in m_train["stops"]:
+                    s_idx = s.get("stop_idx")
+                    old_s = all_stops_before.get(s_idx)
+                    arr = s.get("arrival_time")
+                    dep = s.get("departure_time")
+                    if arr is None and dep is None:
+                        # 全時刻がNoneになった場合はリストから削除
+                        if old_s is not None:
+                            old_idx = list(all_stops_before.keys()).index(s_idx)
+                            col_events.append(RemoveTrainStopEvent(model.route_id, model.direction, train_id, old_idx, old_s))
+                    else:
+                        new_stops.append(s)
+                        if old_s != s:
+                            col_events.append(ChangeTrainStopEvent(model.route_id, model.direction, train_id, s_idx, old_s, s))
+                m_train["stops"] = new_stops
+
+            if col_changed:
+                events_to_push.extend(col_events)
+                affected_cols.add(col)
+
+        if events_to_push:
+            if model.history_manager:
+                model.history_manager.push_events(events_to_push)
+            model.clear_destination_cache()
+            for col in affected_cols:
+                train_id = model.train_ids[col]
+                m_train = m_trains.get(train_id)
+                if m_train:
+                    model._normalize_train_stops(m_train)
+                model.dataChanged.emit(
+                    model.index(0, col),
+                    model.index(model.rowCount() - 1, col),
+                    [Qt.DisplayRole, Qt.EditRole, Qt.ForegroundRole, Qt.BackgroundRole, StopTypeRole]
+                )
+            return True
+
+        return False
 
     def contextMenuEvent(self, event):
         index = self.indexAt(event.pos())
