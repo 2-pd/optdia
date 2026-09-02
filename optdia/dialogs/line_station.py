@@ -748,6 +748,17 @@ class LineStationEditorDialog(QDialog):
         self.inbound_direction_checkbox.stateChanged.connect(self._on_inbound_direction_changed)
         self.line_info_layout.addWidget(self.inbound_direction_checkbox)
 
+        self.line_info_layout.addSpacing(40)
+
+        # 基準運転時分の自動算出ボタン
+        self.calc_running_time_button = QPushButton("この路線の基準運転時分を自動算出")
+        self.calc_running_time_button.clicked.connect(self._on_calc_running_time)
+        self.calc_running_time_button.setStyleSheet(
+            "QPushButton { border: none; text-decoration: underline; background-color: transparent; text-align: left; }"
+            "QPushButton:disabled { color: #aaaaaa; }"
+        )
+        self.line_info_layout.addWidget(self.calc_running_time_button)
+
         self.line_info_layout.addStretch() # 内容を上部に寄せる
 
         # 路線削除ボタン
@@ -777,6 +788,7 @@ class LineStationEditorDialog(QDialog):
         self.color_picker.setEnabled(enabled)
         self.line_symbol_edit.setEnabled(enabled)
         self.inbound_direction_checkbox.setEnabled(enabled)
+        self.calc_running_time_button.setEnabled(enabled)
         self.station_list_widget.setEnabled(enabled)
         self.add_station_button.setEnabled(enabled)
         self.delete_line_button.setEnabled(enabled)
@@ -1323,6 +1335,193 @@ class LineStationEditorDialog(QDialog):
         
         if hasattr(self.parent(), "set_modified"):
             self.parent().set_modified(True)
+
+    def _on_calc_running_time(self):
+        """この路線の基準運転時分を入力済み時刻表から自動算出してstation_listに反映する"""
+        if not self.current_selected_line_id:
+            return
+
+        line_id = self.current_selected_line_id
+        line_data = self.project.lines.get(line_id)
+        if not line_data:
+            return
+
+        line_name = line_data.get("line_name", line_id)
+        station_list = line_data.get("station_list", [])
+        n = len(station_list)
+
+        # 確認ダイアログ
+        reply = QMessageBox.question(
+            self,
+            "確認",
+            f"{line_name}の各駅の起点からの基準運転時分を計算しますか？\n既に入力されている値は上書きされます。",
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel
+        )
+        if reply != QMessageBox.StandardButton.Ok:
+            return
+
+        if n == 0:
+            QMessageBox.information(self, "情報", "基準運転時分の計算が完了しました。")
+            return
+
+        station_ids = [s["station_id"] for s in station_list]
+
+        # この路線に属するsegment_idの集合を収集
+        line_segment_ids = set()
+        for route in self.project.routes.values():
+            for seg in route.get("line_segments", []):
+                if seg.get("line_id") == line_id and seg.get("segment_id"):
+                    line_segment_ids.add(seg["segment_id"])
+
+        # 全運行系統のマスター列車を収集
+        all_trains = []
+        for route in self.project.routes.values():
+            for key in ["inbound_trains", "outbound_trains"]:
+                all_trains.extend(route.get(key, {}).values())
+
+        def parse_time(s):
+            """hh:mm:ss 形式(hh>=24可)の時刻文字列を秒数に変換する"""
+            if not s:
+                return None
+            try:
+                h, m, sec = s.split(":")
+                return int(h) * 3600 + int(m) * 60 + int(sec)
+            except Exception:
+                return None
+
+        def get_times_forward(a_id, b_id):
+            """
+            この路線の区間内で、stopsの順序でaが先にbが後に現れる列車の
+            移動時間(秒)リストを返す。両駅とも停車(stop_type != 0)が条件。
+            移動時間 > 0 のもののみ返す。
+            """
+            times = []
+            for train in all_trains:
+                stops = [s for s in train.get("stops", [])
+                         if s.get("segment_id") in line_segment_ids]
+                last_a_stop = None
+                for stop in stops:
+                    sid = stop.get("station_id")
+                    st = stop.get("stop_type", 0)
+                    if sid == a_id and st != 0:
+                        last_a_stop = stop
+                    elif sid == b_id and st != 0 and last_a_stop is not None:
+                        # dep_a: 発車時刻優先、なければ到着時刻
+                        dep_a = (parse_time(last_a_stop.get("departure_time"))
+                                 or parse_time(last_a_stop.get("arrival_time")))
+                        # arr_b: 到着時刻優先、なければ発車時刻
+                        arr_b = (parse_time(stop.get("arrival_time"))
+                                 or parse_time(stop.get("departure_time")))
+                        if dep_a is not None and arr_b is not None:
+                            tt = arr_b - dep_a
+                            if tt > 0:
+                                times.append(tt)
+                        last_a_stop = None
+            return times
+
+        def min_fwd(a_id, b_id):
+            """a→b方向の最小移動時間。なければNone。"""
+            t = get_times_forward(a_id, b_id)
+            return min(t) if t else None
+
+        def any_stop_both(a_id, b_id):
+            """いずれかの方向でa・b両方に停車する列車が存在するか確認する"""
+            return bool(get_times_forward(a_id, b_id)
+                        or get_times_forward(b_id, a_id))
+
+        def min_either(a_id, b_id):
+            """a↔b間の最小移動時間(両方向の中での最小)。なければNone。"""
+            t = get_times_forward(a_id, b_id) + get_times_forward(b_id, a_id)
+            return min(t) if t else None
+
+        def direct_pair_time(i):
+            """
+            隣接駅ペア(i, i+1)の駅間基準運転時分を直接計算する。
+            両方向の最小時間の平均を四捨五入して返す。計算不能な場合はNone。
+            """
+            A, B = station_ids[i], station_ids[i + 1]
+            fwd_t = get_times_forward(A, B)
+            rev_t = get_times_forward(B, A)
+            mins = []
+            if fwd_t:
+                mins.append(min(fwd_t))
+            if rev_t:
+                mins.append(min(rev_t))
+            return round(sum(mins) / len(mins)) if mins else None
+
+        # 第1パス: 隣接駅ペアごとの駅間基準運転時分を直接計算
+        inter_times = [direct_pair_time(i) for i in range(n - 1)]
+
+        # 第2パス: Noneのペアにフォールバック処理を適用
+        for i in range(n - 1):
+            if inter_times[i] is not None:
+                continue
+
+            A = station_ids[i]
+            B = station_ids[i + 1]
+            C = station_ids[i - 1] if i > 0 else None
+            D = station_ids[i + 2] if i + 2 < n else None
+            result = None
+
+            # アプローチ1: C→B の最小時間 − C→A の最小時間 = A→B (CはAの前の駅)
+            if C is not None and any_stop_both(C, A):
+                min_cb = min_fwd(C, B)
+                min_ca = min_fwd(C, A)
+                if min_cb is not None and min_ca is not None:
+                    result = round(min_cb - min_ca)
+
+            # アプローチ2: A→D の最小時間 − B→D の最小時間 = A→B (DはBの後の駅)
+            if result is None and D is not None and any_stop_both(B, D):
+                min_ad = min_fwd(A, D)
+                min_bd = min_fwd(B, D)
+                if min_ad is not None and min_bd is not None:
+                    result = round(min_ad - min_bd)
+
+            # アプローチ3: C→B の最小時間 ÷ 2 を C→A 及び A→B の駅間基準運転時分とする
+            if result is None and C is not None:
+                min_cb = min_either(C, B)
+                if min_cb is not None:
+                    half = round(min_cb / 2)
+                    # C→A (pair i-1) が未計算の場合のみ上書きする
+                    if inter_times[i - 1] is None:
+                        inter_times[i - 1] = half
+                    result = half
+
+            # アプローチ4: A→D の最小時間 ÷ 2 を A→B 及び B→D の駅間基準運転時分とする
+            if result is None and D is not None:
+                min_ad = min_either(A, D)
+                if min_ad is not None:
+                    half = round(min_ad / 2)
+                    result = half
+                    # B→D (pair i+1) が未計算の場合のみ上書きする
+                    if i + 1 < n - 1 and inter_times[i + 1] is None:
+                        inter_times[i + 1] = half
+
+            if result is None:
+                QMessageBox.critical(
+                    self, "エラー",
+                    "基準運転時分の算出に必要な時刻が入力されていない区間が存在します"
+                )
+                return
+
+            inter_times[i] = result
+
+        # 各駅の absolute_standard_running_time を更新
+        # 起点駅(最初の駅)は 0
+        station_list[0]["absolute_standard_running_time"] = 0
+        cumulative = 0
+        for i in range(1, n):
+            cumulative += inter_times[i - 1]
+            station_list[i]["absolute_standard_running_time"] = cumulative
+
+        if hasattr(self.parent(), "set_modified"):
+            self.parent().set_modified(True)
+
+        # 駅選択中であればフォームの表示を更新する
+        self._on_station_selected()
+
+        QMessageBox.information(self, "情報", "基準運転時分の計算が完了しました。")
 
     def _on_delete_station(self):
         """現在編集中の駅を現在の路線から削除し、必要に応じてプロジェクト全体から削除する"""
