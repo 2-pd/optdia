@@ -1,7 +1,7 @@
 import re
 from PySide6.QtCore import Qt, QRect, QModelIndex
 from PySide6.QtGui import QColor, QPainter, QFont, QFontMetrics, QIcon
-from PySide6.QtWidgets import QHeaderView, QStyleOptionHeader, QStyle, QTableView, QSizePolicy, QVBoxLayout, QLabel, QMenu
+from PySide6.QtWidgets import QHeaderView, QStyleOptionHeader, QStyle, QTableView, QSizePolicy, QVBoxLayout, QLabel, QMenu, QDialog
 from PySide6.QtGui import QActionGroup
 from .model import StopTypeRole
 
@@ -458,56 +458,93 @@ class TimetableView(QTableView):
             return
 
         model = self.model()
-        if not model or not hasattr(model, 'row_headers') or not hasattr(model, 'station_rows'):
+        if not model or not hasattr(model, 'train_ids') or not model.route_id or not model.diagram_id:
             super().contextMenuEvent(event)
             return
 
-        row, col = index.row(), index.column()
-        # 各駅停車時刻のセル
-        if row >= len(model.row_headers) and row < len(model.row_headers) + len(model.station_rows):
-            menu = QMenu(self)
-            
-            # 客扱い情報 サブメニュー
-            passenger_menu = QMenu("客扱い情報", menu)
-            
-            group = QActionGroup(self)
-            
-            current_value = index.data(StopTypeRole)
-            if current_value is None:
-                current_value = 1  # デフォルトは停車
-                
-            stop_action = passenger_menu.addAction("停車")
-            stop_action.setCheckable(True)
-            stop_action.setData(1)
-            group.addAction(stop_action)
-            if current_value == 1:
-                stop_action.setChecked(True)
-                
-            pass_action = passenger_menu.addAction("通過")
-            pass_action.setCheckable(True)
-            pass_action.setData(0)
-            group.addAction(pass_action)
-            if current_value == 0:
-                pass_action.setChecked(True)
-                
-            op_stop_action = passenger_menu.addAction("運転停車")
-            op_stop_action.setCheckable(True)
-            op_stop_action.setData(-1)
-            group.addAction(op_stop_action)
-            if current_value == -1:
-                op_stop_action.setChecked(True)
-                
-            menu.addMenu(passenger_menu)
-            
-            split_action = menu.addAction("この駅で列車を分割")
-            
-            selected_action = menu.exec(event.globalPos())
-            if selected_action and selected_action in (stop_action, pass_action, op_stop_action):
-                new_val = selected_action.data()
-                model.setData(index, new_val, StopTypeRole)
-            elif selected_action == split_action:
-                from .dialogs import split_train_at_cell
-                split_train_at_cell(self, model, index)
-        else:
+        col = index.column()
+        row = index.row()
+        if col < 0 or col >= len(model.train_ids):
             super().contextMenuEvent(event)
+            return
+
+        menu = QMenu(self)
+
+        # 共通列車操作項目
+        add_left_action = menu.addAction("左に列車を追加")
+        add_right_action = menu.addAction("右に列車を追加")
+        dup_action = menu.addAction("この列車を複製")
+        dup_cond_action = menu.addAction("条件を指定して列車を複製")
+        del_action = menu.addAction("この列車を削除")
+
+        # 各駅停車時刻のセルの場合は、「客扱い情報」と「この駅で列車を分割」を後ろに追加
+        passenger_menu = None
+        split_action = None
+        stop_action = None
+        pass_action = None
+        op_stop_action = None
+
+        if hasattr(model, 'row_headers') and hasattr(model, 'station_rows'):
+            if len(model.row_headers) <= row < len(model.row_headers) + len(model.station_rows):
+                menu.addSeparator()
+
+                passenger_menu = QMenu("客扱い情報", menu)
+                group = QActionGroup(self)
+
+                current_value = index.data(StopTypeRole)
+                if current_value is None:
+                    current_value = 1  # デフォルトは停車
+
+                stop_action = passenger_menu.addAction("停車")
+                stop_action.setCheckable(True)
+                stop_action.setData(1)
+                group.addAction(stop_action)
+                if current_value == 1:
+                    stop_action.setChecked(True)
+
+                pass_action = passenger_menu.addAction("通過")
+                pass_action.setCheckable(True)
+                pass_action.setData(0)
+                group.addAction(pass_action)
+                if current_value == 0:
+                    pass_action.setChecked(True)
+
+                op_stop_action = passenger_menu.addAction("運転停車")
+                op_stop_action.setCheckable(True)
+                op_stop_action.setData(-1)
+                group.addAction(op_stop_action)
+                if current_value == -1:
+                    op_stop_action.setChecked(True)
+
+                menu.addMenu(passenger_menu)
+                split_action = menu.addAction("この駅で列車を分割")
+
+        selected_action = menu.exec(event.globalPos())
+        if not selected_action:
+            return
+
+        from .dialogs import (
+            add_empty_train, duplicate_train, DuplicateTrainWithConditionsDialog,
+            delete_train, split_train_at_cell
+        )
+
+        if selected_action == add_left_action:
+            add_empty_train(model, col, "left")
+        elif selected_action == add_right_action:
+            add_empty_train(model, col, "right")
+        elif selected_action == dup_action:
+            duplicate_train(model, col, offset_minutes=0, duplicate_subsequent=False)
+        elif selected_action == dup_cond_action:
+            dialog = DuplicateTrainWithConditionsDialog(self)
+            if dialog.exec() == QDialog.Accepted:
+                offset_min = dialog.get_offset_minutes()
+                dup_subs = dialog.should_duplicate_subsequent()
+                duplicate_train(model, col, offset_minutes=offset_min, duplicate_subsequent=dup_subs)
+        elif selected_action == del_action:
+            delete_train(self, model, col)
+        elif selected_action in (stop_action, pass_action, op_stop_action):
+            new_val = selected_action.data()
+            model.setData(index, new_val, StopTypeRole)
+        elif selected_action == split_action:
+            split_train_at_cell(self, model, index)
 

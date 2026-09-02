@@ -6,7 +6,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QGroupBox, QLineEdit,
     QComboBox, QLabel, QScrollArea, QWidget, QListWidget, QListWidgetItem,
-    QCheckBox, QPlainTextEdit, QMessageBox
+    QCheckBox, QPlainTextEdit, QMessageBox, QRadioButton, QButtonGroup, QSpinBox
 )
 from common.gui_utils import HtmlDelegate
 from core.project import OptDiaProject
@@ -116,7 +116,7 @@ class TrainPicker(QDialog):
         self.selected_train_id = item.data(Qt.UserRole)
         self.accept()
 
-# 列車に割り当てる運転ダイヤを選択するためのダイアログ
+# 運転ダイヤの選択ダイアログ
 class DiagramPicker(QDialog):
     def __init__(self, parent, project: OptDiaProject, train_id: str, current_diagram_id: str, route_id: str, direction: str):
         super().__init__(parent)
@@ -263,7 +263,7 @@ class DiagramPicker(QDialog):
             # モデルのデータが変更されたことを通知し、MainWindow の set_modified(True) を発火させる
             view.model().dataChanged.emit(QModelIndex(), QModelIndex(), [])
 
-# 列車種別を選択するためのポップアップダイアログ
+# 列車種別の選択ポップアップ
 class TrainTypePicker(QDialog):
     def __init__(self, parent, project: OptDiaProject, current_id=None):
         super().__init__(parent, Qt.Popup)
@@ -661,7 +661,7 @@ class TrackPicker(QDialog):
         self.selected_id = item.data(Qt.UserRole)
         self.accept()
 
-# 「連続する列車」を編集するダイアログ
+# 連続する列車の編集ダイアログ
 class SubsequentTrainDialog(QDialog):
     def __init__(self, parent, project: OptDiaProject, d_train: dict, m_train: dict, diagram_id: str, 
                  route_id: str, direction: str):
@@ -920,7 +920,7 @@ class SubsequentTrainDialog(QDialog):
         return f"{num} {tt_display}"
 
 
-# 備考編集用ポップアップ
+# 備考編集ポップアップ
 class NotePopup(QDialog):
     def __init__(self, parent, initial_text):
         super().__init__(parent, Qt.Popup)
@@ -1165,5 +1165,409 @@ def split_train_at_cell(parent, model, index):
         model.history_manager.push_events(events_to_push)
 
     # 時刻表テーブルのモデルを更新
+    model.update_data(model.route_id, model.diagram_id, model.direction)
+    model.dataChanged.emit(QModelIndex(), QModelIndex(), [])
+
+
+class DuplicateTrainWithConditionsDialog(QDialog):
+    """「条件を指定して列車を複製」ダイアログ"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("条件を指定して列車を複製")
+        self.setFixedSize(320, 480)
+
+        layout = QVBoxLayout(self)
+
+        # 1. ラベル
+        layout.addWidget(QLabel("指定時間後の列車として複製する"))
+
+        # 2. ラジオボタン（「0分」「10分」「12分」「15分」「20分」「30分」「1時間」「2時間」「3時間」「カスタム」）
+        options = [
+            ("0分", 0),
+            ("10分", 10),
+            ("12分", 12),
+            ("15分", 15),
+            ("20分", 20),
+            ("30分", 30),
+            ("1時間", 60),
+            ("2時間", 120),
+            ("3時間", 180),
+            ("カスタム", None)
+        ]
+
+        self.btn_group = QButtonGroup(self)
+        self.radio_buttons = []
+        for i, (text, minutes) in enumerate(options):
+            rb = QRadioButton(text)
+            rb.setData = minutes
+            self.btn_group.addButton(rb, i)
+            self.radio_buttons.append((rb, minutes))
+            layout.addWidget(rb)
+            if i == 0:
+                rb.setChecked(True)
+
+        # 3. 「分」という単位の設定されたスピンボックス（カスタム選択時のみ有効、-360〜360）
+        custom_layout = QHBoxLayout()
+        self.spin_box = QSpinBox()
+        self.spin_box.setRange(-360, 360)
+        self.spin_box.setValue(0)
+        self.spin_box.setSuffix(" 分")
+        self.spin_box.setEnabled(False)
+        custom_layout.addWidget(self.spin_box)
+        layout.addLayout(custom_layout)
+
+        self.btn_group.idToggled.connect(self._on_radio_toggled)
+
+        layout.addSpacing(20)
+
+        # 4. 「連続する列車も複製」チェックボックス
+        self.duplicate_subs_cb = QCheckBox("連続する列車も複製")
+        layout.addWidget(self.duplicate_subs_cb)
+
+        layout.addStretch()
+
+        # 5. 「OK」「キャンセル」ボタン
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        self.ok_btn = QPushButton("OK")
+        self.cancel_btn = QPushButton("キャンセル")
+        btn_layout.addWidget(self.ok_btn)
+        btn_layout.addWidget(self.cancel_btn)
+        layout.addLayout(btn_layout)
+
+        self.ok_btn.clicked.connect(self.accept)
+        self.cancel_btn.clicked.connect(self.reject)
+
+    def _on_radio_toggled(self, id, checked):
+        if checked:
+            # 最後の選択肢がカスタム
+            is_custom = (id == len(self.radio_buttons) - 1)
+            self.spin_box.setEnabled(is_custom)
+
+    def get_offset_minutes(self) -> int:
+        selected_id = self.btn_group.checkedId()
+        _, minutes = self.radio_buttons[selected_id]
+        if minutes is None:
+            return self.spin_box.value()
+        return minutes
+
+    def should_duplicate_subsequent(self) -> bool:
+        return self.duplicate_subs_cb.isChecked()
+
+
+def _generate_unique_train_id(existing_ids) -> str:
+    chars = string.ascii_letters + string.digits
+    while True:
+        tid = "".join(random.choices(chars, k=16))
+        if tid not in existing_ids:
+            return tid
+
+
+def _shift_time_str(time_str: Optional[str], offset_minutes: int) -> Optional[str]:
+    if not time_str:
+        return None
+    try:
+        parts = [int(p) for p in time_str.split(":")]
+        if len(parts) == 2:
+            hh, mm, ss = parts[0], parts[1], 0
+        elif len(parts) == 3:
+            hh, mm, ss = parts[0], parts[1], parts[2]
+        else:
+            return time_str
+        total_sec = hh * 3600 + mm * 60 + ss + offset_minutes * 60
+        # 負の時刻は0:00:00未満にならないようにするか、そのまま正規化（通常鉄道ダイヤでは0〜99時間）
+        total_sec = max(0, total_sec)
+        new_hh = total_sec // 3600
+        new_mm = (total_sec % 3600) // 60
+        new_ss = total_sec % 60
+        return f"{new_hh:02d}:{new_mm:02d}:{new_ss:02d}"
+    except Exception:
+        return time_str
+
+
+def add_empty_train(model, col: int, side: str):
+    """
+    空の列車を挿入する
+    side: "left" or "right"
+    """
+    if not model.route_id or not model.diagram_id:
+        return
+    route = model.project.routes.get(model.route_id)
+    if not route:
+        return
+
+    train_key = "inbound_trains" if model.direction == "inbound" else "outbound_trains"
+    order_key = f"{train_key}_order"
+    tbd = route.setdefault("trains_by_diagram", {}).setdefault(model.diagram_id, {})
+    d_trains = tbd.setdefault(train_key, {})
+    order = tbd.setdefault(order_key, [])
+    m_trains = route.setdefault(train_key, {})
+
+    new_train_id = _generate_unique_train_id(set(m_trains.keys()) | set(d_trains.keys()))
+
+    new_d_train = {
+        "train_id": new_train_id,
+        "operations": [],
+        "car_count": None,
+        "destination": None,
+        "subsequent_trains": [],
+        "to_be_saved": True
+    }
+    new_m_train = {
+        "train_number": "",
+        "train_type_id": None,
+        "named_train_number": None,
+        "note": "",
+        "stops": [],
+        "_diagram_ids": [model.diagram_id]
+    }
+
+    insert_idx = col if side == "left" else col + 1
+    insert_idx = max(0, min(insert_idx, len(order)))
+
+    d_trains[new_train_id] = new_d_train
+    m_trains[new_train_id] = new_m_train
+    order.insert(insert_idx, new_train_id)
+
+    from core.events import AddTrainEvent
+    ev = AddTrainEvent(model.route_id, model.direction, new_train_id, model.diagram_id, insert_idx, new_d_train, new_m_train)
+    if model.history_manager:
+        model.history_manager.push_events([ev])
+
+    model.update_data(model.route_id, model.diagram_id, model.direction)
+    model.dataChanged.emit(QModelIndex(), QModelIndex(), [])
+
+
+def duplicate_train(model, col: int, offset_minutes: int = 0, duplicate_subsequent: bool = False):
+    """
+    指定列の列車を複製する
+    """
+    if not model.route_id or not model.diagram_id or col < 0 or col >= len(model.train_ids):
+        return
+    route = model.project.routes.get(model.route_id)
+    if not route:
+        return
+
+    train_key = "inbound_trains" if model.direction == "inbound" else "outbound_trains"
+    order_key = f"{train_key}_order"
+    tbd = route.setdefault("trains_by_diagram", {}).setdefault(model.diagram_id, {})
+    d_trains = tbd.setdefault(train_key, {})
+    order = tbd.setdefault(order_key, [])
+    m_trains = route.setdefault(train_key, {})
+
+    src_train_id = model.train_ids[col]
+    src_d_train = d_trains.get(src_train_id)
+    src_m_train = m_trains.get(src_train_id)
+    if not src_d_train or not src_m_train:
+        return
+
+    from core.events import AddTrainEvent
+    events_to_push = []
+
+    def _clone_single_train(s_rid, s_dir, s_tid, shift_min, is_root=False):
+        s_route = model.project.routes.get(s_rid)
+        if not s_route:
+            return None
+        s_t_key = "inbound_trains" if s_dir == "inbound" else "outbound_trains"
+        s_o_key = f"{s_t_key}_order"
+        s_tbd = s_route.setdefault("trains_by_diagram", {}).setdefault(model.diagram_id, {})
+        s_d_trains = s_tbd.setdefault(s_t_key, {})
+        s_order = s_tbd.setdefault(s_o_key, [])
+        s_m_trains = s_route.setdefault(s_t_key, {})
+
+        s_d = s_d_trains.get(s_tid)
+        s_m = s_m_trains.get(s_tid)
+        if not s_d or not s_m:
+            return None
+
+        new_tid = _generate_unique_train_id(set(s_m_trains.keys()) | set(s_d_trains.keys()))
+
+        new_d = copy.deepcopy(s_d)
+        new_d["train_id"] = new_tid
+        new_d["operations"] = []  # 運用番号は継承しない
+        new_d["to_be_saved"] = True
+        new_d["subsequent_trains"] = []  # 後で設定
+
+        new_m = copy.deepcopy(s_m)
+        orig_num = s_m.get("train_number", "")
+        new_m["train_number"] = f"{orig_num}のコピー"
+        new_m["_diagram_ids"] = [model.diagram_id]  # 運転日は継承しない（現在のダイヤのみ）
+
+        # 時刻をシフト
+        if shift_min != 0:
+            for s in new_m.get("stops", []):
+                if s.get("arrival_time") is not None:
+                    s["arrival_time"] = _shift_time_str(s["arrival_time"], shift_min)
+                if s.get("departure_time") is not None:
+                    s["departure_time"] = _shift_time_str(s["departure_time"], shift_min)
+
+        # 挿入位置の決定
+        if is_root:
+            ins_idx = col + 1
+        else:
+            ins_idx = len(s_order)
+            if s_tid in s_order:
+                ins_idx = s_order.index(s_tid) + 1
+
+        ins_idx = max(0, min(ins_idx, len(s_order)))
+
+        s_d_trains[new_tid] = new_d
+        s_m_trains[new_tid] = new_m
+        s_order.insert(ins_idx, new_tid)
+
+        events_to_push.append(AddTrainEvent(s_rid, s_dir, new_tid, model.diagram_id, ins_idx, new_d, new_m))
+        return new_tid, new_d, new_m, s_d
+
+    # 複製対象を再帰的/連鎖的に探索・複製
+    visited = set()
+
+    def _duplicate_chain(s_rid, s_dir, s_tid, is_root=False):
+        if (s_rid, s_dir, s_tid) in visited:
+            return None
+        visited.add((s_rid, s_dir, s_tid))
+
+        cloned = _clone_single_train(s_rid, s_dir, s_tid, offset_minutes, is_root=is_root)
+        if not cloned:
+            return None
+        new_tid, new_d, new_m, orig_d = cloned
+
+        if duplicate_subsequent:
+            orig_subs = orig_d.get("subsequent_trains", [])
+            new_subs = []
+            for sub in orig_subs:
+                sub_rid = sub.get("route_id")
+                sub_dir = sub.get("direction")
+                sub_tid = sub.get("train_id")
+                if sub_rid and sub_dir and sub_tid:
+                    cloned_sub_tid = _duplicate_chain(sub_rid, sub_dir, sub_tid, is_root=False)
+                    if cloned_sub_tid:
+                        new_subs.append({
+                            "route_id": sub_rid,
+                            "direction": sub_dir,
+                            "train_id": cloned_sub_tid
+                        })
+            new_d["subsequent_trains"] = new_subs
+
+        return new_tid
+
+    _duplicate_chain(model.route_id, model.direction, src_train_id, is_root=True)
+
+    if model.history_manager and events_to_push:
+        model.history_manager.push_events(events_to_push)
+
+    model.update_data(model.route_id, model.diagram_id, model.direction)
+    model.dataChanged.emit(QModelIndex(), QModelIndex(), [])
+
+
+def delete_train(parent_view, model, col: int):
+    """
+    指定列の列車を削除する
+    """
+    if not model.route_id or not model.diagram_id or col < 0 or col >= len(model.train_ids):
+        return
+    route = model.project.routes.get(model.route_id)
+    if not route:
+        return
+
+    train_key = "inbound_trains" if model.direction == "inbound" else "outbound_trains"
+    order_key = f"{train_key}_order"
+    tbd = route.get("trains_by_diagram", {}).get(model.diagram_id, {})
+    d_trains = tbd.get(train_key, {})
+    order = tbd.get(order_key, [])
+    m_trains = route.get(train_key, {})
+
+    train_id = model.train_ids[col]
+    m_train = m_trains.get(train_id)
+    d_train = d_trains.get(train_id)
+    if not m_train or not d_train:
+        return
+
+    train_num = m_train.get("train_number") or "(番号なし)"
+
+    # 1. 「列車 <列車番号> を削除しますか？」確認ダイアログ
+    reply = QMessageBox.question(
+        parent_view,
+        "列車の削除",
+        f"列車 {train_num} を削除しますか？",
+        QMessageBox.Yes | QMessageBox.No,
+        QMessageBox.No
+    )
+    if reply != QMessageBox.Yes:
+        return
+
+    # 運転日（_diagram_ids または 各運転ダイヤのd_trains）をチェック
+    diagram_ids = list(m_train.get("_diagram_ids", []))
+    # _diagram_ids に含まれていなくても実際のダイヤに存在する場合を考慮
+    actual_diagram_ids = []
+    for did in model.project.diagrams_order:
+        tbd_for_did = route.get("trains_by_diagram", {}).get(did, {})
+        if train_id in tbd_for_did.get(train_key, {}):
+            actual_diagram_ids.append(did)
+
+    delete_from_all_diagrams = False
+    if len(actual_diagram_ids) > 1:
+        reply2 = QMessageBox.question(
+            parent_view,
+            "他の運転ダイヤからの削除",
+            "他の運転ダイヤからも列車を削除しますか？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if reply2 == QMessageBox.Yes:
+            delete_from_all_diagrams = True
+
+    from core.events import RemoveTrainEvent, RemoveTrainDiagramEvent
+
+    events_to_push = []
+
+    if delete_from_all_diagrams:
+        # 全運転ダイヤおよび運行系統マスタから削除 -> RemoveTrainEvent
+        d_trains_by_diagram = {}
+        for did in actual_diagram_ids:
+            tbd_for_did = route.get("trains_by_diagram", {}).get(did, {})
+            d_train_dict = tbd_for_did.get(train_key, {})
+            d_order_list = tbd_for_did.get(order_key, [])
+            if train_id in d_train_dict:
+                d_idx = d_order_list.index(train_id) if train_id in d_order_list else len(d_order_list) - 1
+                d_trains_by_diagram[did] = (d_idx, copy.deepcopy(d_train_dict[train_id]))
+                if train_id in d_order_list:
+                    d_order_list.remove(train_id)
+                del d_train_dict[train_id]
+
+        m_train_snapshot = copy.deepcopy(m_train)
+        if train_id in m_trains:
+            del m_trains[train_id]
+
+        ev = RemoveTrainEvent(model.route_id, model.direction, train_id, d_trains_by_diagram, m_train_snapshot)
+        events_to_push.append(ev)
+    else:
+        # 現在の運転ダイヤからのみ削除 -> RemoveTrainDiagramEvent (もし登録が1つだけならマスタからも消えるRemoveTrainEventにするか、仕様通りRemoveTrainDiagramEvent)
+        # 登録が1つだけの場合は RemoveTrainEvent を使用
+        if len(actual_diagram_ids) <= 1:
+            d_trains_by_diagram = {model.diagram_id: (col, copy.deepcopy(d_train))}
+            if train_id in order:
+                order.remove(train_id)
+            if train_id in d_trains:
+                del d_trains[train_id]
+            m_train_snapshot = copy.deepcopy(m_train)
+            if train_id in m_trains:
+                del m_trains[train_id]
+            ev = RemoveTrainEvent(model.route_id, model.direction, train_id, d_trains_by_diagram, m_train_snapshot)
+            events_to_push.append(ev)
+        else:
+            old_idx = order.index(train_id) if train_id in order else col
+            old_d_train = copy.deepcopy(d_train)
+            if train_id in order:
+                order.remove(train_id)
+            if train_id in d_trains:
+                del d_trains[train_id]
+            if "_diagram_ids" in m_train and model.diagram_id in m_train["_diagram_ids"]:
+                m_train["_diagram_ids"].remove(model.diagram_id)
+            ev = RemoveTrainDiagramEvent(model.route_id, model.direction, train_id, model.diagram_id, old_idx, old_d_train)
+            events_to_push.append(ev)
+
+    if model.history_manager and events_to_push:
+        model.history_manager.push_events(events_to_push)
+
     model.update_data(model.route_id, model.diagram_id, model.direction)
     model.dataChanged.emit(QModelIndex(), QModelIndex(), [])

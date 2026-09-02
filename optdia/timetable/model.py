@@ -7,7 +7,7 @@ from PySide6.QtGui import QColor
 from core.project import OptDiaProject
 from core.history_manager import HistoryManager
 from core.events import (
-    BaseEvent, AddTrainEvent, ReorderTrainsEvent, ChangeTrainNumberEvent,
+    BaseEvent, AddTrainEvent, RemoveTrainEvent, ReorderTrainsEvent, ChangeTrainNumberEvent,
     AddTrainDiagramEvent, RemoveTrainDiagramEvent, AddTrainOperationEvent,
     RemoveTrainOperationEvent, ChangeTrainOperationEvent, ChangeTrainCarCountEvent,
     ChangeTrainTypeEvent, ChangeTrainNamedNumberEvent, ChangeTrainDestinationEvent,
@@ -66,7 +66,7 @@ class TimetableModel(QAbstractTableModel):
         affected_train_ids = set()
         for ev in events:
             affected_train_ids.add(ev.train_id)
-            if isinstance(ev, (AddTrainEvent, ReorderTrainsEvent, AddTrainDiagramEvent, RemoveTrainDiagramEvent)):
+            if isinstance(ev, (AddTrainEvent, RemoveTrainEvent, ReorderTrainsEvent, AddTrainDiagramEvent, RemoveTrainDiagramEvent)):
                 structural = True
 
         if structural:

@@ -124,6 +124,59 @@ class AddTrainEvent(BaseEvent):
             order.insert(self.index, self.train_id)
 
 
+# 列車の削除
+class RemoveTrainEvent(BaseEvent):
+    """
+    列車の削除イベント（全運転ダイヤおよび運行系統マスタからの列車削除）
+    - route_id: 運行系統ID
+    - direction: 方向
+    - train_id: 列車ID
+    - d_trains_by_diagram: 各運転ダイヤにおける (index, d_train) の辞書 {diagram_id: (index, d_train)}
+    - m_train: 列車マスタ情報
+    """
+    def __init__(self, route_id: str, direction: str, train_id: str, d_trains_by_diagram: Dict[str, Any], m_train: dict):
+        super().__init__(route_id, direction, train_id)
+        self.d_trains_by_diagram = copy.deepcopy(d_trains_by_diagram)
+        self.m_train = copy.deepcopy(m_train)
+
+    def validate_undo(self, project) -> None:
+        self._validate_route(project, for_undo=True)
+
+    def validate_redo(self, project) -> None:
+        self._validate_route(project, for_undo=False)
+
+    def undo(self, project) -> None:
+        route = project.routes.get(self.route_id, {})
+        m_trains = route.setdefault(self.train_key, {})
+        m_trains[self.train_id] = copy.deepcopy(self.m_train)
+
+        for diagram_id, (index, d_train) in self.d_trains_by_diagram.items():
+            tbd = route.setdefault("trains_by_diagram", {}).setdefault(diagram_id, {})
+            d_trains = tbd.setdefault(self.train_key, {})
+            order = tbd.setdefault(self.order_key, [])
+            d_trains[self.train_id] = copy.deepcopy(d_train)
+            if self.train_id not in order:
+                if index >= len(order):
+                    order.append(self.train_id)
+                else:
+                    order.insert(index, self.train_id)
+
+    def redo(self, project) -> None:
+        route = project.routes.get(self.route_id, {})
+        for diagram_id in self.d_trains_by_diagram.keys():
+            tbd = route.get("trains_by_diagram", {}).get(diagram_id, {})
+            d_trains = tbd.get(self.train_key, {})
+            order = tbd.get(self.order_key, [])
+            if self.train_id in order:
+                order.remove(self.train_id)
+            if self.train_id in d_trains:
+                del d_trains[self.train_id]
+
+        m_trains = route.get(self.train_key, {})
+        if self.train_id in m_trains:
+            del m_trains[self.train_id]
+
+
 # 列車の並び替え
 class ReorderTrainsEvent(BaseEvent):
     """
