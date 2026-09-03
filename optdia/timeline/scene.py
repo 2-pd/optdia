@@ -7,21 +7,70 @@ from PySide6.QtCore import Qt, QRectF
 from .dialogs import TemporaryStablingDialog, AddDeadheadDialog, AddTrainToOperationDialog
 
 
+# ガントチャート上の矩形アイテムの基底クラス
+class TimelineRectItem(QGraphicsRectItem):
+    def __init__(self, x: float, y: float, w: float, h: float, operation_id: str, scene: "TimelineScene"):
+        super().__init__(x, y, w, h)
+        self.operation_id = operation_id
+        self.timeline_scene = scene
+        self._is_selected = False
+        self.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemClipsChildrenToShape, True)
+
+    def is_timeline_selected(self) -> bool:
+        return self._is_selected
+
+    def set_timeline_selected(self, selected: bool):
+        if self._is_selected != selected:
+            self._is_selected = selected
+            self.update()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            if self.timeline_scene:
+                self.timeline_scene.handle_item_mouse_press(self, event)
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self.timeline_scene and self.timeline_scene.drag_controller:
+            self.timeline_scene.drag_controller.handle_mouse_move(event)
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            if self.timeline_scene and self.timeline_scene.drag_controller:
+                self.timeline_scene.drag_controller.handle_mouse_release(event)
+            event.accept()
+        else:
+            super().mouseReleaseEvent(event)
+
+    def paint_selection_pattern(self, painter, option, widget=None):
+        if self._is_selected:
+            pattern_pen = QPen(QColor("#eeeeee"), 1)
+            pattern_pen.setStyle(Qt.PenStyle.CustomDashLine)
+            brush = QBrush(QColor("#eeeeee"), Qt.DiagCrossPattern)
+            painter.fillRect(self.rect(), brush)
+
 
 # 列車を表す矩形アイテム
-class TrainTimelineItem(QGraphicsRectItem):
+class TrainTimelineItem(TimelineRectItem):
     def __init__(self, x: float, y: float, w: float, h: float, bg_color: QColor, train_number: str,
                  route_id: str, direction_key: str, train_id: str, operation_id: str, scene: "TimelineScene",
                  train_type: str = "", first_station_initial: str = "", last_station_initial: str = "",
-                 first_dep_str: str = "", last_arr_str: str = "", all_op_ids: list = None):
-        super().__init__(x, y, w, h)
+                 first_dep_str: str = "", last_arr_str: str = "", all_op_ids: list = None,
+                 first_dep_m: float = 0, last_arr_m: float = 0):
+        super().__init__(x, y, w, h, operation_id, scene)
         self.route_id = route_id
         self.direction_key = direction_key
         self.train_id = train_id
-        self.operation_id = operation_id
-        self.timeline_scene = scene
+        self.bg_color = bg_color
+        self.first_dep_m = first_dep_m
+        self.last_arr_m = last_arr_m
+        self.station_text_item = None
 
-        self.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemClipsChildrenToShape, True)
         self.setBrush(QBrush(bg_color))
         self.setPen(QPen(Qt.NoPen))
         self.setZValue(1)
@@ -42,6 +91,10 @@ class TrainTimelineItem(QGraphicsRectItem):
             train_number, train_type, operation_id, all_op_ids or [],
             first_station_initial, last_station_initial, first_dep_str, last_arr_str, scene
         ))
+
+    def paint(self, painter, option, widget=None):
+        super().paint(painter, option, widget)
+        self.paint_selection_pattern(painter, option, widget)
 
     def _build_tooltip(self, train_number: str, train_type: str, operation_id: str, all_op_ids: list,
                        first_station_initial: str, last_station_initial: str,
@@ -126,15 +179,14 @@ class TrainTimelineItem(QGraphicsRectItem):
 
 
 # 一時入庫を表す矩形アイテム
-class TemporaryStablingItem(QGraphicsRectItem):
-    def __init__(self, x: float, y: float, w: float, h: float, event_data: dict, operation: dict, operation_id: str, scene: "TimelineScene"):
-        super().__init__(x, y, w, h)
+class TemporaryStablingItem(TimelineRectItem):
+    def __init__(self, x: float, y: float, w: float, h: float, event_data: dict, operation: dict, operation_id: str, scene: "TimelineScene",
+                 start_m: float = 0, end_m: float = 0):
+        super().__init__(x, y, w, h, operation_id, scene)
         self.event_data = event_data
         self.operation = operation
-        self.operation_id = operation_id
-        self.timeline_scene = scene
-
-        self.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemClipsChildrenToShape, True)
+        self.start_m = start_m
+        self.end_m = end_m
 
         # 塗りつぶし色は透明、輪郭線は灰色
         self.setPen(QPen(QColor("#888888"), 1))
@@ -162,6 +214,10 @@ class TemporaryStablingItem(QGraphicsRectItem):
         # ツールチップ設定
         self.setToolTip(self._build_tooltip(event_data))
 
+    def paint(self, painter, option, widget=None):
+        super().paint(painter, option, widget)
+        self.paint_selection_pattern(painter, option, widget)
+
     def _build_tooltip(self, event_data: dict) -> str:
         stabled_location = event_data.get("stabled_location", "")
         start_time = event_data.get("start_time", "")
@@ -185,45 +241,51 @@ class TemporaryStablingItem(QGraphicsRectItem):
             lines.append(note)
         return "\n".join(lines)
 
-    def mousePressEvent(self, event):
+    def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.LeftButton:
-            parent_widget = self.timeline_scene.views()[0].window() if self.timeline_scene and self.timeline_scene.views() else None
-            dialog = TemporaryStablingDialog(parent_widget, event_data=self.event_data)
-            if dialog.exec() == QDialog.Accepted:
-                old_event_data = copy.deepcopy(self.event_data)
-                new_data = dialog.get_data()
-                
-                events = self.operation.get("temporary_stabling_events", [])
-                event_idx = events.index(self.event_data) if self.event_data in events else -1
-
-                self.event_data.update(new_data)
-                # start_time順にソート
-                events.sort(key=lambda e: e.get("start_time", ""))
-
-                if self.timeline_scene.history_manager and event_idx != -1:
-                    from core.events import ChangeTemporaryStablingEvent
-                    ev = ChangeTemporaryStablingEvent(
-                        diagram_id=self.timeline_scene.diagram_id,
-                        operation_id=self.operation_id,
-                        index=event_idx,
-                        old_stabling_event=old_event_data,
-                        new_stabling_event=new_data
-                    )
-                    self.timeline_scene.history_manager.push_events([ev])
-
-                self.timeline_scene.refresh()
-                if parent_widget and hasattr(parent_widget, "set_modified"):
-                    parent_widget.set_modified(True)
+            self.open_stabling_dialog()
             event.accept()
         else:
-            super().mousePressEvent(event)
+            super().mouseDoubleClickEvent(event)
+
+    def open_stabling_dialog(self):
+        parent_widget = self.timeline_scene.views()[0].window() if self.timeline_scene and self.timeline_scene.views() else None
+        dialog = TemporaryStablingDialog(parent_widget, event_data=self.event_data)
+        if dialog.exec() == QDialog.Accepted:
+            old_event_data = copy.deepcopy(self.event_data)
+            new_data = dialog.get_data()
+            
+            events = self.operation.get("temporary_stabling_events", [])
+            event_idx = events.index(self.event_data) if self.event_data in events else -1
+
+            self.event_data.update(new_data)
+            # start_time順にソート
+            events.sort(key=lambda e: e.get("start_time", ""))
+
+            if self.timeline_scene.history_manager and event_idx != -1:
+                from core.events import ChangeTemporaryStablingEvent
+                ev = ChangeTemporaryStablingEvent(
+                    diagram_id=self.timeline_scene.diagram_id,
+                    operation_id=self.operation_id,
+                    index=event_idx,
+                    old_stabling_event=old_event_data,
+                    new_stabling_event=new_data
+                )
+                self.timeline_scene.history_manager.push_events([ev])
+
+            self.timeline_scene.refresh()
+            if parent_widget and hasattr(parent_widget, "set_modified"):
+                parent_widget.set_modified(True)
 
     def contextMenuEvent(self, event):
         menu = QMenu()
+        act_edit = menu.addAction("一時入庫の設定を変更")
         act_delete = menu.addAction("この一時入庫を削除")
         selected_act = menu.exec(event.screenPos())
 
-        if selected_act == act_delete:
+        if selected_act == act_edit:
+            self.open_stabling_dialog()
+        elif selected_act == act_delete:
             stabled_location = self.event_data.get("stabled_location", "")
             parent_widget = self.timeline_scene.views()[0].window() if self.timeline_scene and self.timeline_scene.views() else None
             reply = QMessageBox.question(
@@ -421,6 +483,80 @@ class BlankSpaceItem(QGraphicsRectItem):
 
 
 
+# 運用ガントチャートのドラッグ移動管理クラス
+class TimelineDragController:
+    def __init__(self, scene: "TimelineScene"):
+        self.scene = scene
+        self.is_dragging = False
+        self.mouse_press_pos = None
+        self.dragged_items = []
+        self.initial_positions = {}
+        self.current_dy = 0.0
+
+    def handle_mouse_press(self, item: TimelineRectItem, event):
+        self.mouse_press_pos = event.scenePos()
+        self.is_dragging = False
+        self.dragged_items = []
+        self.initial_positions = {}
+        self.current_dy = 0.0
+
+    def handle_mouse_move(self, event):
+        if not self.mouse_press_pos:
+            return
+        
+        pos = event.scenePos()
+        dy = pos.y() - self.mouse_press_pos.y()
+        dx = pos.x() - self.mouse_press_pos.x()
+
+        if not self.is_dragging:
+            if abs(dy) >= 5 or abs(dx) >= 5:
+                self.is_dragging = True
+                self.dragged_items = list(self.scene.selected_items)
+                self.initial_positions = {}
+                for it in self.dragged_items:
+                    self.initial_positions[it] = (it.pos().x(), it.pos().y())
+                    it.setZValue(10)
+                    if isinstance(it, TrainTimelineItem) and it.station_text_item:
+                        self.initial_positions[it.station_text_item] = (
+                            it.station_text_item.pos().x(), it.station_text_item.pos().y()
+                        )
+                        it.station_text_item.setZValue(11)
+
+        if self.is_dragging:
+            self.current_dy = dy
+            for it in self.dragged_items:
+                orig_x, orig_y = self.initial_positions[it]
+                it.setPos(orig_x, orig_y + dy)
+                if isinstance(it, TrainTimelineItem) and it.station_text_item:
+                    st_orig_x, st_orig_y = self.initial_positions[it.station_text_item]
+                    it.station_text_item.setPos(st_orig_x, st_orig_y + dy)
+
+    def handle_mouse_release(self, event):
+        if not self.is_dragging:
+            self.mouse_press_pos = None
+            return
+
+        self.is_dragging = False
+        self.mouse_press_pos = None
+
+        # 元の位置・ZValueを復元
+        for it in self.dragged_items:
+            orig_x, orig_y = self.initial_positions.get(it, (0, 0))
+            it.setPos(orig_x, orig_y)
+            it.setZValue(1)
+            if isinstance(it, TrainTimelineItem) and it.station_text_item:
+                st_orig_x, st_orig_y = self.initial_positions.get(it.station_text_item, (0, 0))
+                it.station_text_item.setPos(st_orig_x, st_orig_y)
+                it.station_text_item.setZValue(2)
+
+        # 移動先の行を計算
+        row_delta = round(self.current_dy / self.scene.ROW_HEIGHT)
+        if row_delta == 0:
+            return
+
+        self.scene.move_selected_items(row_delta)
+
+
 # 運用ガントチャートのシーン
 class TimelineScene(QGraphicsScene):
     ROW_HEIGHT = 70
@@ -436,6 +572,8 @@ class TimelineScene(QGraphicsScene):
         self.operation_group_id = None
         self.history_manager = history_manager
         self.row_items = {}  # op_id -> list of QGraphicsItem
+        self.selected_items = []  # list of TimelineRectItem
+        self.drag_controller = TimelineDragController(self)
 
         if self.history_manager:
             self.history_manager.undone.connect(self._on_history_changed)
@@ -468,6 +606,13 @@ class TimelineScene(QGraphicsScene):
         for ev in events:
             if hasattr(ev, "operation_id") and ev.operation_id in current_op_ids:
                 affected_op_ids.add(ev.operation_id)
+            elif hasattr(ev, "old_operations") and hasattr(ev, "new_operations"):
+                for op in ev.old_operations:
+                    if "operation_id" in op and op["operation_id"] in current_op_ids:
+                        affected_op_ids.add(op["operation_id"])
+                for op in ev.new_operations:
+                    if "operation_id" in op and op["operation_id"] in current_op_ids:
+                        affected_op_ids.add(op["operation_id"])
             elif hasattr(ev, "train_id"):
                 # プロジェクト全体からこの列車に割り当てられている op_id を探索
                 for did, d_train_id, target_op_id in self._find_op_ids_for_train(ev.train_id):
@@ -502,6 +647,387 @@ class TimelineScene(QGraphicsScene):
     def refresh(self):
         if self.project and self.diagram_id and self.operation_group_id:
             self.update_timeline(self.project, self.diagram_id, self.operation_group_id)
+
+    def clear_timeline_selection(self):
+        for it in self.selected_items:
+            it.set_timeline_selected(False)
+        self.selected_items.clear()
+
+    def get_row_rect_items(self, op_id: str):
+        items = self.row_items.get(op_id, [])
+        rect_items = [it for it in items if isinstance(it, TimelineRectItem)]
+        def item_time(it):
+            if isinstance(it, TrainTimelineItem):
+                return (it.first_dep_m, it.last_arr_m)
+            elif isinstance(it, TemporaryStablingItem):
+                return (it.start_m, it.end_m)
+            return (0, 0)
+        return sorted(rect_items, key=item_time)
+
+    def handle_item_mouse_press(self, item: TimelineRectItem, event):
+        modifiers = event.modifiers()
+        if modifiers & Qt.ControlModifier:
+            if item.is_timeline_selected():
+                item.set_timeline_selected(False)
+                if item in self.selected_items:
+                    self.selected_items.remove(item)
+            else:
+                if self.selected_items:
+                    first_op_id = self.selected_items[0].operation_id
+                    if item.operation_id != first_op_id:
+                        parent_widget = self.views()[0].window() if self.views() else None
+                        QMessageBox.information(
+                            parent_widget,
+                            "情報",
+                            "複数の車両運用に跨って選択することはできません"
+                        )
+                        self.clear_timeline_selection()
+                        return
+                item.set_timeline_selected(True)
+                if item not in self.selected_items:
+                    self.selected_items.append(item)
+
+        elif modifiers & Qt.ShiftModifier:
+            if not self.selected_items:
+                item.set_timeline_selected(True)
+                self.selected_items.append(item)
+            else:
+                first_op_id = self.selected_items[0].operation_id
+                if item.operation_id != first_op_id:
+                    parent_widget = self.views()[0].window() if self.views() else None
+                    QMessageBox.information(
+                        parent_widget,
+                        "情報",
+                        "複数の車両運用に跨って選択することはできません"
+                    )
+                    self.clear_timeline_selection()
+                    return
+
+                row_items = self.get_row_rect_items(first_op_id)
+                cur_indices = [row_items.index(it) for it in self.selected_items if it in row_items]
+                if cur_indices and item in row_items:
+                    target_idx = row_items.index(item)
+                    min_idx = min(min(cur_indices), target_idx)
+                    max_idx = max(max(cur_indices), target_idx)
+                    for i in range(min_idx, max_idx + 1):
+                        it = row_items[i]
+                        it.set_timeline_selected(True)
+                        if it not in self.selected_items:
+                            self.selected_items.append(it)
+                else:
+                    item.set_timeline_selected(True)
+                    if item not in self.selected_items:
+                        self.selected_items.append(item)
+        else:
+            if not item.is_timeline_selected():
+                self.clear_timeline_selection()
+                item.set_timeline_selected(True)
+                self.selected_items.append(item)
+
+        self.drag_controller.handle_mouse_press(item, event)
+
+    def handle_rubber_band_selection(self, selected_items: list):
+        valid_items = [it for it in selected_items if isinstance(it, TimelineRectItem)]
+        if not valid_items:
+            self.clear_timeline_selection()
+            return
+
+        op_ids = set(it.operation_id for it in valid_items)
+        if len(op_ids) > 1:
+            self.clear_timeline_selection()
+            parent_widget = self.views()[0].window() if self.views() else None
+            QMessageBox.information(
+                parent_widget,
+                "情報",
+                "複数の車両運用に跨って選択することはできません"
+            )
+            return
+
+        self.clear_timeline_selection()
+        for it in valid_items:
+            it.set_timeline_selected(True)
+            self.selected_items.append(it)
+
+    def delete_selected_items(self):
+        if not self.selected_items or not self.project or not self.diagram_id:
+            return
+
+        count = len(self.selected_items)
+        parent_widget = self.views()[0].window() if self.views() else None
+        reply = QMessageBox.question(
+            parent_widget,
+            "確認",
+            f"選択されている {count} 件の列車・一時入庫を運用表から除外しますか？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        events_to_push = []
+        items_to_delete = list(self.selected_items)
+
+        for it in items_to_delete:
+            if isinstance(it, TrainTimelineItem):
+                route = self.project.routes.get(it.route_id, {})
+                tbd = route.get("trains_by_diagram", {}).get(self.diagram_id, {})
+                d_trains = tbd.get(it.direction_key, {})
+                d_train = d_trains.get(it.train_id)
+                if d_train and "operations" in d_train:
+                    target_idx = -1
+                    target_op = None
+                    for i, op in enumerate(d_train["operations"]):
+                        oid = op.get("operation_id") if isinstance(op, dict) else op
+                        if oid == it.operation_id:
+                            target_idx = i
+                            target_op = copy.deepcopy(op)
+                            break
+
+                    d_train["operations"] = [
+                        op for op in d_train["operations"]
+                        if (op.get("operation_id") if isinstance(op, dict) else op) != it.operation_id
+                    ]
+                    d_train["to_be_saved"] = True
+
+                    if target_idx != -1 and target_op is not None:
+                        from core.events import RemoveTrainOperationEvent
+                        ev = RemoveTrainOperationEvent(
+                            route_id=it.route_id,
+                            direction=it.direction_key.replace("_trains", ""),
+                            train_id=it.train_id,
+                            diagram_id=self.diagram_id,
+                            index=target_idx,
+                            operation=target_op
+                        )
+                        events_to_push.append(ev)
+
+            elif isinstance(it, TemporaryStablingItem):
+                events = it.operation.get("temporary_stabling_events", [])
+                if it.event_data in events:
+                    del_idx = events.index(it.event_data)
+                    del_data = copy.deepcopy(it.event_data)
+                    events.remove(it.event_data)
+
+                    from core.events import RemoveTemporaryStablingEvent
+                    ev = RemoveTemporaryStablingEvent(
+                        diagram_id=self.diagram_id,
+                        operation_id=it.operation_id,
+                        index=del_idx,
+                        stabling_event=del_data
+                    )
+                    events_to_push.append(ev)
+
+        if self.history_manager and events_to_push:
+            self.history_manager.push_events(events_to_push)
+
+        self.clear_timeline_selection()
+        self.refresh()
+        if parent_widget:
+            if hasattr(parent_widget, "timetable_model") and parent_widget.timetable_model:
+                parent_widget.timetable_model.update_data(
+                    parent_widget.timetable_model.route_id,
+                    parent_widget.timetable_model.diagram_id,
+                    parent_widget.timetable_model.direction
+                )
+            if hasattr(parent_widget, "set_modified"):
+                parent_widget.set_modified(True)
+
+    def move_selected_items(self, row_delta: int):
+        if not self.selected_items or not self.project or not self.diagram_id or not self.operation_group_id:
+            return
+
+        diagram = self.project.diagrams.get(self.diagram_id, {})
+        op_groups = diagram.get("operation_groups", {})
+        og = op_groups.get(self.operation_group_id, {})
+        op_ids = og.get("operations", [])
+
+        src_op_id = self.selected_items[0].operation_id
+        if src_op_id not in op_ids:
+            return
+        src_row_idx = op_ids.index(src_op_id)
+        target_row_idx = src_row_idx + row_delta
+
+        if target_row_idx < 0 or target_row_idx >= len(op_ids) or target_row_idx == src_row_idx:
+            return
+
+        target_op_id = op_ids[target_row_idx]
+        target_op = diagram.get("operations", {}).get(target_op_id, {})
+        src_op = diagram.get("operations", {}).get(src_op_id, {})
+
+        # 移動元・移動先で選択中のアイテムと移動先にあるアイテムを取得
+        moving_items = list(self.selected_items)
+        target_row_all_items = self.get_row_rect_items(target_op_id)
+
+        # 重なり判定
+        overlapping_target_items = []
+        for m_it in moving_items:
+            if isinstance(m_it, TrainTimelineItem):
+                m_s, m_e = m_it.first_dep_m, m_it.last_arr_m
+            else:
+                m_s, m_e = m_it.start_m, m_it.end_m
+
+            for t_it in target_row_all_items:
+                if isinstance(t_it, TrainTimelineItem):
+                    t_s, t_e = t_it.first_dep_m, t_it.last_arr_m
+                else:
+                    t_s, t_e = t_it.start_m, t_it.end_m
+
+                if max(m_s, t_s) < min(m_e, t_e):
+                    if t_it not in overlapping_target_items:
+                        overlapping_target_items.append(t_it)
+
+        if overlapping_target_items:
+            parent_widget = self.views()[0].window() if self.views() else None
+            reply = QMessageBox.question(
+                parent_widget,
+                "確認",
+                "移動先の運用には同じ時間に別の列車・一時入庫が登録されています。\n移動元の運用と列車・一時入庫を入れ替えますか？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply != QMessageBox.Yes:
+                return
+
+        events_to_push = []
+        from core.events import (
+            ChangeTrainOperationEvent,
+            AddTemporaryStablingEvent,
+            RemoveTemporaryStablingEvent
+        )
+
+        # 1. moving_items を src_op_id -> target_op_id へ移動
+        for it in moving_items:
+            if isinstance(it, TrainTimelineItem):
+                route = self.project.routes.get(it.route_id, {})
+                tbd = route.get("trains_by_diagram", {}).get(self.diagram_id, {})
+                d_train = tbd.get(it.direction_key, {}).get(it.train_id)
+                if d_train and "operations" in d_train:
+                    old_ops = copy.deepcopy(d_train["operations"])
+                    new_ops = []
+                    for op in d_train["operations"]:
+                        oid = op.get("operation_id") if isinstance(op, dict) else op
+                        if oid == src_op_id:
+                            if isinstance(op, dict):
+                                new_op_entry = copy.deepcopy(op)
+                                new_op_entry["operation_id"] = target_op_id
+                                new_ops.append(new_op_entry)
+                            else:
+                                new_ops.append(target_op_id)
+                        else:
+                            new_ops.append(copy.deepcopy(op))
+                    d_train["operations"] = new_ops
+                    d_train["to_be_saved"] = True
+                    ev = ChangeTrainOperationEvent(
+                        route_id=it.route_id,
+                        direction=it.direction_key.replace("_trains", ""),
+                        train_id=it.train_id,
+                        diagram_id=self.diagram_id,
+                        old_operations=old_ops,
+                        new_operations=new_ops
+                    )
+                    events_to_push.append(ev)
+
+            elif isinstance(it, TemporaryStablingItem):
+                src_events = src_op.get("temporary_stabling_events", [])
+                if it.event_data in src_events:
+                    del_idx = src_events.index(it.event_data)
+                    del_data = copy.deepcopy(it.event_data)
+                    src_events.remove(it.event_data)
+                    ev_rem = RemoveTemporaryStablingEvent(
+                        diagram_id=self.diagram_id,
+                        operation_id=src_op_id,
+                        index=del_idx,
+                        stabling_event=del_data
+                    )
+                    events_to_push.append(ev_rem)
+
+                tgt_events = target_op.setdefault("temporary_stabling_events", [])
+                new_stabling = copy.deepcopy(it.event_data)
+                tgt_events.append(new_stabling)
+                tgt_events.sort(key=lambda e: e.get("start_time", ""))
+                ins_idx = tgt_events.index(new_stabling)
+                ev_add = AddTemporaryStablingEvent(
+                    diagram_id=self.diagram_id,
+                    operation_id=target_op_id,
+                    index=ins_idx,
+                    stabling_event=new_stabling
+                )
+                events_to_push.append(ev_add)
+
+        # 2. overlapping_target_items を target_op_id -> src_op_id へ移動
+        for it in overlapping_target_items:
+            if isinstance(it, TrainTimelineItem):
+                route = self.project.routes.get(it.route_id, {})
+                tbd = route.get("trains_by_diagram", {}).get(self.diagram_id, {})
+                d_train = tbd.get(it.direction_key, {}).get(it.train_id)
+                if d_train and "operations" in d_train:
+                    old_ops = copy.deepcopy(d_train["operations"])
+                    new_ops = []
+                    for op in d_train["operations"]:
+                        oid = op.get("operation_id") if isinstance(op, dict) else op
+                        if oid == target_op_id:
+                            if isinstance(op, dict):
+                                new_op_entry = copy.deepcopy(op)
+                                new_op_entry["operation_id"] = src_op_id
+                                new_ops.append(new_op_entry)
+                            else:
+                                new_ops.append(src_op_id)
+                        else:
+                            new_ops.append(copy.deepcopy(op))
+                    d_train["operations"] = new_ops
+                    d_train["to_be_saved"] = True
+                    ev = ChangeTrainOperationEvent(
+                        route_id=it.route_id,
+                        direction=it.direction_key.replace("_trains", ""),
+                        train_id=it.train_id,
+                        diagram_id=self.diagram_id,
+                        old_operations=old_ops,
+                        new_operations=new_ops
+                    )
+                    events_to_push.append(ev)
+
+            elif isinstance(it, TemporaryStablingItem):
+                tgt_events = target_op.get("temporary_stabling_events", [])
+                if it.event_data in tgt_events:
+                    del_idx = tgt_events.index(it.event_data)
+                    del_data = copy.deepcopy(it.event_data)
+                    tgt_events.remove(it.event_data)
+                    ev_rem = RemoveTemporaryStablingEvent(
+                        diagram_id=self.diagram_id,
+                        operation_id=target_op_id,
+                        index=del_idx,
+                        stabling_event=del_data
+                    )
+                    events_to_push.append(ev_rem)
+
+                src_events = src_op.setdefault("temporary_stabling_events", [])
+                new_stabling = copy.deepcopy(it.event_data)
+                src_events.append(new_stabling)
+                src_events.sort(key=lambda e: e.get("start_time", ""))
+                ins_idx = src_events.index(new_stabling)
+                ev_add = AddTemporaryStablingEvent(
+                    diagram_id=self.diagram_id,
+                    operation_id=src_op_id,
+                    index=ins_idx,
+                    stabling_event=new_stabling
+                )
+                events_to_push.append(ev_add)
+
+        if self.history_manager and events_to_push:
+            self.history_manager.push_events(events_to_push)
+
+        self.clear_timeline_selection()
+        self.refresh()
+        parent_widget = self.views()[0].window() if self.views() else None
+        if parent_widget:
+            if hasattr(parent_widget, "timetable_model") and parent_widget.timetable_model:
+                parent_widget.timetable_model.update_data(
+                    parent_widget.timetable_model.route_id,
+                    parent_widget.timetable_model.diagram_id,
+                    parent_widget.timetable_model.direction
+                )
+            if hasattr(parent_widget, "set_modified"):
+                parent_widget.set_modified(True)
 
     def update_timeline(self, project, diagram_id: str, operation_group_id: str):
         self.project = project
@@ -684,7 +1210,9 @@ class TimelineScene(QGraphicsScene):
                     ev,
                     op,
                     op_id,
-                    self
+                    self,
+                    start_m=float(start_m),
+                    end_m=float(end_m)
                 )
                 self.addItem(stabling_item)
                 items.append(stabling_item)
@@ -799,6 +1327,8 @@ class TimelineScene(QGraphicsScene):
                 first_dep_str=train["first_dep_str"],
                 last_arr_str=train["last_arr_str"],
                 all_op_ids=train["all_op_ids"],
+                first_dep_m=float(first_dep),
+                last_arr_m=float(last_arr)
             )
             self.addItem(rect_item)
             items.append(rect_item)
@@ -821,6 +1351,7 @@ class TimelineScene(QGraphicsScene):
                 st_text.setZValue(2)
                 self.addItem(st_text)
                 items.append(st_text)
+                rect_item.station_text_item = st_text
 
             prev_last_station_id = train["last_station_id"]
 
