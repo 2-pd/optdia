@@ -1,5 +1,6 @@
 import re
 import copy
+import time
 import datetime
 from PySide6.QtCore import Qt, QDate, QRect, QEvent, Signal, QTimer
 from PySide6.QtGui import QColor, QPainter, QPen
@@ -37,7 +38,58 @@ WEEKDAY_TO_KEY = {
 }
 
 
-def get_diagram_for_date(project: OptDiaProject, date_str: str, ignore_date_exceptions: bool = False) -> str | None:
+# 指定された年の祝日の集合を計算する関数
+def get_holiday_set (year: int) -> set:
+    if year < 2022: # 2022年より前の祝日判定には対応しない
+        return set()
+
+    # 祝日のリスト ["MM-DD"]
+    holiday_list = ["01-01", "02-11", "02-23", "04-29", "05-03", "05-04", "05-05", "08-11", "11-03", "11-23"]
+
+    # ハッピーマンデーが存在する月と週のリスト [月, 週]
+    happy_monday_list = [["01", 2], ["07", 3], ["09", 3], ["10", 2]]
+
+    # 春分
+    holiday_list.append("03-" + str(int(20.69115 + 0.2421904 * (year - 2000) - int((year - 2000) / 4))))
+
+    # 秋分
+    shubun = int(23.09000 + 0.2421904 * (year - 2000) - int((year - 2000) / 4))
+    holiday_list.append("09-" + str(shubun))
+
+    # ハッピーマンデーの日付を計算
+    for happy_monday in happy_monday_list:
+        ts = time.strptime(str(year) + "-" + happy_monday[0] + "-01", "%Y-%m-%d")
+
+        day_number = int(time.strftime("%w", ts))
+        if day_number <= 1:
+            day_number += 7
+
+        holiday_list.append(happy_monday[0] + "-" + str(2 - day_number + (7 * happy_monday[1])).zfill(2))
+
+    # 振替休日となる日付を計算
+    for holiday in holiday_list:
+        ts = time.strptime(str(year) + "-" + holiday, "%Y-%m-%d")
+
+        if int(time.strftime("%w", ts)) == 0:
+            furikae_cnt = 0
+
+            while True:
+                furikae_cnt += 1
+                furikae_date = holiday[:2] + "-" + str(int(holiday[3:]) + furikae_cnt).zfill(2)
+
+                if furikae_date not in holiday_list:
+                    break
+
+            holiday_list.append(furikae_date)
+
+    # 国民の休日となる日付があれば追加
+    if "09-" + str(shubun - 2) in holiday_list:
+        holiday_list.append("09-" + str(shubun - 1))
+
+    return set(holiday_list)
+
+
+def get_diagram_for_date(project: OptDiaProject, date_str: str, ignore_date_exceptions: bool = False, holiday_sets: dict[str, set] | None = None) -> str | None:
     """
     YYYY-MM-DD形式の日付からその日の運転ダイヤIDを特定する関数。
     ignore_date_exceptions が False の場合、date_exceptions に日付のキーがあればその値を返す。
@@ -51,11 +103,24 @@ def get_diagram_for_date(project: OptDiaProject, date_str: str, ignore_date_exce
     if not hasattr(project, "calendar_periods") or not project.calendar_periods:
         return None
 
-    try:
-        dt = datetime.date.fromisoformat(date_str)
-        weekday_key = WEEKDAY_TO_KEY[dt.weekday()]
-    except (ValueError, KeyError):
-        return None
+    if holiday_sets is not None:
+        year_str = date_str[:4]
+        if year_str in holiday_sets:
+            holiday_set = holiday_sets[year_str]
+        else:
+            holiday_set = get_holiday_set(int(year_str))
+            holiday_sets[year_str] = holiday_set
+    else:
+        holiday_set = set()
+
+    if date_str[5:] in holiday_set:
+        weekday_key = "sunday"
+    else:
+        try:
+            dt = datetime.date.fromisoformat(date_str)
+            weekday_key = WEEKDAY_TO_KEY[dt.weekday()]
+        except (ValueError, KeyError):
+            return None
 
     for period in project.calendar_periods:
         start_date = period.get("start_date")
@@ -277,9 +342,10 @@ class DuplicateDiagramDialog(QDialog):
 class DiagramCalendarWidget(QCalendarWidget):
     dates_selection_changed = Signal()
 
-    def __init__(self, project: OptDiaProject, parent=None):
+    def __init__(self, project: OptDiaProject, parent=None, holiday_sets=None):
         super().__init__(parent)
         self.project = project
+        self.holiday_sets = holiday_sets
         self.selected_dates = {self.selectedDate()}
         self._anchor_date = self.selectedDate()
         self._is_mouse_down = False
@@ -352,7 +418,7 @@ class DiagramCalendarWidget(QCalendarWidget):
 
     def paintCell(self, painter: QPainter, rect: QRect, date: QDate):
         iso_date = date.toString("yyyy-MM-dd")
-        diag_id = get_diagram_for_date(self.project, iso_date, ignore_date_exceptions=False)
+        diag_id = get_diagram_for_date(self.project, iso_date, ignore_date_exceptions=False, holiday_sets=self.holiday_sets)
 
         bg_color = None
         if diag_id and diag_id in self.project.diagrams:
@@ -697,6 +763,8 @@ class DiagramEditorDialog(QDialog):
         # ==========================================
         # 2. 「カレンダー」タブ
         # ==========================================
+        self.holiday_sets = {} # 年ごとの祝日の集合
+
         self.calendar_tab = QWidget()
         calendar_tab_main_layout = QVBoxLayout(self.calendar_tab)
         calendar_tab_main_layout.setContentsMargins(0, 0, 0, 0)
@@ -718,7 +786,7 @@ class DiagramEditorDialog(QDialog):
         calendar_area_layout.setContentsMargins(0, 0, 0, 0)
         calendar_area_layout.setSpacing(15)
 
-        self.calendar_widget = DiagramCalendarWidget(self.project)
+        self.calendar_widget = DiagramCalendarWidget(self.project, holiday_sets=self.holiday_sets)
         self.calendar_widget.dates_selection_changed.connect(self._on_calendar_selection_changed)
         calendar_area_layout.addWidget(self.calendar_widget, stretch=0)
 
@@ -1164,7 +1232,7 @@ class DiagramEditorDialog(QDialog):
         default_diags = []
         for d in selected_dates:
             iso_date = d.toString("yyyy-MM-dd")
-            default_did = get_diagram_for_date(self.project, iso_date, ignore_date_exceptions=True)
+            default_did = get_diagram_for_date(self.project, iso_date, ignore_date_exceptions=True, holiday_sets=self.holiday_sets)
             default_diags.append(default_did)
 
         unique_default_diags = list(set(default_diags))
