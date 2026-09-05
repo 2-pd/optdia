@@ -30,6 +30,7 @@ from timetable.model import TimetableModel
 from timetable.view import TimetableView, TimetableVerticalHeader
 from timetable.delegate import TimetableDelegate
 from timeline.view import TimelineView, TimelineHeaderView
+from diagram.view import DiagramView
 
 # メインウィンドウ
 class MainWindow(QMainWindow):
@@ -177,9 +178,10 @@ class MainWindow(QMainWindow):
 
         # 方面選択用タブバー
         self.direction_tab_bar = QTabBar()
-        self.direction_tab_bar.addTab(QIcon("assets/outbound.png"), "下り時刻表")
-        self.direction_tab_bar.addTab(QIcon("assets/inbound.png"), "上り時刻表")
-        self.direction_tab_bar.addTab(QIcon("assets/timeline.png"), "車両運用表")
+        self.direction_tab_bar.addTab(QIcon(":/assets/outbound.png"), "下り時刻表")
+        self.direction_tab_bar.addTab(QIcon(":/assets/inbound.png"), "上り時刻表")
+        self.direction_tab_bar.addTab(QIcon(":/assets/diagram.png"), "ダイヤグラム")
+        self.direction_tab_bar.addTab(QIcon(":/assets/timeline.png"), "車両運用表")
         self.direction_tab_bar.setExpanding(False)
         self.direction_tab_bar.setStyleSheet("""
             QTabBar::tab { height: 35px; width: 135px; padding-left: 10px; padding-right: 30px; background-color: #e7e7e7; }
@@ -407,6 +409,33 @@ class MainWindow(QMainWindow):
         )
 
 
+        # ダイヤグラム表示エリア用の親ウィジェット
+        self.diagram_area_widget = QWidget()
+        diagram_area_layout = QVBoxLayout(self.diagram_area_widget)
+        diagram_area_layout.setContentsMargins(0, 0, 0, 0)
+        diagram_area_layout.setSpacing(0)
+
+        # ダイヤグラム表示エリアのヘッダーウィジェット (高さ40px)
+        self.diagram_header_widget = QWidget()
+        self.diagram_header_widget.setFixedHeight(40)
+        self.diagram_header_widget.setStyleSheet("background-color: #f7f7f7; border-bottom: 1px solid #dddddd;")
+        diagram_header_layout = QHBoxLayout(self.diagram_header_widget)
+        diagram_header_layout.setContentsMargins(10, 0, 10, 0)
+        diagram_header_layout.setSpacing(0)
+
+        self.diagram_line_combo = QComboBox()
+        self.diagram_line_combo.setFixedWidth(280)
+        self.diagram_line_combo.currentIndexChanged.connect(self._on_diagram_line_combo_changed)
+        diagram_header_layout.addWidget(self.diagram_line_combo)
+        diagram_header_layout.addStretch(1)
+
+        diagram_area_layout.addWidget(self.diagram_header_widget)
+
+        # ダイヤグラム表示用のグラフィックスビュー
+        self.diagram_view = DiagramView()
+        diagram_area_layout.addWidget(self.diagram_view, stretch=1)
+
+        self.timetable_content_stack.addWidget(self.diagram_area_widget)
         self.timetable_content_stack.addWidget(self.operation_area_widget)
 
         self.timetable_layout.addWidget(self.timetable_content_stack)
@@ -584,10 +613,14 @@ class MainWindow(QMainWindow):
     def _on_undo(self):
         if self.history_manager.undo(self.project):
             self.set_modified(True)
+            if self.direction_tab_bar.currentIndex() == 2:
+                self._update_diagram_view()
 
     def _on_redo(self):
         if self.history_manager.redo(self.project):
             self.set_modified(True)
+            if self.direction_tab_bar.currentIndex() == 2:
+                self._update_diagram_view()
 
     def _on_auto_fill_triggered(self, checked: bool):
         """「同じ種別の列車から時刻を補完」チェックボックスのトリガーハンドラ"""
@@ -749,6 +782,7 @@ class MainWindow(QMainWindow):
         """種別情報編集ダイアログを表示する"""
         dialog = TrainTypeEditorDialog(self, self.project)
         dialog.exec()
+        self._on_timetable_settings_changed()
 
     def _on_edit_routes(self):
         """運行系統編集ウィンドウを表示する"""
@@ -795,11 +829,18 @@ class MainWindow(QMainWindow):
         tab_index = self.direction_tab_bar.currentIndex()
         if tab_index == 2:
             self.timetable_content_stack.setCurrentIndex(1)
-            # 運用表"タブが選択されたときは運行系統リストを無効化
+            # ダイヤグラムタブ選択時
+            # 運行系統リストの有効/無効は路線選択コンボボックスの状態に応じる
+            self._update_diagram_line_combo()
+            is_route_selected = (self.diagram_line_combo.currentData() == "route")
+            self.route_list_widget.setEnabled(is_route_selected)
+        elif tab_index == 3:
+            self.timetable_content_stack.setCurrentIndex(2)
+            # "車両運用表"タブが選択されたときは運行系統リストを無効化
             self.route_list_widget.setEnabled(False)
         else:
             self.timetable_content_stack.setCurrentIndex(0)
-            # 運用表以外のタブが選択されたときは運行系統リストを有効化
+            # 時刻表タブが選択されたときは運行系統リストを有効化
             self.route_list_widget.setEnabled(True)
 
         route_item = self.route_list_widget.currentItem()
@@ -808,12 +849,14 @@ class MainWindow(QMainWindow):
         route_id = route_item.data(Qt.UserRole) if route_item else None
         diagram_id = diagram_item.data(Qt.UserRole) if diagram_item else None
         
-        # 方面の切り替え（「運用表」タブ選択時は一旦 outbound と扱う）
+        # 方面の切り替え（「ダイヤグラム」「車両運用表」タブ選択時は仮に outbound と扱う）
         direction = "inbound" if tab_index == 1 else "outbound"
         
         self.timetable_model.update_data(route_id, diagram_id, direction)
 
         if tab_index == 2:
+            self._update_diagram_view()
+        elif tab_index == 3:
             self._update_op_group_combo()
             self.timeline_header_view.horizontalScrollBar().setValue(
                 self.timeline_view.horizontalScrollBar().value()
@@ -1132,6 +1175,54 @@ class MainWindow(QMainWindow):
         self.project.routes_order = new_order
         self.set_modified(True)
         self._on_timetable_settings_changed()
+
+    def _update_diagram_line_combo(self):
+        """ダイヤグラム上部の路線選択コンボボックスの選択肢を更新する"""
+        current_data = self.diagram_line_combo.currentData()
+
+        self.diagram_line_combo.blockSignals(True)
+        self.diagram_line_combo.clear()
+
+        # 選択肢1: 「選択中の運行系統」
+        self.diagram_line_combo.addItem("選択中の運行系統", "route")
+
+        # 選択肢2以降: プロジェクトデータに登録されている各路線
+        for lid in self.project.lines_order:
+            line = self.project.lines.get(lid, {})
+            line_name = line.get("line_name", lid)
+            self.diagram_line_combo.addItem(line_name, lid)
+
+        # 以前選択していた値があれば再選択
+        if current_data is not None:
+            idx = self.diagram_line_combo.findData(current_data)
+            if idx >= 0:
+                self.diagram_line_combo.setCurrentIndex(idx)
+            else:
+                self.diagram_line_combo.setCurrentIndex(0)
+        else:
+            self.diagram_line_combo.setCurrentIndex(0)
+
+        self.diagram_line_combo.blockSignals(False)
+
+    def _on_diagram_line_combo_changed(self, index: int):
+        """ダイヤグラム上部の路線選択コンボボックスの変更時"""
+        selected_target = self.diagram_line_combo.currentData()
+        # 「選択中の運行系統」が選択されている場合は運行系統リストを有効化、それ以外は無効化
+        is_route_selected = (selected_target == "route")
+        self.route_list_widget.setEnabled(is_route_selected)
+        self._update_diagram_view()
+
+    def _update_diagram_view(self):
+        """ダイヤグラムビューの描画内容を更新する"""
+        selected_target = self.diagram_line_combo.currentData() or "route"
+        
+        route_item = self.route_list_widget.currentItem()
+        diagram_item = self.diagram_list_widget.currentItem()
+        
+        route_id = route_item.data(Qt.UserRole) if route_item else None
+        diagram_id = diagram_item.data(Qt.UserRole) if diagram_item else None
+
+        self.diagram_view.update_diagram(self.project, selected_target, route_id, diagram_id)
 
 
 # アプリ起動処理
