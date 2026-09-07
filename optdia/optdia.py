@@ -7,7 +7,7 @@ import subprocess
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QIcon, QAction, QPixmap, QTransform
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QPushButton, QFileDialog, QMessageBox, QDialog, QLabel, QComboBox,
     QListWidget, QListWidgetItem, QStackedWidget, QLineEdit,
     QTabBar, QHeaderView, QMenu, QAbstractItemView, QFrame
@@ -30,7 +30,7 @@ from timetable.model import TimetableModel
 from timetable.view import TimetableView, TimetableVerticalHeader
 from timetable.delegate import TimetableDelegate
 from timeline.view import TimelineView, TimelineHeaderView
-from diagram.view import DiagramView
+from diagram.view import DiagramView, DiagramHeaderView, DiagramStationView
 
 # メインウィンドウ
 class MainWindow(QMainWindow):
@@ -431,9 +431,42 @@ class MainWindow(QMainWindow):
 
         diagram_area_layout.addWidget(self.diagram_header_widget)
 
-        # ダイヤグラム表示用のグラフィックスビュー
+        # ダイヤグラム表示用のグラフィックスビュー群（グリッドレイアウトで上下左右に配置）
+        diagram_grid_widget = QWidget()
+        diagram_grid_layout = QGridLayout(diagram_grid_widget)
+        diagram_grid_layout.setContentsMargins(0, 0, 0, 0)
+        diagram_grid_layout.setSpacing(0)
+
+        self.diagram_header_view = DiagramHeaderView()
+        self.diagram_station_view = DiagramStationView()
         self.diagram_view = DiagramView()
-        diagram_area_layout.addWidget(self.diagram_view, stretch=1)
+
+        diagram_grid_layout.addWidget(self.diagram_header_view, 0, 1)
+        diagram_grid_layout.addWidget(self.diagram_station_view, 1, 0)
+        diagram_grid_layout.addWidget(self.diagram_view, 1, 1)
+
+        diagram_grid_layout.setRowStretch(0, 0)
+        diagram_grid_layout.setRowStretch(1, 1)
+        diagram_grid_layout.setColumnStretch(0, 0)
+        diagram_grid_layout.setColumnStretch(1, 1)
+
+        # スクロール同期設定
+        # 左右スクロール同期 (DiagramView <-> DiagramHeaderView)
+        self.diagram_view.horizontalScrollBar().valueChanged.connect(
+            self.diagram_header_view.horizontalScrollBar().setValue
+        )
+        self.diagram_header_view.horizontalScrollBar().valueChanged.connect(
+            self.diagram_view.horizontalScrollBar().setValue
+        )
+        # 上下スクロール同期 (DiagramView <-> DiagramStationView)
+        self.diagram_view.verticalScrollBar().valueChanged.connect(
+            self.diagram_station_view.verticalScrollBar().setValue
+        )
+        self.diagram_station_view.verticalScrollBar().valueChanged.connect(
+            self.diagram_view.verticalScrollBar().setValue
+        )
+
+        diagram_area_layout.addWidget(diagram_grid_widget, stretch=1)
 
         self.timetable_content_stack.addWidget(self.diagram_area_widget)
         self.timetable_content_stack.addWidget(self.operation_area_widget)
@@ -1222,7 +1255,13 @@ class MainWindow(QMainWindow):
         route_id = route_item.data(Qt.UserRole) if route_item else None
         diagram_id = diagram_item.data(Qt.UserRole) if diagram_item else None
 
-        self.diagram_view.update_diagram(self.project, selected_target, route_id, diagram_id)
+        stations_data = self.diagram_view.update_diagram(self.project, selected_target, route_id, diagram_id)
+        self.diagram_header_view.update_header()
+        self.diagram_station_view.update_stations(self.project, stations_data)
+
+        # 4時0分の縦線（4 * 60 * 6 = 1440px）が表示領域の左端になる位置にスクロール
+        self.diagram_view.horizontalScrollBar().setValue(1440)
+        self.diagram_header_view.horizontalScrollBar().setValue(1440)
 
 
 # アプリ起動処理

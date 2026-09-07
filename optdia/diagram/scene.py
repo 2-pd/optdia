@@ -1,7 +1,101 @@
+import math
 from PySide6.QtWidgets import QGraphicsScene, QGraphicsLineItem, QGraphicsSimpleTextItem, QGraphicsPathItem
 from PySide6.QtGui import QColor, QPen, QBrush, QFont, QPainterPath
 from PySide6.QtCore import Qt, QRectF
 
+# 運行ダイヤグラム上部のシーン（時刻の値のみ）
+class DiagramHeaderScene(QGraphicsScene):
+    HEADER_HEIGHT = 20
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setBackgroundBrush(QBrush(QColor("#ffffff")))
+        self.update_header()
+
+    def update_header(self):
+        self.clear()
+        scene_w = 36 * 60 * 6 + 20 # 12980px(うち20pxはメインシーンの上下スクロールバーの幅として確保)
+        self.setSceneRect(0, 0, scene_w, self.HEADER_HEIGHT)
+
+        font_hour = QFont()
+        font_hour.setPixelSize(14)
+
+        for hour in range(36): # 36時は描画不要
+            hour_x = hour * 60 * 6
+            text_str = str(hour)
+            t_item = QGraphicsSimpleTextItem(text_str)
+            t_item.setFont(font_hour)
+            t_item.setBrush(QBrush(QColor("#666666")))
+            br = t_item.boundingRect()
+            tx = hour_x
+            ty = (self.HEADER_HEIGHT - br.height()) / 2.0
+            t_item.setPos(tx, ty)
+            self.addItem(t_item)
+
+
+# 運行ダイヤグラム左側のシーン（駅名テキストのみ）
+class DiagramStationScene(QGraphicsScene):
+    STATION_WIDTH = 120
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setBackgroundBrush(QBrush(QColor("#ffffff")))
+
+    def update_stations(self, project, stations_data):
+        self.clear()
+        if not stations_data:
+            self.setSceneRect(0, 0, self.STATION_WIDTH, 100)
+            return
+
+        max_y = stations_data[-1]["y"]
+        scene_h = max_y + 60 # メインシーンの左右スクロールバーの高さとして20pxの余裕を確保
+        self.setSceneRect(0, 0, self.STATION_WIDTH, max(scene_h, 200))
+
+        font = QFont()
+        font.setPixelSize(12)
+        font_major = QFont()
+        font_major.setPixelSize(12)
+        font_major.setBold(True)
+
+        for i, st in enumerate(stations_data):
+            y = st["y"]
+            sid = st["station_id"]
+            st_obj = project.stations.get(sid, {}) if project else {}
+            name = st["station_name"]
+
+            # 部分区間の境界で異なるIDの駅が隣接しているときのy座標オフセット処理
+            seg_id = st.get("segment_id")
+            if seg_id is not None:
+                # 前の駅と異なる部分区間、かつ駅IDが異なる場合（下側の部分区間の上端の駅）
+                if i > 0:
+                    prev_st = stations_data[i - 1]
+
+                    if prev_st.get("station_id") == sid: # 前の駅と同じ駅名は描画不要
+                        continue
+
+                    if prev_st.get("segment_id") != seg_id:
+                        y += 10.0
+                # 次の駅と異なる部分区間、かつ駅IDが異なる場合（上側の部分区間の下端の駅）
+                if i < len(stations_data) - 1:
+                    next_st = stations_data[i + 1]
+                    if next_st.get("segment_id") != seg_id and next_st.get("station_id") != sid:
+                        y -= 10.0
+
+            text_item = QGraphicsSimpleTextItem(name)
+            if st_obj.get("is_major_station", False):
+                text_item.setFont(font_major)
+            else:
+                text_item.setFont(font)
+            text_item.setBrush(QBrush(QColor("#666666")))
+
+            br = text_item.boundingRect()
+            tx = self.STATION_WIDTH - br.width() - 5
+            ty = y - (br.height() / 2.0)
+            text_item.setPos(tx, ty)
+            self.addItem(text_item)
+
+
+# 運行ダイヤグラムのメインシーン（右下）
 class DiagramScene(QGraphicsScene):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -27,7 +121,7 @@ class DiagramScene(QGraphicsScene):
 
         if not self.project:
             self.setSceneRect(0, 0, 100, 100)
-            return
+            return None
 
         # 1. 表示対象の駅リストを構築
         stations_data = self._collect_station_positions()
@@ -39,29 +133,31 @@ class DiagramScene(QGraphicsScene):
                 "表示対象の路線に基準運転時分の設定されていない駅が含まれます。\n"
                 "ダイヤグラムを表示するには基準運転時分の設定を完了してください。"
             )
-            return
+            return None
 
         if not stations_data:
             self.setSceneRect(0, 0, 100, 100)
-            return
+            return []
 
         # 2. 軸とグリッドの描画
-        # 横軸: 左から120pxの位置から、0時から36時まで1分を6px
-        # 全体幅 = 120 + 36 * 60 * 6 = 120 + 12960 = 13080px (+ 余白)
+        # 横軸: 0時から36時まで1分を6px
+        # 全体幅 = 36 * 60 * 6 = 12960px
         max_y = stations_data[-1]["y"]
-        scene_h = max_y + 60 + 20
-        scene_w = 120 + 36 * 60 * 6 + 120
+        scene_h = max_y + 40
+        scene_w = 36 * 60 * 6
 
-        self.setSceneRect(0, 0, scene_w, max(scene_h, 300))
-
-        # 横線（駅）の描画
-        self._render_station_lines(stations_data)
+        self.setSceneRect(0, 0, scene_w, max(scene_h, 200))
 
         # 縦線（時間）の描画
-        self._render_time_lines(max_y)
+        self._render_time_lines(max_y, max(scene_h, 200))
+
+        # 横線（駅）の描画
+        self._render_station_lines(stations_data, scene_w)
 
         # 3. 列車のプロット描画
         self._render_trains(stations_data)
+
+        return stations_data
 
     def _render_error_message(self, text: str):
         self.setSceneRect(0, 0, 600, 300)
@@ -144,8 +240,8 @@ class DiagramScene(QGraphicsScene):
                     diff = abs(abs_time - start_abs_time)
                     rel_time = accumulated_time + diff
 
-                    # 3秒を1px
-                    y = 60.0 + (rel_time / 3.0)
+                    # 3秒を1px (上部余白40px)
+                    y = 40.0 + (rel_time / 3.0)
 
                     st_obj = self.project.stations.get(sid, {})
                     st_name = st_obj.get("station_name", sid)
@@ -182,7 +278,8 @@ class DiagramScene(QGraphicsScene):
                 if abs_time is None:
                     return None
 
-                y = 60.0 + (abs_time / 3.0)
+                # 上部余白40px
+                y = 40.0 + (abs_time / 3.0)
                 st_obj = self.project.stations.get(sid, {})
                 st_name = st_obj.get("station_name", sid)
 
@@ -196,90 +293,55 @@ class DiagramScene(QGraphicsScene):
 
             return stations_data
 
-    def _render_station_lines(self, stations_data):
-        # 120pxの余白を空けて色コード#ccccccで高さ1pxの横線
-        # 横線の始点の左側に横線と同じ色で駅名を表示
-        pen_station = QPen(QColor("#cccccc"), 1)
-        font = QFont()
-        font.setPixelSize(12)
-        font_major = QFont()
-        font_major.setPixelSize(12)
-        font_major.setBold(True)
-
-        line_end_x = 120 + 36 * 60 * 6
+    def _render_station_lines(self, stations_data, line_end_x):
+        pen_normal = QPen(QColor("#dddddd"), 1)
+        pen_major = QPen(QColor("#aaaaaa"), 2)
 
         for st in stations_data:
             y = st["y"]
             sid = st["station_id"]
-            st_obj = self.project.stations.get(sid, {})
-            name = st["station_name"]
+            st_obj = self.project.stations.get(sid, {}) if self.project else {}
+            is_major = st_obj.get("is_major_station", False)
 
-            # 横線
-            line_item = self.addLine(120, y, line_end_x, y, pen_station)
+            pen = pen_major if is_major else pen_normal
+            line_item = self.addLine(0, y, line_end_x, y, pen)
             line_item.setZValue(0)
 
-            # 駅名テキスト（横線の始点の左側に表記）
-            text_item = QGraphicsSimpleTextItem(name)
-            if st_obj.get("is_major_station", False):
-                text_item.setFont(font_major)
-            else:
-                text_item.setFont(font)
-            text_item.setBrush(QBrush(QColor("#666666")))
+    def _render_time_lines(self, max_y, total_scene_h):
+        # 横軸に時間のグリッドを0時から36時まで1分を6pxで計算して描画。
+        # 毎時5、15、25、35、45、55分の位置には色コード#ddddddの点線で幅1pxの縦線を表示する。
+        # 毎時10分、20分、30分、40分、50分の位置には色コード#ddddddで幅1pxの実線の縦線を表示する。
+        # 毎時0分の位置には色コード#aaaaaaで幅2pxの縦線を上下60pxの余白を空けて表示する。
+        pen_5min = QPen(QColor("#dddddd"), 1)
+        pen_5min.setStyle(Qt.DotLine)
 
-            # テキストの配置: 始点(x=120)の左側、yは中央揃え
-            br = text_item.boundingRect()
-            tx = 120 - br.width() - 5
-            ty = y - (br.height() / 2.0)
-            text_item.setPos(tx, ty)
-            text_item.setZValue(1)
-            self.addItem(text_item)
-
-    def _render_time_lines(self, max_y):
-        # 横軸に時間(左から120pxの位置から、0時から36時まで1分を6pxで描画。
-        # 毎時10分、20分、30分、40分、50分の位置には色コード#ddddddで幅1pxの縦線を上下60pxの余白を空けて表示する。
-        # 毎時0分の位置には色コード#aaaaaaで幅2pxの縦線を上下60pxの余白を空けて表示し、
-        # 縦線の始点の上と終点の下には時の値を線と同じ縦色で表記する。)
         pen_10min = QPen(QColor("#dddddd"), 1)
         pen_hour = QPen(QColor("#aaaaaa"), 2)
 
-        font_hour = QFont()
-        font_hour.setPixelSize(13)
+        # 毎時5分〜55分: 上下40pxの余白を空ける (top_y=40.0, bottom_y=max_y)
+        top_y_grid = 40.0
+        bottom_y_grid = max_y
 
-        top_y = 60.0
-        bottom_y = max_y
-
+        # 毎時0分の縦線: ビューの上端から下端まで (0 から total_scene_h)
         for hour in range(37):  # 0時から36時
-            hour_x = 120 + hour * 60 * 6
+            hour_x = hour * 60 * 6
 
-            # 毎時0分の縦線
-            line_item = self.addLine(hour_x, top_y, hour_x, bottom_y, pen_hour)
+            # 毎時0分の縦線 (上端から下端まで)
+            line_item = self.addLine(hour_x, 0, hour_x, total_scene_h, pen_hour)
             line_item.setZValue(0)
 
-            # 縦線の始点の上と終点の下に時の値を表記
-            text_str = str(hour)
-            # 始点の上
-            t_top = QGraphicsSimpleTextItem(text_str)
-            t_top.setFont(font_hour)
-            t_top.setBrush(QBrush(QColor("#666666")))
-            br_top = t_top.boundingRect()
-            t_top.setPos(hour_x - (br_top.width() / 2.0), top_y - br_top.height() - 5)
-            t_top.setZValue(1)
-            self.addItem(t_top)
-
-            # 終点の下
-            t_bottom = QGraphicsSimpleTextItem(text_str)
-            t_bottom.setFont(font_hour)
-            t_bottom.setBrush(QBrush(QColor("#666666")))
-            br_bottom = t_bottom.boundingRect()
-            t_bottom.setPos(hour_x - (br_bottom.width() / 2.0), bottom_y + 5)
-            t_bottom.setZValue(1)
-            self.addItem(t_bottom)
-
-            # 毎時10分、20分、30分、40分、50分 (hour 36は0分のみ)
+            # hour 36は0分のみ
             if hour < 36:
+                # 毎時5、15、25、35、45、55分（点線）
+                for minute_step in [5, 15, 25, 35, 45, 55]:
+                    min_x = hour_x + minute_step * 6
+                    m_line = self.addLine(min_x, top_y_grid, min_x, bottom_y_grid, pen_5min)
+                    m_line.setZValue(0)
+
+                # 毎時10分、20分、30分、40分、50分（実線）
                 for minute_step in [10, 20, 30, 40, 50]:
                     min_x = hour_x + minute_step * 6
-                    m_line = self.addLine(min_x, top_y, min_x, bottom_y, pen_10min)
+                    m_line = self.addLine(min_x, top_y_grid, min_x, bottom_y_grid, pen_10min)
                     m_line.setZValue(0)
 
     def _render_trains(self, stations_data):
@@ -309,9 +371,9 @@ class DiagramScene(QGraphicsScene):
                 m_train = m_dict.get(tid)
                 if not m_train:
                     continue
-                self._draw_single_train_for_route(m_train, stations_data)
+                self._draw_single_train_for_route(m_train, stations_data, route)
 
-    def _draw_single_train_for_route(self, train, stations_data):
+    def _draw_single_train_for_route(self, train, stations_data, route):
         stops = train.get("stops", [])
         if not stops:
             return
@@ -319,14 +381,40 @@ class DiagramScene(QGraphicsScene):
         tt_id = train.get("train_type_id")
         pen = self._create_train_pen(tt_id)
 
-        # stopsの各stopについて (segment_id, station_id) で stations_data 内を照合
-        points = []
+        # 運行系統の部分区間の順序とインデックスのマップを作成
+        segments = route.get("line_segments", [])
+        segment_indices = {seg.get("segment_id"): idx for idx, seg in enumerate(segments)}
+
+        # 連続する有効な区間ごとにパスを分割
+        subpaths = []
+        current_subpath = []
+        prev_seg_id = None
 
         for stop in stops:
             seg_id = stop.get("segment_id")
             sid = stop.get("station_id")
             arr_time_str = stop.get("arrival_time")
             dep_time_str = stop.get("departure_time")
+
+            arr_sec = self._time_to_seconds(arr_time_str)
+            dep_sec = self._time_to_seconds(dep_time_str)
+
+            # 有効な発着時刻がどちらもない場合は区間が途切れる
+            if arr_sec is None and dep_sec is None:
+                if len(current_subpath) >= 2:
+                    subpaths.append(current_subpath)
+                current_subpath = []
+                prev_seg_id = None
+                continue
+
+            # 部分区間が飛んでいるか（連続していないか）チェック
+            if prev_seg_id is not None and seg_id != prev_seg_id:
+                prev_idx = segment_indices.get(prev_seg_id)
+                curr_idx = segment_indices.get(seg_id)
+                if prev_idx is None or curr_idx is None or abs(curr_idx - prev_idx) != 1:
+                    if len(current_subpath) >= 2:
+                        subpaths.append(current_subpath)
+                    current_subpath = []
 
             # stations_data 内で一致する駅を検索
             target_entry = None
@@ -337,28 +425,37 @@ class DiagramScene(QGraphicsScene):
                     break
 
             if not target_entry:
+                if len(current_subpath) >= 2:
+                    subpaths.append(current_subpath)
+                current_subpath = []
+                prev_seg_id = None
                 continue
 
             y = target_entry["y"]
 
-            arr_sec = self._time_to_seconds(arr_time_str)
-            dep_sec = self._time_to_seconds(dep_time_str)
-
             if arr_sec is not None and dep_sec is not None:
-                x_arr = 120 + (arr_sec / 60.0) * 6.0
-                x_dep = 120 + (dep_sec / 60.0) * 6.0
-                points.append((x_arr, y))
+                x_arr = (arr_sec / 60.0) * 6.0
+                x_dep = (dep_sec / 60.0) * 6.0
+                current_subpath.append((x_arr, y))
                 if x_arr != x_dep:
-                    points.append((x_dep, y))
+                    current_subpath.append((x_dep, y))
             elif arr_sec is not None:
-                x_arr = 120 + (arr_sec / 60.0) * 6.0
-                points.append((x_arr, y))
+                x_arr = (arr_sec / 60.0) * 6.0
+                current_subpath.append((x_arr, y))
             elif dep_sec is not None:
-                x_dep = 120 + (dep_sec / 60.0) * 6.0
-                points.append((x_dep, y))
+                x_dep = (dep_sec / 60.0) * 6.0
+                current_subpath.append((x_dep, y))
 
-        if len(points) >= 2:
-            self._draw_path(points, pen)
+            prev_seg_id = seg_id
+
+        if len(current_subpath) >= 2:
+            subpaths.append(current_subpath)
+
+        for sp in subpaths:
+            self._draw_path(sp, pen)
+
+        # 列車番号ラベルの描画
+        self._render_train_number_label(train, subpaths)
 
     def _render_trains_for_line(self, stations_data):
         target_line_id = self.selected_target
@@ -392,42 +489,128 @@ class DiagramScene(QGraphicsScene):
                         continue
 
                     stops = m_train.get("stops", [])
-                    current_subpath_points = []
+                    subpaths = []
+                    current_subpath = []
 
                     tt_id = m_train.get("train_type_id")
                     pen = self._create_train_pen(tt_id)
 
                     for stop in stops:
                         seg_id = stop.get("segment_id")
-                        if seg_id not in target_segment_ids:
-                            if len(current_subpath_points) >= 2:
-                                self._draw_path(current_subpath_points, pen)
-                            current_subpath_points = []
+                        arr_sec = self._time_to_seconds(stop.get("arrival_time"))
+                        dep_sec = self._time_to_seconds(stop.get("departure_time"))
+
+                        if seg_id not in target_segment_ids or (arr_sec is None and dep_sec is None):
+                            if len(current_subpath) >= 2:
+                                subpaths.append(current_subpath)
+                            current_subpath = []
                             continue
 
                         sid = stop.get("station_id")
                         if sid not in station_y_map:
+                            if len(current_subpath) >= 2:
+                                subpaths.append(current_subpath)
+                            current_subpath = []
                             continue
 
                         y = station_y_map[sid]
-                        arr_sec = self._time_to_seconds(stop.get("arrival_time"))
-                        dep_sec = self._time_to_seconds(stop.get("departure_time"))
 
                         if arr_sec is not None and dep_sec is not None:
-                            x_arr = 120 + (arr_sec / 60.0) * 6.0
-                            x_dep = 120 + (dep_sec / 60.0) * 6.0
-                            current_subpath_points.append((x_arr, y))
+                            x_arr = (arr_sec / 60.0) * 6.0
+                            x_dep = (dep_sec / 60.0) * 6.0
+                            current_subpath.append((x_arr, y))
                             if x_arr != x_dep:
-                                current_subpath_points.append((x_dep, y))
+                                current_subpath.append((x_dep, y))
                         elif arr_sec is not None:
-                            x_arr = 120 + (arr_sec / 60.0) * 6.0
-                            current_subpath_points.append((x_arr, y))
+                            x_arr = (arr_sec / 60.0) * 6.0
+                            current_subpath.append((x_arr, y))
                         elif dep_sec is not None:
-                            x_dep = 120 + (dep_sec / 60.0) * 6.0
-                            current_subpath_points.append((x_dep, y))
+                            x_dep = (dep_sec / 60.0) * 6.0
+                            current_subpath.append((x_dep, y))
 
-                    if len(current_subpath_points) >= 2:
-                        self._draw_path(current_subpath_points, pen)
+                    if len(current_subpath) >= 2:
+                        subpaths.append(current_subpath)
+
+                    for sp in subpaths:
+                        self._draw_path(sp, pen)
+
+                    # 列車番号ラベルの描画
+                    self._render_train_number_label(m_train, subpaths)
+
+    def _render_train_number_label(self, train, subpaths):
+        train_number = train.get("train_number", "")
+        if not train_number or not subpaths:
+            return
+
+        # 最初のサブパスを取得
+        first_subpath = subpaths[0]
+        if len(first_subpath) < 2:
+            return
+
+        p0 = first_subpath[0]
+        # p0とy座標が異なる最初の点（次の経由駅での点）を探す
+        p_next = None
+        for pt in first_subpath[1:]:
+            if pt[1] != p0[1]:
+                p_next = pt
+                break
+
+        if p_next is None:
+            # 異なるy座標の点がなければ2番目の点を採用
+            p_next = first_subpath[1]
+
+        dx = p_next[0] - p0[0]
+        dy = p_next[1] - p0[1]
+
+        # dy > 0: 上から下に向かう列車
+        # dy < 0: 下から上に向かう列車
+        if dy == 0 and dx == 0:
+            return
+
+        # 角度計算（度単位）
+        angle_rad = math.atan2(dy, dx)
+        angle_deg = math.degrees(angle_rad)
+
+        # 文字色の取得
+        tt_id = train.get("train_type_id")
+        tt = self.project.train_types.get(tt_id) if (self.project and tt_id) else None
+        main_color = tt.get("main_color", "#333333") if tt else "#333333"
+
+        font = QFont()
+        font.setPixelSize(12)
+
+        text_item = QGraphicsSimpleTextItem(train_number)
+        text_item.setFont(font)
+        text_item.setBrush(QBrush(QColor(main_color)))
+
+        # 回転中心をテキストの左上(0,0)にして回転
+        text_item.setRotation(angle_deg)
+
+        # 進行方向単位ベクトル
+        length = math.hypot(dx, dy)
+        ux = dx / length
+        uy = dy / length
+
+        if dy >= 0:
+            # 画面上から下に向かう列車: 始点の右下側
+            forward_dist = 4.0
+            perp_dist = 4.0
+            nx = uy
+            ny = -ux
+            pos_x = p0[0] + forward_dist * ux + perp_dist * nx + 15 # 列車のパスと重ならないように右へ15pxずらす
+            pos_y = p0[1] + forward_dist * uy + perp_dist * ny
+        else:
+            # 画面下から上に向かう列車: 始点の左上側
+            forward_dist = 4.0
+            perp_dist = 4.0
+            nx = -uy
+            ny = ux
+            pos_x = p0[0] + forward_dist * ux + perp_dist * nx - 25 # 列車のパスと重ならないように左へ25pxずらす
+            pos_y = p0[1] + forward_dist * uy + perp_dist * ny
+
+        text_item.setPos(pos_x, pos_y)
+        text_item.setZValue(3)
+        self.addItem(text_item)
 
     def _draw_path(self, points, pen):
         if len(points) < 2:
