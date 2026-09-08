@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="30"
+   height="30"
+   viewBox="0 0 7.937499 7.937499"
+   version="1.1"
+   id="svg1"
+   inkscape:version="1.4.4 (dcaf3e7d9e, 2026-05-05)"
+   sodipodi:docname="種別アイコン.svg"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:cc="http://creativecommons.org/ns#">
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="px"
+     inkscape:zoom="10"
+     inkscape:cx="13.85"
+     inkscape:cy="14"
+     inkscape:window-width="1920"
+     inkscape:window-height="1008"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="layer1" />
+  <defs
+     id="defs1">
+    <inkscape:path-effect
+       effect="fillet_chamfer"
+       id="path-effect2"
+       is_visible="true"
+       lpeversion="1"
+       nodesatellites_param="F,0,0,1,0,0,0,1 @ F,0,1,1,0,1.3229165,0,1 @ F,0,1,1,0,1.3229165,0,1 @ F,0,0,1,0,0,0,1 @ F,0,0,1,0,0,0,1 @ F,0,0,1,0,0.7937499,0,1 @ F,0,0,1,0,0.7937499,0,1 @ F,0,0,1,0,0,0,1 | F,0,0,1,0,0,0,1 @ F,0,0,1,0,0.7937499,0,1 @ F,0,0,1,0,0.7937499,0,1 @ F,0,0,1,0,0,0,1 @ F,0,0,1,0,0,0,1 @ F,0,0,1,0,1.3229165,0,1 @ F,0,0,1,0,1.3229165,0,1 @ F,0,0,1,0,0,0,1"
+       radius="5"
+       unit="px"
+       method="auto"
+       mode="F"
+       chamfer_steps="1"
+       flexible="false"
+       use_knot_distance="true"
+       apply_no_radius="true"
+       apply_with_radius="true"
+       only_selected="true"
+       hide_knots="false" />
+  </defs>
+  <g
+     inkscape:label="Layer 1"
+     inkscape:groupmode="layer"
+     id="layer1">
+    <path
+       id="rect1"
+       style="fill:#999999;fill-opacity:1;stroke:none;stroke-width:0.264583;stroke-linecap:round;paint-order:stroke markers fill"
+       d="M 7.6729157,1.8520831 A 1.3229165,1.3229165 45 0 0 6.3499992,0.5291666 H 1.5874998 A 1.3229165,1.3229165 135 0 0 0.2645833,1.8520831 H 0.7937499 A 0.7937499,0.7937499 135 0 1 1.5874998,1.0583332 H 6.3499992 A 0.7937499,0.7937499 45 0 1 7.1437491,1.8520831 Z M 7.1437491,6.0854159 A 0.7937499,0.7937499 135 0 1 6.3499992,6.8791658 H 1.5874998 A 0.7937499,0.7937499 45 0 1 0.7937499,6.0854159 H 0.2645833 a 1.3229165,1.3229165 45 0 0 1.3229165,1.3229165 l 4.7624994,0 A 1.3229165,1.3229165 135 0 0 7.6729157,6.0854159 Z"
+       inkscape:path-effect="#path-effect2"
+       inkscape:original-d="M 7.6729157,1.8520831 V 0.5291666 H 0.2645833 V 1.8520831 H 0.7937499 V 1.0583332 H 7.1437491 V 1.8520831 Z M 7.1437491,6.0854159 V 6.8791658 H 0.7937499 V 6.0854159 H 0.2645833 V 7.4083324 H 7.6729157 V 6.0854159 Z"
+       sodipodi:nodetypes="cccccccccccccccccc" />
+    <text
+       xml:space="preserve"
+       style="font-weight:bold;font-size:4.23333px;line-height:1.5;font-family:'Google Sans Flex';-inkscape-font-specification:'Google Sans Flex Bold';letter-spacing:0px;writing-mode:lr-tb;direction:ltr;fill:#999999;fill-opacity:1;stroke:none;stroke-width:0.264583;stroke-linecap:round;paint-order:stroke markers fill"
+       x="0.26246798"
+       y="5.2800207"
+       id="text2"><tspan
+         sodipodi:role="line"
+         id="tspan2"
+         style="font-style:normal;font-variant:normal;font-weight:600;font-stretch:normal;font-size:4.23333px;font-family:'Google Sans Flex';-inkscape-font-specification:'Google Sans Flex Semi-Bold';letter-spacing:0px;stroke-width:0.264583"
+         x="0.26246798"
+         y="5.2800207">Exp</tspan></text>
+  </g>
+  <metadata
+     id="metadata1">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <cc:license
+           rdf:resource="http://creativecommons.org/publicdomain/zero/1.0/" />
+      </cc:Work>
+      <cc:License
+         rdf:about="http://creativecommons.org/publicdomain/zero/1.0/">
+        <cc:permits
+           rdf:resource="http://creativecommons.org/ns#Reproduction" />
+        <cc:permits
+           rdf:resource="http://creativecommons.org/ns#Distribution" />
+        <cc:permits
+           rdf:resource="http://creativecommons.org/ns#DerivativeWorks" />
+      </cc:License>
+    </rdf:RDF>
+  </metadata>
+</svg>

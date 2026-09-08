@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="20"
+   height="20"
+   viewBox="0 0 5.291666 5.291666"
+   version="1.1"
+   id="svg1"
+   inkscape:version="1.4.4 (dcaf3e7d9e, 2026-05-05)"
+   sodipodi:docname="ガントチャートアイコン.svg"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:cc="http://creativecommons.org/ns#">
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="px"
+     inkscape:zoom="30"
+     inkscape:cx="8.9666667"
+     inkscape:cy="9.9"
+     inkscape:window-width="1920"
+     inkscape:window-height="1008"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="layer1" />
+  <defs
+     id="defs1" />
+  <g
+     inkscape:label="Layer 1"
+     inkscape:groupmode="layer"
+     id="layer1">
+    <path
+       style="fill:none;fill-opacity:1;stroke:#cccccc;stroke-width:0.2645833;stroke-opacity:1;paint-order:stroke markers fill;stroke-dasharray:none"
+       d="M 0.13229165,0 V 5.291666"
+       id="path1"
+       sodipodi:nodetypes="cc" />
+    <path
+       style="fill:none;fill-opacity:1;stroke:#cccccc;stroke-width:0.2645833;stroke-opacity:1;paint-order:stroke markers fill;stroke-dasharray:none"
+       d="m 2.6425257,0 0.00661,5.291666"
+       id="path2"
+       sodipodi:nodetypes="cc" />
+    <path
+       style="fill:none;fill-opacity:1;stroke:#cccccc;stroke-width:0.2645833;stroke-opacity:1;paint-order:stroke markers fill;stroke-dasharray:none"
+       d="M 5.1593743,0 V 5.291666"
+       id="path3"
+       sodipodi:nodetypes="cc" />
+    <rect
+       style="fill:#999999;fill-opacity:1;stroke:none;stroke-width:0.676298;paint-order:stroke markers fill"
+       id="rect1"
+       width="2.3812497"
+       height="0.79374993"
+       x="0.52916658"
+       y="0.52916658" />
+    <rect
+       style="fill:#333333;fill-opacity:1;stroke:none;stroke-width:0.640303;paint-order:stroke markers fill"
+       id="rect2"
+       width="3.4395828"
+       height="0.79374993"
+       x="1.0583332"
+       y="2.2489581" />
+    <rect
+       style="fill:#999999;fill-opacity:1;stroke:none;stroke-width:0.674329;paint-order:stroke markers fill"
+       id="rect3"
+       width="2.3812497"
+       height="0.79374993"
+       x="2.3812497"
+       y="3.9687495" />
+    <rect
+       style="fill:#333333;fill-opacity:1;stroke:none;stroke-width:0.690543;paint-order:stroke markers fill"
+       id="rect5"
+       width="1.5874999"
+       height="0.79374993"
+       x="3.7041662"
+       y="0.52916658" />
+  </g>
+  <metadata
+     id="metadata1">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <cc:license
+           rdf:resource="http://creativecommons.org/publicdomain/zero/1.0/" />
+      </cc:Work>
+      <cc:License
+         rdf:about="http://creativecommons.org/publicdomain/zero/1.0/">
+        <cc:permits
+           rdf:resource="http://creativecommons.org/ns#Reproduction" />
+        <cc:permits
+           rdf:resource="http://creativecommons.org/ns#Distribution" />
+        <cc:permits
+           rdf:resource="http://creativecommons.org/ns#DerivativeWorks" />
+      </cc:License>
+    </rdf:RDF>
+  </metadata>
+</svg>

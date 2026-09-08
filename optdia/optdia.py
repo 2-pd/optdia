@@ -2,28 +2,1426 @@
 # coding: utf-8
 
 import sys
-from PySide6.QtWidgets import QApplication, QMainWindow
-
-
-APP_NAME = "OptDia"
-__version__ = "26.06-1"
-
+import os
+import subprocess
+from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QIcon, QAction, QPixmap, QTransform
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
+    QPushButton, QFileDialog, QMessageBox, QDialog, QLabel, QComboBox,
+    QListWidget, QListWidgetItem, QStackedWidget, QLineEdit,
+    QTabBar, QHeaderView, QMenu, QAbstractItemView, QFrame
+)
+import assets_rc
+from version import APP_NAME, __version__
+from core.project import OptDiaProject, load_project, SchemaVersionError
+from core.history_manager import HistoryManager
+from core.settings import AppSettings
+from common.gui_utils import HtmlDelegate, create_color_square_pixmap
+from common.widgets import LineSampleWidget
+from dialogs.route import AddRouteDialog, SelectSegmentDialog, SplitSegmentDialog, RouteEditorDialog
+from dialogs.diagram import AddDiagramDialog, DiagramEditorDialog
+from dialogs.line_station import LineStationEditorDialog
+from dialogs.train_type import AddTrainTypeDialog, TrainTypeEditorDialog
+from dialogs.operation import VehicleOperationEditorDialog
+from dialogs.project_meta import ProjectPropertiesDialog
+from dialogs.about import AboutDialog
+from timetable.model import TimetableModel
+from timetable.view import TimetableView, TimetableVerticalHeader
+from timetable.delegate import TimetableDelegate
+from timeline.view import TimelineView, TimelineHeaderView
+from diagram.view import DiagramView, DiagramHeaderView, DiagramStationView
 
 # メインウィンドウ
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, project: OptDiaProject, filepath: str = None):
         super().__init__()
+        self.project = project
+        self.filepath = filepath
+        self.is_modified = False
+
+        # 履歴管理クラスの初期化
+        self.history_manager = HistoryManager(self)
+
+        # 設定管理クラスの初期化
+        self.app_settings = AppSettings()
 
         # 初期タイトルと初期サイズ
-        self.setWindowTitle(f"{APP_NAME} v{__version__}")
+        self._update_window_title()
         self.resize(960, 640)
+        self.app_settings.load_window_settings(self)
+
+        # メニューバーの設定
+        self._init_menu_bar()
+
+        # セントラルウィジェットの設定
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        
+        # メインとなる水平レイアウト
+        main_layout = QHBoxLayout(central_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # 左側のサイドバーウィジェット (幅240px固定)
+        sidebar = QWidget()
+        sidebar.setObjectName("sidebar")
+        sidebar.setFixedWidth(240)
+        sidebar.setStyleSheet("#sidebar { background-color: #f7f7f7; border-right: 1px solid #dddddd; }")
+        
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setSpacing(0)
+
+        # ボタンの共通スタイル定義
+        button_style = """
+            QPushButton {
+                border: none;
+                text-align: left;
+                text-decoration: underline;
+                padding-left: 10px;
+                font-size: 15px;
+                background-color: transparent;
+            }
+            QPushButton:hover {
+                background-color: #eeeeee;
+            }
+        """
+
+        # 1つ目のボタン: 路線・駅情報
+        self.btn_lines = QPushButton("路線・駅情報")
+        self.btn_lines.setFixedHeight(50)
+        self.btn_lines.setIcon(QIcon(':/assets/line.png'))
+        self.btn_lines.setIconSize(QSize(30, 30))
+        self.btn_lines.clicked.connect(self._on_edit_lines_stations)
+        self.btn_lines.setStyleSheet(button_style)
+        sidebar_layout.addWidget(self.btn_lines)
+
+        # 2つ目のボタン: 種別情報
+        self.btn_types = QPushButton("種別情報")
+        self.btn_types.setFixedHeight(50)
+        self.btn_types.setIcon(QIcon(':/assets/train_type.png'))
+        self.btn_types.setIconSize(QSize(30, 30))
+        self.btn_types.clicked.connect(self._on_edit_train_types)
+        self.btn_types.setStyleSheet(button_style)
+        sidebar_layout.addWidget(self.btn_types)
+
+        # 運行系統セクション
+        route_section = QWidget()
+        route_layout = QVBoxLayout(route_section)
+        route_layout.setContentsMargins(10, 0, 10, 5)
+        route_layout.addSpacing(10)
+
+        route_header_layout = QHBoxLayout()
+        lbl_route = QLabel("運行系統")
+        lbl_route.setStyleSheet("font-size: 14px; border: none;")
+        route_header_layout.addWidget(lbl_route)
+        self.btn_edit_routes = QPushButton("編集")
+        self.btn_edit_routes.setFixedWidth(60)
+        self.btn_edit_routes.setStyleSheet("QPushButton { border: none; text-decoration: underline; background-color: transparent; }")
+        self.btn_edit_routes.clicked.connect(self._on_edit_routes)
+        route_header_layout.addWidget(self.btn_edit_routes)
+        route_layout.addLayout(route_header_layout)
+
+        # 運行系統リスト
+        self.route_list_widget = QListWidget()
+        self.route_list_widget.setStyleSheet("font-size: 14px; QListWidget::item {height: 32px;}")
+        self.route_list_widget.setIconSize(QSize(24, 24))
+        self.route_list_widget.setDragDropMode(QListWidget.InternalMove)
+        self.route_list_widget.model().rowsMoved.connect(self._on_routes_reordered)
+        self.route_list_widget.itemSelectionChanged.connect(self._on_timetable_settings_changed)
+        route_layout.addWidget(self.route_list_widget)
+
+        # サイドバーの残りスペースを2等分するため、stretch=1 を指定
+        sidebar_layout.addWidget(route_section, 1)
+
+        # ダイヤセクション
+        diagram_section = QWidget()
+        diagram_layout = QVBoxLayout(diagram_section)
+        diagram_layout.setContentsMargins(10, 0, 10, 10)
+        diagram_layout.addSpacing(10)
+
+        diagram_header_layout = QHBoxLayout()
+        lbl_diagram = QLabel("ダイヤ")
+        lbl_diagram.setStyleSheet("font-size: 14px; border: none;")
+        diagram_header_layout.addWidget(lbl_diagram)
+        self.btn_edit_diagrams = QPushButton("編集")
+        self.btn_edit_diagrams.setFixedWidth(60)
+        self.btn_edit_diagrams.setStyleSheet("QPushButton { border: none; text-decoration: underline; background-color: transparent; }")
+        self.btn_edit_diagrams.clicked.connect(self._on_edit_diagrams)
+        diagram_header_layout.addWidget(self.btn_edit_diagrams)
+        diagram_layout.addLayout(diagram_header_layout)
+
+        # 運転ダイヤリスト
+        self.diagram_list_widget = QListWidget()
+        self.diagram_list_widget.setStyleSheet("font-size: 14px; QListWidget::item {height: 32px;}")
+        self.diagram_list_widget.setIconSize(QSize(24, 24))
+        self.diagram_list_widget.setDragDropMode(QListWidget.InternalMove)
+        self.diagram_list_widget.model().rowsMoved.connect(self._on_diagrams_reordered)
+        self.diagram_list_widget.itemSelectionChanged.connect(self._on_diagram_selected_in_main_window)
+        diagram_layout.addWidget(self.diagram_list_widget)
+
+        # サイドバーの残りスペースを2等分するため、stretch=1 を指定
+        sidebar_layout.addWidget(diagram_section, 1)
+
+        # レイアウトにサイドバーを追加
+        main_layout.addWidget(sidebar)
+        
+        # 右側のコンテンツ表示エリア (スタックドウィジェット)
+        self.right_stack = QStackedWidget()
+
+        # --- コンテンツありのページ ---
+        self.timetable_page = QWidget()
+        self.timetable_layout = QVBoxLayout(self.timetable_page)
+        self.timetable_layout.setContentsMargins(0, 0, 0, 0)
+        self.timetable_layout.setSpacing(0)
+
+        # 方面選択用タブバー
+        self.direction_tab_bar = QTabBar()
+        self.direction_tab_bar.addTab(QIcon(":/assets/outbound.png"), "下り時刻表")
+        self.direction_tab_bar.addTab(QIcon(":/assets/inbound.png"), "上り時刻表")
+        self.direction_tab_bar.addTab(QIcon(":/assets/diagram.png"), "ダイヤグラム")
+        self.direction_tab_bar.addTab(QIcon(":/assets/timeline.png"), "車両運用表")
+        self.direction_tab_bar.setExpanding(False)
+        self.direction_tab_bar.setStyleSheet("""
+            QTabBar::tab { height: 35px; width: 135px; padding-left: 10px; padding-right: 30px; background-color: #e7e7e7; }
+            QTabBar::tab:selected { background-color: #f7f7f7; }
+        """)
+        self.direction_tab_bar.currentChanged.connect(self._on_timetable_settings_changed)
+        self.timetable_layout.addWidget(self.direction_tab_bar)
+
+        # 時刻表テーブル
+        self.timetable_model = TimetableModel(self.project, self.history_manager)
+        self.timetable_model.set_auto_fill_enabled(self.auto_fill_action.isChecked())
+        self.timetable_model.set_adjust_later_enabled(self.adjust_later_action.isChecked())
+        self.timetable_model.dataChanged.connect(lambda: self.set_modified(True))
+        self.timetable_model.trainsReordered.connect(lambda: self.set_modified(True))
+        self.timetable_model.modelReset.connect(self._update_train_search_state)
+        self.timetable_view = TimetableView()
+        self.timetable_view.setModel(self.timetable_model)
+        self.timetable_view.selectionModel().currentChanged.connect(self._on_timetable_cell_current_changed)
+        
+        v_header = TimetableVerticalHeader(self.timetable_view)
+        self.timetable_view.setVerticalHeader(v_header)
+        
+        # ボタン用デリゲートの適用
+        self.timetable_delegate = TimetableDelegate(self.timetable_view)
+        self.timetable_view.setItemDelegate(self.timetable_delegate)
+
+        # 時刻表テーブル表示用のコンテナ（垂直レイアウト）
+        self.timetable_table_container = QWidget()
+        timetable_table_layout = QVBoxLayout(self.timetable_table_container)
+        timetable_table_layout.setContentsMargins(0, 0, 0, 0)
+        timetable_table_layout.setSpacing(0)
+
+        # 検索バーウィジェット（高さ40px）
+        self.timetable_search_bar = QWidget()
+        self.timetable_search_bar.setFixedHeight(40)
+        self.timetable_search_bar.setStyleSheet("background-color: #f7f7f7; border-bottom: 1px solid #dddddd;")
+        timetable_search_layout = QHBoxLayout(self.timetable_search_bar)
+        timetable_search_layout.setContentsMargins(5, 0, 5, 0)
+        timetable_search_layout.setSpacing(0)
+
+        flip_h_transform = QTransform().scale(-1, 1)
+        borderless_btn_style = """
+            QPushButton {
+                border: none;
+                background-color: transparent;
+            }
+            QPushButton:hover {
+                background-color: #eeeeee;
+            }
+        """
+
+        # 元に戻すボタン用のアイコンを読み込み、やり直しボタン用に左右反転したアイコンを生成
+        undo_pixmap = QPixmap(":/assets/undo.png")
+        undo_icon = QIcon(undo_pixmap) # 元に戻すボタン用のアイコン
+        redo_pixmap = undo_pixmap.transformed(flip_h_transform)
+        redo_icon = QIcon(redo_pixmap) # やり直しボタン用のアイコン
+
+        self.btn_undo = QPushButton()
+        self.btn_undo.setIcon(undo_icon)
+        self.btn_undo.setFixedWidth(30)
+        self.btn_undo.setFixedHeight(30)
+        self.btn_undo.setStyleSheet(borderless_btn_style)
+        self.btn_undo.clicked.connect(self._on_undo)
+        self.btn_undo.setToolTip("元に戻す")
+        timetable_search_layout.addWidget(self.btn_undo)
+        self.btn_undo.setEnabled(False)
+
+        self.btn_redo = QPushButton()
+        self.btn_redo.setIcon(redo_icon)
+        self.btn_redo.setFixedWidth(30)
+        self.btn_redo.setFixedHeight(30)
+        self.btn_redo.setStyleSheet(borderless_btn_style)
+        self.btn_redo.clicked.connect(self._on_redo)
+        self.btn_redo.setToolTip("やり直し")
+        timetable_search_layout.addWidget(self.btn_redo)
+        self.btn_redo.setEnabled(False)
+
+        timetable_search_layout.addStretch(1)
+
+        self.train_search_edit = QLineEdit()
+        self.train_search_edit.setPlaceholderText("列車番号を検索")
+        self.train_search_edit.setFixedWidth(160)
+        self.train_search_edit.setFixedHeight(30)
+        self.train_search_edit.textChanged.connect(self._on_train_search_text_changed)
+        timetable_search_layout.addWidget(self.train_search_edit)
+
+        self.train_search_label = QLabel()
+        self.train_search_label.setFixedWidth(50)
+        self.train_search_label.setStyleSheet("font-size: 12px;")
+        timetable_search_layout.addWidget(self.train_search_label)
+
+        # 左移動ボタン用のアイコンを読み込み、右移動ボタン用に左右反転したアイコンを生成
+        left_pixmap = QPixmap(":/assets/left.png")
+        left_icon = QIcon(left_pixmap) # 左移動ボタン用のアイコン
+        right_pixmap = left_pixmap.transformed(flip_h_transform)
+        right_icon = QIcon(right_pixmap) # 右移動ボタン用のアイコン
+
+        self.btn_search_prev = QPushButton()
+        self.btn_search_prev.setIcon(right_icon)
+        self.btn_search_prev.setFixedWidth(30)
+        self.btn_search_prev.setFixedHeight(30)
+        self.btn_search_prev.setStyleSheet(borderless_btn_style)
+        self.btn_search_prev.clicked.connect(self._on_search_prev_clicked)
+        timetable_search_layout.addWidget(self.btn_search_prev)
+
+        self.btn_search_next = QPushButton()
+        self.btn_search_next.setIcon(left_icon)
+        self.btn_search_next.setFixedWidth(30)
+        self.btn_search_next.setFixedHeight(30)
+        self.btn_search_next.setStyleSheet(borderless_btn_style)
+        self.btn_search_next.clicked.connect(self._on_search_next_clicked)
+        timetable_search_layout.addWidget(self.btn_search_next)
+
+        timetable_table_layout.addWidget(self.timetable_search_bar)
+        timetable_table_layout.addWidget(self.timetable_view, stretch=1)
+
+        # 時刻表テーブルと運用表示エリアを切り替えるスタックドウィジェット
+        self.timetable_content_stack = QStackedWidget()
+        self.timetable_content_stack.addWidget(self.timetable_table_container)
+
+        # 運用表示エリア用の親ウィジェット
+        self.operation_area_widget = QWidget()
+        op_area_layout = QVBoxLayout(self.operation_area_widget)
+        op_area_layout.setContentsMargins(0, 0, 0, 0)
+        op_area_layout.setSpacing(0)
+
+        # 運用表示エリアの上部コントロールバー (高さ40px)
+        self.op_control_bar = QWidget()
+        self.op_control_bar.setFixedHeight(40)
+        self.op_control_bar.setStyleSheet("background-color: #f7f7f7; border-bottom: 1px solid #dddddd;")
+        op_control_layout = QHBoxLayout(self.op_control_bar)
+        op_control_layout.setContentsMargins(10, 0, 10, 0)
+        op_control_layout.setSpacing(10)
+
+        self.op_group_combo = QComboBox()
+        self.op_group_combo.setFixedWidth(280)
+        self.op_group_combo.setFixedHeight(32)
+        self.op_group_combo.currentIndexChanged.connect(self._on_operation_group_changed)
+        op_control_layout.addWidget(self.op_group_combo)
+
+        self.btn_edit_operations = QPushButton("編集")
+        self.btn_edit_operations.setFixedWidth(60)
+        self.btn_edit_operations.setStyleSheet("QPushButton { border: none; text-decoration: underline; background-color: transparent; font-size: 14px; }")
+        self.btn_edit_operations.clicked.connect(self._on_edit_operations_clicked)
+        op_control_layout.addWidget(self.btn_edit_operations)
+        
+        op_control_layout.addStretch(1)
+
+        # 運用表示エリアの表示幅コンボボックス (狭め: 1px/分, 標準: 2px/分, やや広め: 3px/分, 広め: 4px/分)
+        lbl_op_width = QLabel("表示幅:")
+        lbl_op_width.setStyleSheet("font-size: 14px; border: none;")
+        op_control_layout.addWidget(lbl_op_width)
+
+        self.timeline_width_combo = QComboBox()
+        self.timeline_width_combo.setFixedWidth(80)
+        self.timeline_width_combo.addItem("狭め", "narrow")
+        self.timeline_width_combo.addItem("標準", "standard")
+        self.timeline_width_combo.addItem("やや広め", "slightly_wide")
+        self.timeline_width_combo.addItem("広め", "wide")
+        
+        saved_timeline_width = self.app_settings.load_timeline_width_scale()
+        idx_tw = self.timeline_width_combo.findData(saved_timeline_width)
+        if idx_tw >= 0:
+            self.timeline_width_combo.setCurrentIndex(idx_tw)
+        else:
+            self.timeline_width_combo.setCurrentIndex(1) # 標準
+        self.timeline_width_combo.currentIndexChanged.connect(self._on_timeline_width_changed)
+        op_control_layout.addWidget(self.timeline_width_combo)
+
+        op_area_layout.addWidget(self.op_control_bar)
+
+        # 運用表示エリアの見出しバー (高さ40px)
+        op_header_bar = QWidget()
+        op_header_bar.setFixedHeight(40)
+        op_header_bar.setStyleSheet("background-color: #f7f7f7; border-bottom: 1px solid #dddddd;")
+        op_header_layout = QHBoxLayout(op_header_bar)
+        op_header_layout.setContentsMargins(0, 0, 0, 0)
+        op_header_layout.setSpacing(0)
+
+        lbl_op_num = QLabel("運用番号")
+        lbl_op_num.setFixedWidth(100)
+        lbl_op_num.setAlignment(Qt.AlignCenter)
+        lbl_op_num.setStyleSheet("font-size: 14px; font-weight: bold;")
+
+        lbl_op_se = QLabel("出入庫")
+        lbl_op_se.setFixedWidth(140)
+        lbl_op_se.setAlignment(Qt.AlignCenter)
+        lbl_op_se.setStyleSheet("font-size: 14px; font-weight: bold; border-right: 1px solid #dddddd;")
+
+        initial_timeline_scale = self._get_timeline_scale_x()
+        self.timeline_header_view = TimelineHeaderView()
+        self.timeline_header_view.scene.set_scale_x(initial_timeline_scale)
+
+        op_header_layout.addWidget(lbl_op_num)
+        op_header_layout.addWidget(lbl_op_se)
+        op_header_layout.addWidget(self.timeline_header_view, stretch=1)
+
+        op_area_layout.addWidget(op_header_bar)
+
+        # 運用表示エリアの本体 (左側 リストウィジェット + 右側 運用ガントチャート)
+        op_body_widget = QWidget()
+        op_body_layout = QHBoxLayout(op_body_widget)
+        op_body_layout.setContentsMargins(0, 0, 0, 0)
+        op_body_layout.setSpacing(0)
+
+        # 運用リスト (幅240px、項目高さ70px)
+        self.op_list_widget = QListWidget()
+        self.op_list_widget.setFixedWidth(240)
+        self.op_list_widget.setFrameShape(QFrame.NoFrame)
+        self.op_list_widget.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.op_list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.op_list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.op_list_widget.setStyleSheet("""
+            QListWidget {
+                border: none;
+                border-right: 1px solid #dddddd;
+                background-color: #ffffff;
+            }
+            QListWidget::item {
+                height: 70px;
+                border-bottom: 1px solid #eeeeee;
+            }
+        """)
+        op_body_layout.addWidget(self.op_list_widget)
+
+        # 運用ガントチャート
+        self.timeline_view = TimelineView()
+        self.timeline_view.scene.set_scale_x(initial_timeline_scale)
+        self.timeline_view.scene.set_history_manager(self.history_manager)
+        op_body_layout.addWidget(self.timeline_view, stretch=1)
+
+        op_area_layout.addWidget(op_body_widget, stretch=1)
+
+        # スクロール同期設定
+        self.op_list_widget.verticalScrollBar().valueChanged.connect(
+            self.timeline_view.verticalScrollBar().setValue
+        )
+        self.timeline_view.verticalScrollBar().valueChanged.connect(
+            self.op_list_widget.verticalScrollBar().setValue
+        )
+        self.timeline_view.horizontalScrollBar().valueChanged.connect(
+            self.timeline_header_view.horizontalScrollBar().setValue
+        )
+        self.timeline_header_view.horizontalScrollBar().valueChanged.connect(
+            self.timeline_view.horizontalScrollBar().setValue
+        )
+        self.timeline_view.horizontalScrollBar().rangeChanged.connect(
+            lambda min_val, max_val: self._sync_op_list_viewport_margin()
+        )
+        self.timeline_view.verticalScrollBar().rangeChanged.connect(
+            lambda min_val, max_val: self._sync_op_list_viewport_margin()
+        )
+
+
+        # ダイヤグラム表示エリア用の親ウィジェット
+        self.diagram_area_widget = QWidget()
+        diagram_area_layout = QVBoxLayout(self.diagram_area_widget)
+        diagram_area_layout.setContentsMargins(0, 0, 0, 0)
+        diagram_area_layout.setSpacing(0)
+
+        # ダイヤグラム表示エリアのヘッダーウィジェット (高さ40px)
+        self.diagram_header_widget = QWidget()
+        self.diagram_header_widget.setFixedHeight(40)
+        self.diagram_header_widget.setStyleSheet("background-color: #f7f7f7; border-bottom: 1px solid #dddddd;")
+        diagram_header_layout = QHBoxLayout(self.diagram_header_widget)
+        diagram_header_layout.setContentsMargins(10, 0, 10, 0)
+        diagram_header_layout.setSpacing(10)
+
+        self.diagram_line_combo = QComboBox()
+        self.diagram_line_combo.setFixedWidth(280)
+        self.diagram_line_combo.currentIndexChanged.connect(self._on_diagram_line_combo_changed)
+        diagram_header_layout.addWidget(self.diagram_line_combo)
+        diagram_header_layout.addStretch(1)
+
+        # ダイヤグラム表示幅コンボボックス (狭め: 3px/分, 標準: 6px/分, やや広め: 15px/分, 広め: 30px/分)
+        lbl_diag_width = QLabel("表示幅:")
+        lbl_diag_width.setStyleSheet("font-size: 14px; border: none;")
+        diagram_header_layout.addWidget(lbl_diag_width)
+
+        self.diagram_width_combo = QComboBox()
+        self.diagram_width_combo.setFixedWidth(80)
+        self.diagram_width_combo.addItem("狭め", "narrow")
+        self.diagram_width_combo.addItem("標準", "standard")
+        self.diagram_width_combo.addItem("やや広め", "slightly_wide")
+        self.diagram_width_combo.addItem("広め", "wide")
+
+        saved_diag_width = self.app_settings.load_diagram_width_scale()
+        idx_dw = self.diagram_width_combo.findData(saved_diag_width)
+        if idx_dw >= 0:
+            self.diagram_width_combo.setCurrentIndex(idx_dw)
+        else:
+            self.diagram_width_combo.setCurrentIndex(1) # 標準
+        self.diagram_width_combo.currentIndexChanged.connect(self._on_diagram_width_changed)
+        diagram_header_layout.addWidget(self.diagram_width_combo)
+
+        # ダイヤグラム表示高さコンボボックス (狭め: 6秒/px, 標準: 3秒/px, やや広め: 2秒/px, 広め: 1秒/px)
+        lbl_diag_height = QLabel("表示高さ:")
+        lbl_diag_height.setStyleSheet("font-size: 14px; border: none;")
+        diagram_header_layout.addWidget(lbl_diag_height)
+
+        self.diagram_height_combo = QComboBox()
+        self.diagram_height_combo.setFixedWidth(80)
+        self.diagram_height_combo.addItem("狭め", "narrow")
+        self.diagram_height_combo.addItem("標準", "standard")
+        self.diagram_height_combo.addItem("やや広め", "slightly_wide")
+        self.diagram_height_combo.addItem("広め", "wide")
+
+        saved_diag_height = self.app_settings.load_diagram_height_scale()
+        idx_dh = self.diagram_height_combo.findData(saved_diag_height)
+        if idx_dh >= 0:
+            self.diagram_height_combo.setCurrentIndex(idx_dh)
+        else:
+            self.diagram_height_combo.setCurrentIndex(1) # 標準
+        self.diagram_height_combo.currentIndexChanged.connect(self._on_diagram_height_changed)
+        diagram_header_layout.addWidget(self.diagram_height_combo)
+
+        diagram_area_layout.addWidget(self.diagram_header_widget)
+
+        # ダイヤグラム表示用のグラフィックスビュー群（グリッドレイアウトで上下左右に配置）
+        diagram_grid_widget = QWidget()
+        diagram_grid_layout = QGridLayout(diagram_grid_widget)
+        diagram_grid_layout.setContentsMargins(0, 0, 0, 0)
+        diagram_grid_layout.setSpacing(0)
+
+        self.diagram_header_view = DiagramHeaderView()
+        self.diagram_station_view = DiagramStationView()
+        self.diagram_view = DiagramView()
+
+        diagram_grid_layout.addWidget(self.diagram_header_view, 0, 1)
+        diagram_grid_layout.addWidget(self.diagram_station_view, 1, 0)
+        diagram_grid_layout.addWidget(self.diagram_view, 1, 1)
+
+        diagram_grid_layout.setRowStretch(0, 0)
+        diagram_grid_layout.setRowStretch(1, 1)
+        diagram_grid_layout.setColumnStretch(0, 0)
+        diagram_grid_layout.setColumnStretch(1, 1)
+
+        # スクロール同期設定
+        # 左右スクロール同期 (DiagramView <-> DiagramHeaderView)
+        self.diagram_view.horizontalScrollBar().valueChanged.connect(
+            self.diagram_header_view.horizontalScrollBar().setValue
+        )
+        self.diagram_header_view.horizontalScrollBar().valueChanged.connect(
+            self.diagram_view.horizontalScrollBar().setValue
+        )
+        # 上下スクロール同期 (DiagramView <-> DiagramStationView)
+        self.diagram_view.verticalScrollBar().valueChanged.connect(
+            self.diagram_station_view.verticalScrollBar().setValue
+        )
+        self.diagram_station_view.verticalScrollBar().valueChanged.connect(
+            self.diagram_view.verticalScrollBar().setValue
+        )
+
+        diagram_area_layout.addWidget(diagram_grid_widget, stretch=1)
+
+        self.timetable_content_stack.addWidget(self.diagram_area_widget)
+        self.timetable_content_stack.addWidget(self.operation_area_widget)
+
+        self.timetable_layout.addWidget(self.timetable_content_stack)
+        
+        self.right_stack.addWidget(self.timetable_page)
+
+        # --- コンテンツなしのプレースホルダーページ ---
+        self.placeholder_page = QWidget()
+        placeholder_layout = QVBoxLayout(self.placeholder_page)
+        placeholder_label = QLabel("時刻表を編集するには、路線情報・運行系統・ダイヤの設定を完了してください")
+        placeholder_label.setAlignment(Qt.AlignCenter)
+        placeholder_label.setStyleSheet("color: #888888; font-size: 18px;")
+        placeholder_layout.addWidget(placeholder_label)
+        
+        self.right_stack.addWidget(self.placeholder_page)
+
+        main_layout.addWidget(self.right_stack, stretch=1)
+
+        # 初期リストの構築
+        self._populate_route_list()
+        self._populate_diagram_list()
+
+        # 初期選択の設定
+        if self.route_list_widget.count() > 0:
+            self.route_list_widget.setCurrentRow(0)
+        if self.diagram_list_widget.count() > 0:
+            self.diagram_list_widget.setCurrentRow(0)
+            
+        self._on_timetable_settings_changed()
+
+    def _populate_route_list(self):
+        """プロジェクトに登録されている運行系統をサイドバーのリストに表示する"""
+        self.route_list_widget.clear()
+        for rid in self.project.routes_order:
+            route = self.project.routes[rid]
+            item = QListWidgetItem(route.get("route_name", rid))
+            item.setIcon(QIcon(':/assets/route.png'))
+            item.setData(Qt.UserRole, rid)
+            self.route_list_widget.addItem(item)
+
+    def _populate_diagram_list(self):
+        """プロジェクトに登録されている運転ダイヤをサイドバーのリストに表示する"""
+        self.diagram_list_widget.clear()
+        for did in self.project.diagrams_order:
+            diag = self.project.diagrams[did]
+            item = QListWidgetItem(diag.get("diagram_name", did))
+            item.setIcon(QIcon(':/assets/dia.png'))
+            item.setData(Qt.UserRole, did)
+            self.diagram_list_widget.addItem(item)
+
+    def closeEvent(self, event):
+        """閉じるイベントを捕捉し、未保存の変更がある場合に確認する"""
+        if not self.is_modified:
+            self.app_settings.save_window_settings(self)
+            event.accept()
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "プロジェクトを保存しますか？",
+            f"{APP_NAME}を閉じる前に現在のプロジェクトへの変更を保存しますか？",
+            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save
+        )
+
+        if reply == QMessageBox.StandardButton.Save:
+            self._on_save_project()
+            if not self.is_modified:  # 保存が完了（フラグがクリア）したなら閉じる
+                self.app_settings.save_window_settings(self)
+                event.accept()
+            else:  # 保存ダイアログでキャンセルされた場合は閉じない
+                event.ignore()
+        elif reply == QMessageBox.StandardButton.Discard:
+            self.app_settings.save_window_settings(self)
+            event.accept()
+        else:
+            event.ignore()
+
+    def set_modified(self, modified: bool):
+        """変更フラグを更新し、タイトルバーに反映させる"""
+        if self.is_modified != modified:
+            self.is_modified = modified
+            self._update_window_title()
+
+    def _update_window_title(self):
+        """ファイル名を含めてウィンドウタイトルを更新する"""
+        base_app_title = f"{APP_NAME} v{__version__}"
+        
+        # railroad_name が設定されていればそれを優先
+        if self.project.metadata.get("railroad_name"):
+            project_display_name = self.project.metadata["railroad_name"]
+        else:
+            project_display_name = os.path.basename(self.filepath) if self.filepath else "路線系統名未設定"
+        
+        status_mark = "*" if self.is_modified else ""
+        self.setWindowTitle(f"{project_display_name}{status_mark} - {base_app_title}")
+
+    def _init_menu_bar(self):
+        """メニューバーを初期化し、基本項目を追加する"""
+        menu_bar = self.menuBar()
+
+        # ファイル(F)
+        file_menu = menu_bar.addMenu("ファイル(&F)")
+        new_project_action = file_menu.addAction("新規プロジェクト(&N)")
+        new_project_action.setShortcut("Ctrl+N")
+        new_project_action.triggered.connect(self._on_new_project)
+        open_project_action = file_menu.addAction("プロジェクトを開く(&O)")
+        open_project_action.setShortcut("Ctrl+O")
+        open_project_action.triggered.connect(self._on_open_project)
+        file_menu.addSeparator()
+        save_action = file_menu.addAction("上書き保存(&S)")
+        save_action.setShortcut("Ctrl+S")
+        save_action.triggered.connect(self._on_save_project)
+        save_as_action = file_menu.addAction("名前を付けて保存(&A)")
+        save_as_action.setShortcut("Ctrl+Shift+S")
+        save_as_action.triggered.connect(self._on_save_as_project)
+        import_csv_action = file_menu.addAction("時刻表をCSVからインポート")
+        import_csv_action.triggered.connect(self._on_import_csv)
+        export_csv_action = file_menu.addAction("時刻表をCSVにエクスポート")
+        export_csv_action.triggered.connect(self._on_export_csv)
+        file_menu.addSeparator()
+        properties_action = file_menu.addAction("プロジェクトのプロパティ")
+        file_menu.addSeparator()
+        properties_action.triggered.connect(self._on_project_properties)
+        self.recent_files_menu = file_menu.addMenu("最近開いたプロジェクト(&R)")
+        self._update_recent_files_menu() # メニューを初期化
+        file_menu.addSeparator()
+        exit_action = file_menu.addAction("終了(&Q)")
+        exit_action.setShortcut("Ctrl+Q")
+        exit_action.triggered.connect(self.close)
+
+        # 編集(E)
+        edit_menu = menu_bar.addMenu("編集(&E)")
+
+        # 「元に戻す」
+        self.undo_action = edit_menu.addAction("元に戻す(&U)")
+        self.undo_action.setShortcut("Ctrl+Z")
+        self.undo_action.triggered.connect(self._on_undo)
+        self.undo_action.setEnabled(False)
+
+        # 「やり直し」
+        self.redo_action = edit_menu.addAction("やり直し(&R)")
+        self.redo_action.setShortcut("Ctrl+Y")
+        self.redo_action.triggered.connect(self._on_redo)
+        self.redo_action.setEnabled(False)
+
+        self.history_manager.historyChanged.connect(self._update_undo_redo_actions)
+
+        edit_menu.addSeparator()
+
+        # 「同じ種別の列車から時刻を補完」チェックボックス
+        self.auto_fill_action = QAction("同じ種別の列車から時刻を補完", self, checkable=True)
+        self.auto_fill_action.setChecked(self.app_settings.load_auto_fill_enabled())
+        self.auto_fill_action.triggered.connect(self._on_auto_fill_triggered)
+        edit_menu.addAction(self.auto_fill_action)
+        edit_menu.addSeparator()
+
+        # 「発着時刻の変更時に後の駅の発着時刻も増減」チェックボックス
+        self.adjust_later_action = QAction("発着時刻の変更時に後の駅の発着時刻も増減", self, checkable=True)
+        self.adjust_later_action.setChecked(self.app_settings.load_adjust_later_enabled())
+        self.adjust_later_action.triggered.connect(self._on_adjust_later_triggered)
+        edit_menu.addAction(self.adjust_later_action)
+
+        # ヘルプ(H)
+        help_menu = menu_bar.addMenu("ヘルプ(&H)")
+        about_action = help_menu.addAction(f"{APP_NAME}について(&A)")
+        about_action.triggered.connect(self._on_about)
+
+    def _update_undo_redo_actions(self):
+        self.undo_action.setEnabled(self.history_manager.can_undo())
+        self.redo_action.setEnabled(self.history_manager.can_redo())
+        self.btn_undo.setEnabled(self.history_manager.can_undo())
+        self.btn_redo.setEnabled(self.history_manager.can_redo())
+
+    def _on_undo(self):
+        if self.history_manager.undo(self.project):
+            self.set_modified(True)
+            if self.direction_tab_bar.currentIndex() == 2:
+                self._update_diagram_view()
+
+    def _on_redo(self):
+        if self.history_manager.redo(self.project):
+            self.set_modified(True)
+            if self.direction_tab_bar.currentIndex() == 2:
+                self._update_diagram_view()
+
+    def _on_auto_fill_triggered(self, checked: bool):
+        """「同じ種別の列車から時刻を補完」チェックボックスのトリガーハンドラ"""
+        self.timetable_model.set_auto_fill_enabled(checked)
+        self.app_settings.save_auto_fill_enabled(checked)
+
+    def _on_adjust_later_triggered(self, checked: bool):
+        """「発着時刻の変更時に後の駅の発着時刻も増減」チェックボックスのトリガーハンドラ"""
+        self.timetable_model.set_adjust_later_enabled(checked)
+        self.app_settings.save_adjust_later_enabled(checked)
+
+    def _update_recent_files_menu(self):
+        """最近開いたプロジェクトメニューを更新する"""
+        self.recent_files_menu.clear()
+        recent_files = self.app_settings.load_recent_files()
+
+        if not recent_files:
+            no_recent_action = self.recent_files_menu.addAction("最近開いたプロジェクトはありません")
+            no_recent_action.setEnabled(False)
+            return
+
+        for i, filepath in enumerate(recent_files):
+            # ファイル名のみを表示し、ツールチップにフルパスを表示
+            filename = os.path.basename(filepath)
+            action = self.recent_files_menu.addAction(f"&{i+1} {filename}")
+            action.setToolTip(filepath)
+            action.setData(filepath) # アクションにファイルパスを紐付け
+            action.triggered.connect(self._open_recent_file)
+
+    def _open_recent_file(self):
+        """最近開いたプロジェクトメニューから選択されたファイルを開く"""
+        action = self.sender() # シグナルを送信したアクションを取得
+        if action:
+            filepath = action.data()
+            # 現在のプロジェクトが変更されている場合は別プロセスで開く
+            if self.is_modified:
+                subprocess.Popen([sys.executable, sys.argv[0], filepath])
+            else:
+                self._load_project_in_current_window(filepath)
+
+    def _on_new_project(self):
+        """新規プロジェクトとして、新しくアプリを起動する"""
+        # 現在実行中の Python インタープリタとスクリプトパスを使用して、引数なしで新しいプロセスを開始
+        subprocess.Popen([sys.executable, sys.argv[0]])
+
+    def _on_open_project(self):
+        """プロジェクトを開くダイアログを表示し、条件に応じて現在のプロセスまたは別プロセスで開く"""
+        filepath, _ = QFileDialog.getOpenFileName(
+            self,
+            "プロジェクトを開く",
+            "",
+            "OptDiaプロジェクトファイル (*.optdia *.optd)"
+        )
+        if not filepath:
+            return
+
+        # 現在のプロジェクトが「編集されていない新規状態」であれば、現在のプロセスでロードする
+        if self.filepath is None and not self.is_modified:
+            self._load_project_in_current_window(filepath)
+        else:
+            # それ以外（既にファイルを開いているか、変更がある場合）は別プロセスで開く
+            subprocess.Popen([sys.executable, sys.argv[0], filepath])
+
+    def _on_save_project(self):
+        """現在のファイルパスに上書き保存する。パスがない場合は名前を付けて保存を実行する"""
+        if self.filepath:
+            # save_projectが成功した場合のみrecent_filesに追加
+            if self._save_project_to_path(self.filepath):
+                self.app_settings.add_recent_file(self.filepath)
+            self.set_modified(False)
+        else:
+            self._on_save_as_project()
+
+    def _on_save_as_project(self):
+        """名前を付けて保存ダイアログを表示し、プロジェクトを保存する"""
+        filepath, selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "名前を付けて保存",
+            "",
+            "OptDiaプロジェクトファイル (*.optd);;非圧縮OptDiaプロジェクトファイル (*.optdia)"
+        )
+        if filepath:
+            # 拡張子が指定されていない場合に補完する
+            if not (filepath.lower().endswith(".optdia") or filepath.lower().endswith(".optd")):
+                if ".optd" in selected_filter:
+                    filepath += ".optd"
+                else:
+                    filepath += ".optdia"
+            
+            if self._save_project_to_path(filepath):
+                self.filepath = filepath
+                self.set_modified(False)
+                self._update_window_title()
+                self.app_settings.add_recent_file(filepath)
+                self._update_recent_files_menu()
+
+    def _on_import_csv(self):
+        """時刻表をCSVからインポートする"""
+        from dialogs.import_csv import import_timetable_from_csv
+        import_timetable_from_csv(self)
+
+    def _on_export_csv(self):
+        """時刻表をCSVにエクスポートする"""
+        from dialogs.export_csv import export_timetable_to_csv
+        export_timetable_to_csv(self)
+
+    def _save_project_to_path(self, filepath: str) -> bool:
+        """指定されたパスにプロジェクトを保存する。成功したらTrueを返す。"""
+        try:
+            self.project.save_project(filepath)
+            return True
+        except Exception as e:
+            QMessageBox.critical(self, "保存エラー", f"プロジェクトの保存中にエラーが発生しました:\n{e}")
+            return False
+
+    def _load_project_in_current_window(self, filepath: str):
+        """現在のウィンドウでプロジェクトをロードする"""
+        try:
+            self.project = load_project(filepath)
+            self.history_manager.clear()
+            self.timetable_model.project = self.project
+            self.filepath = filepath
+            self.set_modified(False)
+            self._update_window_title()
+            self._populate_route_list()
+            self._populate_diagram_list()
+            
+            # 初期選択の設定
+            if self.route_list_widget.count() > 0:
+                self.route_list_widget.setCurrentRow(0)
+            if self.diagram_list_widget.count() > 0:
+                self.diagram_list_widget.setCurrentRow(0)
+            self._on_timetable_settings_changed()
+            self.app_settings.add_recent_file(filepath) # 成功したら最近開いたファイルに追加
+            self._update_recent_files_menu()
+        except SchemaVersionError:
+            pass
+        except Exception as e:
+            QMessageBox.critical(self, "エラー", f"プロジェクトファイルの読み込み中にエラーが発生しました:\n{e}\nファイルが破損している可能性があります。")
+
+    def _on_project_properties(self):
+        """プロジェクトのプロパティダイアログを表示する"""
+        dialog = ProjectPropertiesDialog(self, self.project)
+        if dialog.exec() == QDialog.Accepted:
+            self.set_modified(True)
+
+    def _on_about(self):
+        """バージョン情報を表示する"""
+        dialog = AboutDialog(self)
+        dialog.exec()
+
+    def _on_edit_lines_stations(self):
+        """路線・駅情報編集ダイアログを表示する"""
+        dialog = LineStationEditorDialog(self, self.project)
+        dialog.exec()
+        self._on_timetable_settings_changed()
+
+    def _on_edit_train_types(self):
+        """種別情報編集ダイアログを表示する"""
+        dialog = TrainTypeEditorDialog(self, self.project)
+        dialog.exec()
+        self._on_timetable_settings_changed()
+
+    def _on_edit_routes(self):
+        """運行系統編集ウィンドウを表示する"""
+        selected_items = self.route_list_widget.selectedItems()
+        initial_route_id = selected_items[0].data(Qt.UserRole) if selected_items else None
+
+        dialog = RouteEditorDialog(self, self.project, initial_route_id)
+        dialog.exec()
+        self._populate_route_list()
+        
+        # 運行系統が存在し、かつ何も選択されていない場合は最初の運行系統を選択する
+        if self.route_list_widget.count() > 0 and not self.route_list_widget.selectedItems():
+            self.route_list_widget.setCurrentRow(0)
+
+        self._on_timetable_settings_changed()
+
+    def _on_edit_diagrams(self):
+        """運転ダイヤ情報編集ウィンドウを表示する"""
+        selected_items = self.diagram_list_widget.selectedItems()
+        initial_diagram_id = selected_items[0].data(Qt.UserRole) if selected_items else None
+
+        dialog = DiagramEditorDialog(self, self.project, initial_diagram_id)
+        dialog.exec()
+        self._populate_diagram_list()
+        
+        # ダイヤが存在し、かつ何も選択されていない場合は最初のダイヤを選択する
+        if self.diagram_list_widget.count() > 0 and not self.diagram_list_widget.selectedItems():
+            self.diagram_list_widget.setCurrentRow(0)
+
+        self._on_timetable_settings_changed()
+
+    def _on_diagram_selected_in_main_window(self):
+        """メインウィンドウのダイヤリストで選択が変更されたときに表示を更新する"""
+        self._on_timetable_settings_changed()
+
+    def _on_timetable_settings_changed(self):
+        """サイドバーの選択やタブの切り替え時に、時刻表テーブルの表示内容を更新する"""
+        if not self.project.routes or not self.project.diagrams:
+            self.right_stack.setCurrentIndex(1)
+        else:
+            self.right_stack.setCurrentIndex(0)
+
+        # タブのインデックスに基づいて表示エリア（スタックドウィジェット）を切り替える
+        tab_index = self.direction_tab_bar.currentIndex()
+        if tab_index == 2:
+            self.timetable_content_stack.setCurrentIndex(1)
+            # ダイヤグラムタブ選択時
+            # 運行系統リストの有効/無効は路線選択コンボボックスの状態に応じる
+            self._update_diagram_line_combo()
+            is_route_selected = (self.diagram_line_combo.currentData() == "route")
+            self.route_list_widget.setEnabled(is_route_selected)
+        elif tab_index == 3:
+            self.timetable_content_stack.setCurrentIndex(2)
+            # "車両運用表"タブが選択されたときは運行系統リストを無効化
+            self.route_list_widget.setEnabled(False)
+        else:
+            self.timetable_content_stack.setCurrentIndex(0)
+            # 時刻表タブが選択されたときは運行系統リストを有効化
+            self.route_list_widget.setEnabled(True)
+
+        route_item = self.route_list_widget.currentItem()
+        diagram_item = self.diagram_list_widget.currentItem()
+        
+        route_id = route_item.data(Qt.UserRole) if route_item else None
+        diagram_id = diagram_item.data(Qt.UserRole) if diagram_item else None
+        
+        # 方面の切り替え（「ダイヤグラム」「車両運用表」タブ選択時は仮に outbound と扱う）
+        direction = "inbound" if tab_index == 1 else "outbound"
+        
+        self.timetable_model.update_data(route_id, diagram_id, direction)
+
+        if tab_index == 2:
+            self._update_diagram_view()
+        elif tab_index == 3:
+            self._update_op_group_combo()
+            self.timeline_header_view.horizontalScrollBar().setValue(
+                self.timeline_view.horizontalScrollBar().value()
+            )
+
+    def _get_matching_train_columns(self, query: str):
+        """検索文字列に一致する列車番号を持つ列インデックスのリストを返す"""
+        query = query.strip()
+        if not query:
+            return []
+        
+        matches = []
+        for col in range(self.timetable_model.columnCount()):
+            num = str(self.timetable_model.data(self.timetable_model.index(0, col), Qt.DisplayRole) or "").strip()
+            if query in num:
+                matches.append(col)
+        return matches
+
+    def _update_train_search_state(self, auto_select_first=False):
+        """検索ボックスの入力状態に基づいてラベルとボタン状態を更新する"""
+        query = self.train_search_edit.text().strip()
+        if not query:
+            self.train_search_label.setText("")
+            self.train_search_label.setStyleSheet("font-size: 12px; color: #555555;")
+            self.btn_search_prev.setEnabled(False)
+            self.btn_search_next.setEnabled(False)
+            return
+
+        matches = self._get_matching_train_columns(query)
+        total = len(matches)
+
+        if total == 0:
+            self.train_search_label.setText("該当無し")
+            self.train_search_label.setStyleSheet("font-size: 12px; color: #cc3333;")
+            self.btn_search_prev.setEnabled(False)
+            self.btn_search_next.setEnabled(False)
+        else:
+            self.btn_search_prev.setEnabled(True)
+            self.btn_search_next.setEnabled(True)
+            current_col = self.timetable_view.currentIndex().column()
+            
+            if auto_select_first:
+                target_col = matches[0]
+                self._select_train_column(target_col)
+                current_rank = 1
+            else:
+                if current_col in matches:
+                    current_rank = matches.index(current_col) + 1
+                else:
+                    current_rank = "-"
+
+            self.train_search_label.setText(f"{current_rank}/{total}")
+            self.train_search_label.setStyleSheet("font-size: 12px; color: #333333;")
+
+    def _select_train_column(self, col: int):
+        """指定した列の列車番号セル（行0）を選択してスクロールする"""
+        idx = self.timetable_model.index(0, col)
+        if idx.isValid():
+            self.timetable_view.setCurrentIndex(idx)
+            self.timetable_view.scrollTo(idx, QAbstractItemView.PositionAtCenter)
+
+    def _on_train_search_text_changed(self, text: str):
+        """列車番号検索テキストが変更されたときの処理"""
+        self._update_train_search_state(auto_select_first=True)
+
+    def _on_timetable_cell_current_changed(self, current, previous):
+        """時刻表テーブルのセル選択が変更されたときに検索結果ラベルの現在位置を更新する"""
+        query = self.train_search_edit.text().strip()
+        if not query:
+            return
+        matches = self._get_matching_train_columns(query)
+        total = len(matches)
+        if total == 0:
+            return
+        current_col = current.column()
+        if current_col in matches:
+            current_rank = matches.index(current_col) + 1
+        else:
+            current_rank = "-"
+        self.train_search_label.setText(f"{current_rank}/{total}")
+
+    def _on_search_next_clicked(self):
+        """左移動ボタンがクリックされたときの処理"""
+        query = self.train_search_edit.text().strip()
+        if not query:
+            return
+        matches = self._get_matching_train_columns(query)
+        if not matches:
+            return
+
+        current_col = self.timetable_view.currentIndex().column()
+        # 現在選択中のセルより後(右側)にある最初の列車
+        next_cols = [c for c in matches if c > current_col]
+        if next_cols:
+            target_col = next_cols[0]
+        else:
+            # 検索結果の最後の列車以降のセルが選択されている場合は検索結果の最初に戻る
+            target_col = matches[0]
+
+        self._select_train_column(target_col)
+
+    def _on_search_prev_clicked(self):
+        """右移動ボタンがクリックされたときの処理"""
+        query = self.train_search_edit.text().strip()
+        if not query:
+            return
+        matches = self._get_matching_train_columns(query)
+        if not matches:
+            return
+
+        current_col = self.timetable_view.currentIndex().column()
+        # 現在選択中のセルより前(左側)にある最後の列車
+        prev_cols = [c for c in matches if c < current_col]
+        if prev_cols:
+            target_col = prev_cols[-1]
+        else:
+            # 検索結果の最初の列車以前のセルが選択されている場合は検索結果の最後に戻る
+            target_col = matches[-1]
+
+        self._select_train_column(target_col)
+
+    def _update_op_group_combo(self):
+        """選択されているダイヤに応じて運用グループのコンボボックス表示内容を更新する"""
+        diagram_item = self.diagram_list_widget.currentItem()
+        diagram_id = diagram_item.data(Qt.UserRole) if diagram_item else None
+        
+        diagram = self.project.diagrams.get(diagram_id, {}) if diagram_id else {}
+        op_groups_order = diagram.get("operation_groups_order", [])
+        op_groups = diagram.get("operation_groups", {})
+
+        current_og_id = self.op_group_combo.currentData()
+
+        self.op_group_combo.blockSignals(True)
+        self.op_group_combo.clear()
+        
+        if not op_groups_order:
+            self.op_group_combo.setEnabled(False)
+        else:
+            self.op_group_combo.setEnabled(True)
+            for og_id in op_groups_order:
+                og = op_groups.get(og_id, {})
+                og_name = og.get("operation_group_name", "")
+                self.op_group_combo.addItem(og_name, og_id)
+            
+            # 以前選択していたIDがあれば再選択
+            idx = self.op_group_combo.findData(current_og_id)
+            if idx >= 0:
+                self.op_group_combo.setCurrentIndex(idx)
+            else:
+                self.op_group_combo.setCurrentIndex(0)
+
+        self.op_group_combo.blockSignals(False)
+
+        self._update_op_list_widget()
+
+    def _on_operation_group_changed(self, index: int):
+        """運用グループのコンボボックス選択が変化したときにリストを更新する"""
+        self._update_op_list_widget()
+
+    def _update_op_list_widget(self):
+        """コンボボックスで選択中の運用グループに属する運用番号をリスト表示する"""
+        self.op_list_widget.clear()
+        
+        diagram_item = self.diagram_list_widget.currentItem()
+        diagram_id = diagram_item.data(Qt.UserRole) if diagram_item else None
+        
+        og_id = self.op_group_combo.currentData()
+
+        if diagram_id:
+            diagram = self.project.diagrams.get(diagram_id, {})
+            op_groups = diagram.get("operation_groups", {})
+            operations = diagram.get("operations", {})
+
+            if og_id and og_id in op_groups:
+                og = op_groups[og_id]
+                op_ids = og.get("operations", [])
+                for op_id in op_ids:
+                    op = operations.get(op_id, {})
+                    op_num = op.get("operation_number", "")
+                    car_count = op.get("car_count", 0)
+                    start_loc = op.get("start_location", "")
+                    if not start_loc:
+                        start_loc = "？"
+                    start_track = op.get("start_track")
+                    end_loc = op.get("end_location", "")
+                    if not end_loc:
+                        end_loc = "？"
+                    end_track = op.get("end_track")
+
+                    # 出庫表示: 出庫場所名 (発着番線等があれば空白区切りで付加)
+                    start_text = f"{start_loc}<span style='font-size: 10px; color: gray;'>({start_track})</span>".strip() if start_track else start_loc
+                    # 入庫表示: 入庫場所名 (発着番線等があれば空白区切りで付加)
+                    end_text = f"{end_loc}<span style='font-size: 10px; color: gray;'>({end_track})</span>".strip() if end_track else end_loc
+
+                    # 出入庫時刻の取得 (hh:mm - hh:mm, Noneのときは --:--)
+                    start_time_str = op.get("start_time")
+                    if start_time_str:
+                        try:
+                            parts = start_time_str.split(":")
+                            start_time_disp = f"{int(parts[0]):02d}:{int(parts[1]):02d}"
+                        except (ValueError, IndexError):
+                            start_time_disp = "--:--"
+                    else:
+                        start_time_disp = "--:--"
+
+                    end_time_str = op.get("end_time")
+                    if end_time_str:
+                        try:
+                            parts = end_time_str.split(":")
+                            end_time_disp = f"{int(parts[0]):02d}:{int(parts[1]):02d}"
+                        except (ValueError, IndexError):
+                            end_time_disp = "--:--"
+                    else:
+                        end_time_disp = "--:--"
+
+                    time_text = f"{start_time_disp} - {end_time_disp}"
+
+                    item = QListWidgetItem()
+                    item.setSizeHint(QSize(240, 70))
+                    item_widget = QWidget()
+                    item_layout = QHBoxLayout(item_widget)
+                    item_layout.setContentsMargins(0, 0, 0, 0)
+                    item_layout.setSpacing(0)
+
+                    main_color = op.get("main_color", "#ffffff")
+
+                    # 左側ラベル: 1行目 運用番号 (14px), 2行目 所定両数 (12px, グレー)
+                    left_label = QLabel(f"<b style='font-size: 14px; text-decoration: underline;'>{op_num}</b><br/><span style='font-size: 12px; color: gray;'>({car_count}両)</span>")
+                    left_label.setAlignment(Qt.AlignCenter | Qt.AlignVCenter)
+                    left_label.setStyleSheet(f"background-color: {main_color};")
+                    left_label.setFixedWidth(100)
+                    left_label.setCursor(Qt.PointingHandCursor)
+
+                    def make_click_handler(d_id, g_id, o_id):
+                        def mouse_press(event):
+                            if event.button() == Qt.LeftButton:
+                                self._open_operation_editor(d_id, g_id, o_id)
+                        return mouse_press
+
+                    left_label.mousePressEvent = make_click_handler(diagram_id, og_id, op_id)
+
+                    # 右側ラベル: 1行目 出庫場所等, 2行目 入庫場所等, 3行目 出入庫時間
+                    right_label = QLabel(f"○{start_text}<br/>△{end_text}<br/>{time_text}")
+                    right_label.setAlignment(Qt.AlignCenter | Qt.AlignVCenter)
+                    right_label.setStyleSheet("background-color: #f7f7f7;")
+                    right_label.setFixedWidth(140)
+
+                    item_layout.addWidget(left_label)
+                    item_layout.addWidget(right_label)
+
+                    self.op_list_widget.addItem(item)
+                    self.op_list_widget.setItemWidget(item, item_widget)
+
+        self.timeline_view.update_timeline(self.project, diagram_id, og_id)
+        self._sync_op_list_viewport_margin()
+
+
+    def _sync_op_list_viewport_margin(self):
+        """運用リストウィジェットの底面マージンを運用表の水平スクロールバー高さに合わせ、見出しシーンの幅に垂直スクロールバー幅を反映する"""
+        h_bar = self.timeline_view.horizontalScrollBar()
+        is_h_visible = (self.timeline_view.horizontalScrollBarPolicy() == Qt.ScrollBarAlwaysOn) or h_bar.isVisible()
+        margin_bottom = h_bar.height() if is_h_visible else 0
+        self.op_list_widget.setViewportMargins(0, 0, 0, margin_bottom)
+
+        v_bar = self.timeline_view.verticalScrollBar()
+        # シーン高さとビューポート高さから垂直スクロールバーの必要有無を動的に判定
+        scene_height = self.timeline_view.scene.sceneRect().height() if self.timeline_view.scene else 0
+        viewport_height = self.timeline_view.viewport().height()
+        is_v_needed = (self.timeline_view.verticalScrollBarPolicy() == Qt.ScrollBarAlwaysOn) or (
+            self.timeline_view.verticalScrollBarPolicy() != Qt.ScrollBarAlwaysOff and scene_height > viewport_height and viewport_height > 0
+        )
+        right_margin = v_bar.width() if is_v_needed else 0
+        self.timeline_header_view.update_header(right_margin)
+
+
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._sync_op_list_viewport_margin()
+
+    def _open_operation_editor(self, diagram_id: str, group_id: str = None, op_id: str = None):
+        """指定した運用を選択した状態で車両運用情報編集ダイアログを開く"""
+        dialog = VehicleOperationEditorDialog(self, self.project, diagram_id, group_id, op_id)
+        dialog.exec()
+        self._update_op_group_combo()
+
+    def _on_edit_operations_clicked(self):
+        """運用表上部の編集ボタンを押したときに車両運用情報編集ダイアログを開く"""
+        diagram_item = self.diagram_list_widget.currentItem()
+        diagram_id = diagram_item.data(Qt.UserRole) if diagram_item else None
+        if not diagram_id:
+            return
+
+        initial_group_id = self.op_group_combo.currentData()
+        self._open_operation_editor(diagram_id, initial_group_id)
+
+    def _on_diagrams_reordered(self, parent, start, end, destination, row):
+        """サイドバーでの運転ダイヤの並び替えをプロジェクトデータに反映する"""
+        new_order = []
+        for i in range(self.diagram_list_widget.count()):
+            item = self.diagram_list_widget.item(i)
+            new_order.append(item.data(Qt.UserRole))
+        
+        self.project.diagrams_order = new_order
+        self.set_modified(True)
+        self._on_timetable_settings_changed()
+
+
+    def _on_routes_reordered(self, parent, start, end, destination, row):
+        """サイドバーでの運行系統の並び替えをプロジェクトデータに反映する"""
+        new_order = []
+        for i in range(self.route_list_widget.count()):
+            item = self.route_list_widget.item(i)
+            new_order.append(item.data(Qt.UserRole))
+        
+        self.project.routes_order = new_order
+        self.set_modified(True)
+        self._on_timetable_settings_changed()
+
+    def _update_diagram_line_combo(self):
+        """ダイヤグラム上部の路線選択コンボボックスの選択肢を更新する"""
+        current_data = self.diagram_line_combo.currentData()
+
+        self.diagram_line_combo.blockSignals(True)
+        self.diagram_line_combo.clear()
+
+        # 選択肢1: 「選択中の運行系統」
+        self.diagram_line_combo.addItem("選択中の運行系統", "route")
+
+        # 選択肢2以降: プロジェクトデータに登録されている各路線
+        for lid in self.project.lines_order:
+            line = self.project.lines.get(lid, {})
+            line_name = line.get("line_name", lid)
+            self.diagram_line_combo.addItem(line_name, lid)
+
+        # 以前選択していた値があれば再選択
+        if current_data is not None:
+            idx = self.diagram_line_combo.findData(current_data)
+            if idx >= 0:
+                self.diagram_line_combo.setCurrentIndex(idx)
+            else:
+                self.diagram_line_combo.setCurrentIndex(0)
+        else:
+            self.diagram_line_combo.setCurrentIndex(0)
+
+        self.diagram_line_combo.blockSignals(False)
+
+    def _on_diagram_line_combo_changed(self, index: int):
+        """ダイヤグラム上部の路線選択コンボボックスの変更時"""
+        selected_target = self.diagram_line_combo.currentData()
+        # 「選択中の運行系統」が選択されている場合は運行系統リストを有効化、それ以外は無効化
+        is_route_selected = (selected_target == "route")
+        self.route_list_widget.setEnabled(is_route_selected)
+        self._update_diagram_view()
+
+    def _get_timeline_scale_x(self) -> float:
+        """選択中の運用ガントチャート表示幅に応じたスケール値 (px/分) を返す"""
+        key = self.timeline_width_combo.currentData() if hasattr(self, "timeline_width_combo") else "standard"
+        mapping = {
+            "narrow": 1.0,
+            "standard": 2.0,
+            "slightly_wide": 3.0,
+            "wide": 4.0
+        }
+        return mapping.get(key, 2.0)
+
+    def _get_diagram_scale_x(self) -> float:
+        """選択中のダイヤグラム表示幅に応じたスケール値 (px/分) を返す"""
+        key = self.diagram_width_combo.currentData() if hasattr(self, "diagram_width_combo") else "standard"
+        mapping = {
+            "narrow": 3.0,
+            "standard": 6.0,
+            "slightly_wide": 15.0,
+            "wide": 30.0
+        }
+        return mapping.get(key, 6.0)
+
+    def _get_diagram_scale_y(self) -> float:
+        """選択中のダイヤグラム表示高さに応じたスケール値 (px/秒) を返す"""
+        key = self.diagram_height_combo.currentData() if hasattr(self, "diagram_height_combo") else "standard"
+        mapping = {
+            "narrow": 1.0 / 6.0,
+            "standard": 1.0 / 3.0,
+            "slightly_wide": 1.0 / 2.0,
+            "wide": 1.0
+        }
+        return mapping.get(key, 1.0 / 3.0)
+
+    def _on_timeline_width_changed(self, index: int):
+        """運用ガントチャートの表示幅コンボボックス変更時"""
+        key = self.timeline_width_combo.currentData()
+        if key:
+            self.app_settings.save_timeline_width_scale(key)
+        scale_x = self._get_timeline_scale_x()
+        self.timeline_view.scene.set_scale_x(scale_x)
+        self.timeline_header_view.scene.set_scale_x(scale_x)
+        self._update_op_list_widget()
+        self._sync_op_list_viewport_margin()
+
+    def _on_diagram_width_changed(self, index: int):
+        """ダイヤグラムの表示幅コンボボックス変更時"""
+        key = self.diagram_width_combo.currentData()
+        if key:
+            self.app_settings.save_diagram_width_scale(key)
+        self._update_diagram_view()
+
+    def _on_diagram_height_changed(self, index: int):
+        """ダイヤグラムの表示高さコンボボックス変更時"""
+        key = self.diagram_height_combo.currentData()
+        if key:
+            self.app_settings.save_diagram_height_scale(key)
+        self._update_diagram_view()
+
+    def _update_diagram_view(self):
+        """ダイヤグラムビューの描画内容を更新する"""
+        selected_target = self.diagram_line_combo.currentData() or "route"
+        
+        route_item = self.route_list_widget.currentItem()
+        diagram_item = self.diagram_list_widget.currentItem()
+        
+        route_id = route_item.data(Qt.UserRole) if route_item else None
+        diagram_id = diagram_item.data(Qt.UserRole) if diagram_item else None
+
+        scale_x = self._get_diagram_scale_x()
+        scale_y = self._get_diagram_scale_y()
+
+        self.diagram_view.scene.set_scales(scale_x, scale_y)
+        self.diagram_header_view.scene.set_scale_x(scale_x)
+
+        stations_data = self.diagram_view.update_diagram(self.project, selected_target, route_id, diagram_id)
+        self.diagram_header_view.update_header()
+        self.diagram_station_view.update_stations(self.project, stations_data)
+
+        # 4時0分の縦線（4 * 60 * scale_x px）が表示領域の左端になる位置にスクロール
+        scroll_pos = int(4 * 60 * scale_x)
+        self.diagram_view.horizontalScrollBar().setValue(scroll_pos)
+        self.diagram_header_view.horizontalScrollBar().setValue(scroll_pos)
 
 
 # アプリ起動処理
 def main():
     app = QApplication(sys.argv)
 
-    window = MainWindow()
+    # アプリケーションアイコンの設定
+    app.setWindowIcon(QIcon(":/assets/app_icon.ico"))
+
+    # コマンドライン引数でファイルパスが指定されている場合はロード、
+    # そうでない場合は新規プロジェクトを生成
+    filepath = sys.argv[1] if len(sys.argv) > 1 else None
+    if filepath:
+        try:
+            project = load_project(filepath)
+        except SchemaVersionError:
+            project = OptDiaProject()
+            filepath = None
+        except Exception:
+            QMessageBox.critical(None, "エラー", "このファイルは破損しています")
+            project = OptDiaProject()
+            filepath = None
+    else:
+        project = OptDiaProject()
+
+    window = MainWindow(project, filepath)
 
     window.show()
     sys.exit(app.exec())
