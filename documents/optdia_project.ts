@@ -6,7 +6,7 @@
  */
 
 
-// 仕様バージョン 2026.06.001
+// 仕様バージョン 2026.09.001
 
 // OptDiaでは、鉄道ダイヤグラムデータを以下のオブジェクト「optdia_project」に適合するJSON文字列として、拡張子「.optdia」のファイルに保存する。
 // 「optdia_project」オブジェクトに適合するJSON文字列をgzip圧縮して保存したファイルも利用可能であり、その場合の拡張子は「.optd」となる。
@@ -101,7 +101,7 @@ interface optdia_route {
 
 // 路線の部分区間情報を格納するオブジェクト
 interface optdia_line_segment {
-    segment_id: string; // 部分区間ID(ランダムな英数字8文字)
+    segment_id: string; // 部分区間ID(ランダムな英数字12文字)
     line_id: string; // 路線ID
     start_station: string; // 区間の始点となる駅のID
     end_station: string; // 区間の終点となる駅のID(始点と終点の位置関係が路線情報での駅の順序と逆の場合は、路線が逆向きで経路に配置されていることを意味する)
@@ -129,7 +129,7 @@ interface optdia_route_diagram_trains {
 
 // 列車種別情報を格納するオブジェクト
 interface optdia_train_type {
-    train_type_id: string; // 列車種別ID(ランダムな英数字10文字)
+    train_type_id: string; // 列車種別ID(ランダムな英数字12文字)
     train_type_name: string; // 列車種別名
     train_type_short_name: string; // 列車種別の短縮名
     train_name: string | null;// 列車愛称
@@ -193,7 +193,7 @@ interface optdia_train_stop {
 
 // 車両運用IDと車両運用情報のペアを格納するオブジェクト
 interface optdia_operation_dict {
-    [operation_id: string]: optdia_operation; // 各車両運用の情報(下記、キーはランダムな英数字12文字)
+    [operation_id: string]: optdia_operation; // 各車両運用の情報(下記、キーはランダムな英数字16文字)
 }
 
 
@@ -234,7 +234,7 @@ interface optdia_train_operation {
 
 // 車両運用グループの情報を格納するオブジェクト
 interface optdia_operation_group {
-    operation_group_id: string; // 運用グループID(ランダムな英数字8文字)
+    operation_group_id: string; // 運用グループID(ランダムな英数字12文字)
     operation_group_name: string; // 運用グループ名
     main_color: string; // 運用グループの表示色(デフォルト値は #ffffff)
     operations: string[]; // グループに属する車両運用のIDを表示順に配列で

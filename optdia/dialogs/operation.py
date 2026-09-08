@@ -1,12 +1,10 @@
-import random
-import string
 from PySide6.QtCore import Qt, QByteArray, QDataStream, QIODevice
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QDialog, QHBoxLayout, QVBoxLayout, QLabel, QListWidget, QListWidgetItem, QStackedWidget, QTabWidget, QWidget, QPushButton, QLineEdit, QColorDialog,
     QGroupBox, QSpinBox, QPlainTextEdit, QFormLayout, QScrollArea, QAbstractItemView
 )
-from core.project import OptDiaProject
+from core.project import OptDiaProject, generate_random_id
 from common.gui_utils import create_color_square_pixmap
 from common.widgets import ColorPickerWidget
 
@@ -411,10 +409,9 @@ class VehicleOperationEditorDialog(QDialog):
         operation_groups = diagram.get("operation_groups", {})
         operation_groups_order = diagram.get("operation_groups_order", [])
 
-        # ランダムな英数字8文字のIDを生成
-        chars = string.ascii_letters + string.digits
+        # ランダムな英数字12文字のIDを生成
         while True:
-            new_id = ''.join(random.choices(chars, k=8))
+            new_id = generate_random_id(12)
             if new_id not in operation_groups:
                 break
 
@@ -903,11 +900,11 @@ class VehicleOperationEditorDialog(QDialog):
         if not og:
             return
 
-        # ランダムな英数字10文字のIDを生成
+        # ランダムな英数字16文字のIDを生成
         chars = string.ascii_letters + string.digits
         operations = diagram.get("operations", {})
         while True:
-            new_op_id = ''.join(random.choices(chars, k=10))
+            new_op_id = generate_random_id()
             if new_op_id not in operations:
                 break
 

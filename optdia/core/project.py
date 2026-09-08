@@ -1,16 +1,24 @@
 import copy
-import json
 import os
+import json
+import random
+import string
 import gzip
 from PySide6.QtWidgets import QMessageBox
 
 # プロジェクトファイルの仕様バージョン (optdia_project.ts の定義に準拠)
-PROJECT_SCHEMA_VERSION = "2026.06.001"
+PROJECT_SCHEMA_VERSION = "2026.09.001"
 
 
 class SchemaVersionError(Exception):
     """プロジェクトファイルの仕様バージョンがアプリケーションより新しい場合に発生する例外"""
     pass
+
+
+# ランダムな英数字からなるIDを生成する関数
+def generate_random_id(id_length:int = 16) -> str:
+    chars = string.ascii_letters + string.digits
+    return "".join(random.choices(chars, k=id_length))
 
 
 def is_newer_schema_version(file_version: str, current_version: str) -> bool:
@@ -24,6 +32,7 @@ def is_newer_schema_version(file_version: str, current_version: str) -> bool:
         return file_parts > curr_parts
     except (ValueError, TypeError, AttributeError):
         return False
+
 
 class OptDiaProject:
     """
@@ -60,11 +69,6 @@ class OptDiaProject:
         # 運行系統 (routes: optdia_route[])
         self.routes, self.routes_order = self._split_collection(entities.get("routes", []), "route_id")
         for route in self.routes.values():
-            # line_segments の各要素に segment_id が存在しない場合はランダムな英数字8文字を付与
-            for seg in route.get("line_segments", []):
-                if not seg.get("segment_id"):
-                    seg["segment_id"] = self._generate_segment_id()
-
             # 定義に基づき、運行系統が直接保持する列車辞書(optdia_train_dict)を確保
             route.setdefault("inbound_trains", {})
             route.setdefault("outbound_trains", {})
@@ -92,10 +96,10 @@ class OptDiaProject:
             )
 
         # 期間別の運行区分情報 (calendar_periods: optdia_calendar_period[])
-        self.calendar_periods = copy.deepcopy(entities.get("calendar_periods", []))
+        self.calendar_periods = entities.get("calendar_periods", [])
 
         # 例外の運行日情報 (date_exceptions: optdia_date_exceptions)
-        self.date_exceptions = copy.deepcopy(entities.get("date_exceptions", {}))
+        self.date_exceptions = entities.get("date_exceptions", {})
 
         # 各マスタ列車 (optdia_train) に、その列車が運転されるダイヤのIDを配列として保持する一時キーを追加
         # このキーは保存時には除去される
@@ -128,14 +132,6 @@ class OptDiaProject:
                             station = self.stations.get(station_id, {})
                             if not station.get("show_arrival_time", False):
                                 last_stop["departure_time"] = last_stop.get("arrival_time")
-
-    @staticmethod
-    def _generate_segment_id():
-        """ランダムな英数字8文字からなる一意なIDを生成する"""
-        import string
-        import random
-        chars = string.ascii_letters + string.digits
-        return "".join(random.choices(chars, k=8))
 
     def _normalize_train_stops_for_save(self, stops):
         """保存用に、不要なデータの削除と、同一駅・同一区間の連続するデータの統合を行う"""

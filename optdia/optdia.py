@@ -16,7 +16,7 @@ import assets_rc
 from version import APP_NAME, __version__
 from core.project import OptDiaProject, load_project, SchemaVersionError
 from core.history_manager import HistoryManager
-from settings import AppSettings
+from core.settings import AppSettings
 from common.gui_utils import HtmlDelegate, create_color_square_pixmap
 from common.widgets import LineSampleWidget
 from dialogs.route import AddRouteDialog, SelectSegmentDialog, SplitSegmentDialog, RouteEditorDialog
@@ -308,24 +308,48 @@ class MainWindow(QMainWindow):
         op_area_layout.setContentsMargins(0, 0, 0, 0)
         op_area_layout.setSpacing(0)
 
-        # 運用表示エリアの上部コントロールバー (高さ50px)
+        # 運用表示エリアの上部コントロールバー (高さ40px)
         self.op_control_bar = QWidget()
-        self.op_control_bar.setFixedHeight(50)
+        self.op_control_bar.setFixedHeight(40)
         self.op_control_bar.setStyleSheet("background-color: #f7f7f7; border-bottom: 1px solid #dddddd;")
         op_control_layout = QHBoxLayout(self.op_control_bar)
         op_control_layout.setContentsMargins(10, 0, 10, 0)
         op_control_layout.setSpacing(10)
 
         self.op_group_combo = QComboBox()
+        self.op_group_combo.setFixedWidth(280)
         self.op_group_combo.setFixedHeight(32)
         self.op_group_combo.currentIndexChanged.connect(self._on_operation_group_changed)
-        op_control_layout.addWidget(self.op_group_combo, stretch=1)
+        op_control_layout.addWidget(self.op_group_combo)
 
         self.btn_edit_operations = QPushButton("編集")
         self.btn_edit_operations.setFixedWidth(60)
         self.btn_edit_operations.setStyleSheet("QPushButton { border: none; text-decoration: underline; background-color: transparent; font-size: 14px; }")
         self.btn_edit_operations.clicked.connect(self._on_edit_operations_clicked)
         op_control_layout.addWidget(self.btn_edit_operations)
+        
+        op_control_layout.addStretch(1)
+
+        # 運用表示エリアの表示幅コンボボックス (狭め: 1px/分, 標準: 2px/分, やや広め: 3px/分, 広め: 4px/分)
+        lbl_op_width = QLabel("表示幅:")
+        lbl_op_width.setStyleSheet("font-size: 14px; border: none;")
+        op_control_layout.addWidget(lbl_op_width)
+
+        self.timeline_width_combo = QComboBox()
+        self.timeline_width_combo.setFixedWidth(80)
+        self.timeline_width_combo.addItem("狭め", "narrow")
+        self.timeline_width_combo.addItem("標準", "standard")
+        self.timeline_width_combo.addItem("やや広め", "slightly_wide")
+        self.timeline_width_combo.addItem("広め", "wide")
+        
+        saved_timeline_width = self.app_settings.load_timeline_width_scale()
+        idx_tw = self.timeline_width_combo.findData(saved_timeline_width)
+        if idx_tw >= 0:
+            self.timeline_width_combo.setCurrentIndex(idx_tw)
+        else:
+            self.timeline_width_combo.setCurrentIndex(1) # 標準
+        self.timeline_width_combo.currentIndexChanged.connect(self._on_timeline_width_changed)
+        op_control_layout.addWidget(self.timeline_width_combo)
 
         op_area_layout.addWidget(self.op_control_bar)
 
@@ -347,7 +371,9 @@ class MainWindow(QMainWindow):
         lbl_op_se.setAlignment(Qt.AlignCenter)
         lbl_op_se.setStyleSheet("font-size: 14px; font-weight: bold; border-right: 1px solid #dddddd;")
 
+        initial_timeline_scale = self._get_timeline_scale_x()
         self.timeline_header_view = TimelineHeaderView()
+        self.timeline_header_view.scene.set_scale_x(initial_timeline_scale)
 
         op_header_layout.addWidget(lbl_op_num)
         op_header_layout.addWidget(lbl_op_se)
@@ -383,6 +409,7 @@ class MainWindow(QMainWindow):
 
         # 運用ガントチャート
         self.timeline_view = TimelineView()
+        self.timeline_view.scene.set_scale_x(initial_timeline_scale)
         self.timeline_view.scene.set_history_manager(self.history_manager)
         op_body_layout.addWidget(self.timeline_view, stretch=1)
 
@@ -421,13 +448,55 @@ class MainWindow(QMainWindow):
         self.diagram_header_widget.setStyleSheet("background-color: #f7f7f7; border-bottom: 1px solid #dddddd;")
         diagram_header_layout = QHBoxLayout(self.diagram_header_widget)
         diagram_header_layout.setContentsMargins(10, 0, 10, 0)
-        diagram_header_layout.setSpacing(0)
+        diagram_header_layout.setSpacing(10)
 
         self.diagram_line_combo = QComboBox()
         self.diagram_line_combo.setFixedWidth(280)
         self.diagram_line_combo.currentIndexChanged.connect(self._on_diagram_line_combo_changed)
         diagram_header_layout.addWidget(self.diagram_line_combo)
         diagram_header_layout.addStretch(1)
+
+        # ダイヤグラム表示幅コンボボックス (狭め: 3px/分, 標準: 6px/分, やや広め: 15px/分, 広め: 30px/分)
+        lbl_diag_width = QLabel("表示幅:")
+        lbl_diag_width.setStyleSheet("font-size: 14px; border: none;")
+        diagram_header_layout.addWidget(lbl_diag_width)
+
+        self.diagram_width_combo = QComboBox()
+        self.diagram_width_combo.setFixedWidth(80)
+        self.diagram_width_combo.addItem("狭め", "narrow")
+        self.diagram_width_combo.addItem("標準", "standard")
+        self.diagram_width_combo.addItem("やや広め", "slightly_wide")
+        self.diagram_width_combo.addItem("広め", "wide")
+
+        saved_diag_width = self.app_settings.load_diagram_width_scale()
+        idx_dw = self.diagram_width_combo.findData(saved_diag_width)
+        if idx_dw >= 0:
+            self.diagram_width_combo.setCurrentIndex(idx_dw)
+        else:
+            self.diagram_width_combo.setCurrentIndex(1) # 標準
+        self.diagram_width_combo.currentIndexChanged.connect(self._on_diagram_width_changed)
+        diagram_header_layout.addWidget(self.diagram_width_combo)
+
+        # ダイヤグラム表示高さコンボボックス (狭め: 6秒/px, 標準: 3秒/px, やや広め: 2秒/px, 広め: 1秒/px)
+        lbl_diag_height = QLabel("表示高さ:")
+        lbl_diag_height.setStyleSheet("font-size: 14px; border: none;")
+        diagram_header_layout.addWidget(lbl_diag_height)
+
+        self.diagram_height_combo = QComboBox()
+        self.diagram_height_combo.setFixedWidth(80)
+        self.diagram_height_combo.addItem("狭め", "narrow")
+        self.diagram_height_combo.addItem("標準", "standard")
+        self.diagram_height_combo.addItem("やや広め", "slightly_wide")
+        self.diagram_height_combo.addItem("広め", "wide")
+
+        saved_diag_height = self.app_settings.load_diagram_height_scale()
+        idx_dh = self.diagram_height_combo.findData(saved_diag_height)
+        if idx_dh >= 0:
+            self.diagram_height_combo.setCurrentIndex(idx_dh)
+        else:
+            self.diagram_height_combo.setCurrentIndex(1) # 標準
+        self.diagram_height_combo.currentIndexChanged.connect(self._on_diagram_height_changed)
+        diagram_header_layout.addWidget(self.diagram_height_combo)
 
         diagram_area_layout.addWidget(self.diagram_header_widget)
 
@@ -1245,6 +1314,64 @@ class MainWindow(QMainWindow):
         self.route_list_widget.setEnabled(is_route_selected)
         self._update_diagram_view()
 
+    def _get_timeline_scale_x(self) -> float:
+        """選択中の運用ガントチャート表示幅に応じたスケール値 (px/分) を返す"""
+        key = self.timeline_width_combo.currentData() if hasattr(self, "timeline_width_combo") else "standard"
+        mapping = {
+            "narrow": 1.0,
+            "standard": 2.0,
+            "slightly_wide": 3.0,
+            "wide": 4.0
+        }
+        return mapping.get(key, 2.0)
+
+    def _get_diagram_scale_x(self) -> float:
+        """選択中のダイヤグラム表示幅に応じたスケール値 (px/分) を返す"""
+        key = self.diagram_width_combo.currentData() if hasattr(self, "diagram_width_combo") else "standard"
+        mapping = {
+            "narrow": 3.0,
+            "standard": 6.0,
+            "slightly_wide": 15.0,
+            "wide": 30.0
+        }
+        return mapping.get(key, 6.0)
+
+    def _get_diagram_scale_y(self) -> float:
+        """選択中のダイヤグラム表示高さに応じたスケール値 (px/秒) を返す"""
+        key = self.diagram_height_combo.currentData() if hasattr(self, "diagram_height_combo") else "standard"
+        mapping = {
+            "narrow": 1.0 / 6.0,
+            "standard": 1.0 / 3.0,
+            "slightly_wide": 1.0 / 2.0,
+            "wide": 1.0
+        }
+        return mapping.get(key, 1.0 / 3.0)
+
+    def _on_timeline_width_changed(self, index: int):
+        """運用ガントチャートの表示幅コンボボックス変更時"""
+        key = self.timeline_width_combo.currentData()
+        if key:
+            self.app_settings.save_timeline_width_scale(key)
+        scale_x = self._get_timeline_scale_x()
+        self.timeline_view.scene.set_scale_x(scale_x)
+        self.timeline_header_view.scene.set_scale_x(scale_x)
+        self._update_op_list_widget()
+        self._sync_op_list_viewport_margin()
+
+    def _on_diagram_width_changed(self, index: int):
+        """ダイヤグラムの表示幅コンボボックス変更時"""
+        key = self.diagram_width_combo.currentData()
+        if key:
+            self.app_settings.save_diagram_width_scale(key)
+        self._update_diagram_view()
+
+    def _on_diagram_height_changed(self, index: int):
+        """ダイヤグラムの表示高さコンボボックス変更時"""
+        key = self.diagram_height_combo.currentData()
+        if key:
+            self.app_settings.save_diagram_height_scale(key)
+        self._update_diagram_view()
+
     def _update_diagram_view(self):
         """ダイヤグラムビューの描画内容を更新する"""
         selected_target = self.diagram_line_combo.currentData() or "route"
@@ -1255,13 +1382,20 @@ class MainWindow(QMainWindow):
         route_id = route_item.data(Qt.UserRole) if route_item else None
         diagram_id = diagram_item.data(Qt.UserRole) if diagram_item else None
 
+        scale_x = self._get_diagram_scale_x()
+        scale_y = self._get_diagram_scale_y()
+
+        self.diagram_view.scene.set_scales(scale_x, scale_y)
+        self.diagram_header_view.scene.set_scale_x(scale_x)
+
         stations_data = self.diagram_view.update_diagram(self.project, selected_target, route_id, diagram_id)
         self.diagram_header_view.update_header()
         self.diagram_station_view.update_stations(self.project, stations_data)
 
-        # 4時0分の縦線（4 * 60 * 6 = 1440px）が表示領域の左端になる位置にスクロール
-        self.diagram_view.horizontalScrollBar().setValue(1440)
-        self.diagram_header_view.horizontalScrollBar().setValue(1440)
+        # 4時0分の縦線（4 * 60 * scale_x px）が表示領域の左端になる位置にスクロール
+        scroll_pos = int(4 * 60 * scale_x)
+        self.diagram_view.horizontalScrollBar().setValue(scroll_pos)
+        self.diagram_header_view.horizontalScrollBar().setValue(scroll_pos)
 
 
 # アプリ起動処理

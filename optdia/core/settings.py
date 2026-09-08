@@ -85,3 +85,27 @@ class AppSettings:
         if isinstance(colors, str):
             return [colors]
         return list(colors) if colors is not None else []
+
+    def save_timeline_width_scale(self, scale_key: str):
+        """運用ガントチャートの表示幅設定を保存する"""
+        self.settings.setValue("timeline/width_scale", scale_key)
+
+    def load_timeline_width_scale(self) -> str:
+        """運用ガントチャートの表示幅設定を読み込む（デフォルト: 'standard'）"""
+        return self.settings.value("timeline/width_scale", "standard")
+
+    def save_diagram_width_scale(self, scale_key: str):
+        """ダイヤグラムの表示幅設定を保存する"""
+        self.settings.setValue("diagram/width_scale", scale_key)
+
+    def load_diagram_width_scale(self) -> str:
+        """ダイヤグラムの表示幅設定を読み込む（デフォルト: 'standard'）"""
+        return self.settings.value("diagram/width_scale", "standard")
+
+    def save_diagram_height_scale(self, scale_key: str):
+        """ダイヤグラムの表示高さ設定を保存する"""
+        self.settings.setValue("diagram/height_scale", scale_key)
+
+    def load_diagram_height_scale(self) -> str:
+        """ダイヤグラムの表示高さ設定を読み込む（デフォルト: 'standard'）"""
+        return self.settings.value("diagram/height_scale", "standard")

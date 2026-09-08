@@ -1,5 +1,3 @@
-import random
-import string
 import copy
 from PySide6.QtCore import Qt, QModelIndex, QSize
 from PySide6.QtGui import QColor
@@ -9,7 +7,7 @@ from PySide6.QtWidgets import (
     QCheckBox, QPlainTextEdit, QMessageBox, QRadioButton, QButtonGroup, QSpinBox
 )
 from common.gui_utils import HtmlDelegate
-from core.project import OptDiaProject
+from core.project import OptDiaProject, generate_random_id
 from dialogs.operation import VehicleOperationEditorDialog
 
 # 列車を選択するためのポップアップダイアログ
@@ -1075,9 +1073,8 @@ def split_train_at_cell(parent, model, index):
 
     # 列車の分割
     # 1. 新しい列車IDを生成
-    chars = string.ascii_letters + string.digits
     while True:
-        new_train_id = "".join(random.choices(chars, k=16))
+        new_train_id = generate_random_id()
         if new_train_id not in m_trains:
             break
 
@@ -1256,9 +1253,8 @@ class DuplicateTrainWithConditionsDialog(QDialog):
 
 
 def _generate_unique_train_id(existing_ids) -> str:
-    chars = string.ascii_letters + string.digits
     while True:
-        tid = "".join(random.choices(chars, k=16))
+        tid = generate_random_id()
         if tid not in existing_ids:
             return tid
 

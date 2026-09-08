@@ -1,5 +1,3 @@
-import random
-import string
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
@@ -8,7 +6,7 @@ from PySide6.QtWidgets import (
     QListWidget, QListWidgetItem, QFrame, QScrollArea, QWidget
 )
 from common.gui_utils import HtmlDelegate
-
+from core.project import generate_random_id
 
 
 class RolloverMinuteSpinBox(QSpinBox):
@@ -511,9 +509,8 @@ class AddDeadheadDialog(QDialog):
         order = tbd.setdefault(order_key, [])
 
         # 列車IDの生成 (ランダムな16文字の英数字)
-        chars = string.ascii_letters + string.digits
         while True:
-            new_train_id = "".join(random.choices(chars, k=16))
+            new_train_id = generate_random_id()
             if new_train_id not in d_trains and new_train_id not in m_trains:
                 break
 

@@ -1,5 +1,3 @@
-import random
-import string
 from PySide6.QtCore import Qt, QEvent
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
@@ -8,7 +6,7 @@ from PySide6.QtWidgets import (
     QCheckBox, QColorDialog, QStackedWidget, QComboBox, QFormLayout,
     QWidget, QPushButton
 )
-from core.project import OptDiaProject
+from core.project import OptDiaProject, generate_random_id
 from common.gui_utils import HtmlDelegate, create_color_square_pixmap
 from common.widgets import LineSampleWidget, ColorPickerWidget
 
@@ -361,10 +359,9 @@ class TrainTypeEditorDialog(QDialog):
         """「種別の追加」ダイアログを表示し、データを生成する"""
         dialog = AddTrainTypeDialog(self)
         if dialog.exec() == QDialog.Accepted:
-            # ランダムな10文字のIDを生成
-            chars = string.ascii_letters + string.digits
+            # ランダムな12文字のIDを生成
             while True:
-                new_id = ''.join(random.choices(chars, k=10))
+                new_id = generate_random_id(12)
                 if new_id not in self.project.train_types:
                     break
 
@@ -409,9 +406,8 @@ class TrainTypeEditorDialog(QDialog):
             return
 
         # 新しいIDを生成
-        chars = string.ascii_letters + string.digits
         while True:
-            new_id = ''.join(random.choices(chars, k=10))
+            new_id = generate_random_id(12)
             if new_id not in self.project.train_types:
                 break
 

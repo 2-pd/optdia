@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
     QFrame, QColorDialog
 )
-from settings import AppSettings
+from core.settings import AppSettings
 from common.gui_utils import create_color_square_pixmap
 
 

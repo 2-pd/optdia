@@ -1,10 +1,8 @@
-import random
-import string
 import re
 import copy
 from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QTimer, Signal
 from PySide6.QtGui import QColor
-from core.project import OptDiaProject
+from core.project import OptDiaProject, generate_random_id
 from core.history_manager import HistoryManager
 from core.events import (
     BaseEvent, AddTrainEvent, RemoveTrainEvent, ReorderTrainsEvent, ChangeTrainNumberEvent,
@@ -311,10 +309,9 @@ class TimetableModel(QAbstractTableModel):
                 unsaved_count = sum(1 for tid in order if d_trains.get(tid, {}).get("to_be_saved") is False)
                 needed = 20 - unsaved_count
                 if needed > 0:
-                    chars = string.ascii_letters + string.digits
                     for _ in range(needed):
                         while True:
-                            new_id = "".join(random.choices(chars, k=16)) # 16文字のランダムな英数字からなる列車IDを生成
+                            new_id = generate_random_id() # 16文字のランダムな英数字からなる列車IDを生成
                             if new_id not in d_trains: break
                         # ダイヤ側に参照用オブジェクトを作成
                         d_trains[new_id] = {

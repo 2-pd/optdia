@@ -7,21 +7,27 @@ from PySide6.QtCore import Qt, QRectF
 class DiagramHeaderScene(QGraphicsScene):
     HEADER_HEIGHT = 20
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, scale_x: float = 6.0):
         super().__init__(parent)
+        self.scale_x = scale_x
         self.setBackgroundBrush(QBrush(QColor("#ffffff")))
         self.update_header()
 
+    def set_scale_x(self, scale_x: float):
+        if self.scale_x != scale_x:
+            self.scale_x = scale_x
+            self.update_header()
+
     def update_header(self):
         self.clear()
-        scene_w = 36 * 60 * 6 + 20 # 12980px(うち20pxはメインシーンの上下スクロールバーの幅として確保)
+        scene_w = 36 * 60 * self.scale_x + 20 # うち20pxはメインシーンの上下スクロールバーの幅として確保
         self.setSceneRect(0, 0, scene_w, self.HEADER_HEIGHT)
 
         font_hour = QFont()
         font_hour.setPixelSize(14)
 
         for hour in range(36): # 36時は描画不要
-            hour_x = hour * 60 * 6
+            hour_x = hour * 60 * self.scale_x
             text_str = str(hour)
             t_item = QGraphicsSimpleTextItem(text_str)
             t_item.setFont(font_hour)
@@ -97,13 +103,20 @@ class DiagramStationScene(QGraphicsScene):
 
 # 運行ダイヤグラムのメインシーン（右下）
 class DiagramScene(QGraphicsScene):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, scale_x: float = 6.0, scale_y: float = 1.0 / 3.0):
         super().__init__(parent)
         self.setBackgroundBrush(QBrush(QColor("#ffffff")))
         self.project = None
         self.selected_target = "route"  # "route" or line_id
         self.route_id = None
         self.diagram_id = None
+        self.scale_x = scale_x
+        self.scale_y = scale_y
+
+    def set_scales(self, scale_x: float, scale_y: float):
+        if self.scale_x != scale_x or self.scale_y != scale_y:
+            self.scale_x = scale_x
+            self.scale_y = scale_y
 
     def update_diagram(self, project, selected_target: str, route_id: str, diagram_id: str):
         """
@@ -126,7 +139,7 @@ class DiagramScene(QGraphicsScene):
         # 1. 表示対象の駅リストを構築
         stations_data = self._collect_station_positions()
 
-        # エラー（基準運転時分がNoneの駅がある場合、または駅が存在しない等）の判定
+        # エラー（基準運転時分の設定されていない駅がある場合、または駅が存在しない等）の判定
         if stations_data is None:
             # エラー文描画
             self._render_error_message(
@@ -140,11 +153,11 @@ class DiagramScene(QGraphicsScene):
             return []
 
         # 2. 軸とグリッドの描画
-        # 横軸: 0時から36時まで1分を6px
-        # 全体幅 = 36 * 60 * 6 = 12960px
+        # 横軸: 0時から36時まで1分をscale_x px
+        # 全体幅 = 36 * 60 * scale_x
         max_y = stations_data[-1]["y"]
         scene_h = max_y + 40
-        scene_w = 36 * 60 * 6
+        scene_w = 36 * 60 * self.scale_x
 
         self.setSceneRect(0, 0, scene_w, max(scene_h, 200))
 
@@ -240,8 +253,8 @@ class DiagramScene(QGraphicsScene):
                     diff = abs(abs_time - start_abs_time)
                     rel_time = accumulated_time + diff
 
-                    # 3秒を1px (上部余白40px)
-                    y = 40.0 + (rel_time / 3.0)
+                    # 基準運転時分(秒)に対しscale_y (上部余白40px)
+                    y = 40.0 + (rel_time * self.scale_y)
 
                     st_obj = self.project.stations.get(sid, {})
                     st_name = st_obj.get("station_name", sid)
@@ -279,7 +292,7 @@ class DiagramScene(QGraphicsScene):
                     return None
 
                 # 上部余白40px
-                y = 40.0 + (abs_time / 3.0)
+                y = 40.0 + (abs_time * self.scale_y)
                 st_obj = self.project.stations.get(sid, {})
                 st_name = st_obj.get("station_name", sid)
 
@@ -308,10 +321,6 @@ class DiagramScene(QGraphicsScene):
             line_item.setZValue(0)
 
     def _render_time_lines(self, max_y, total_scene_h):
-        # 横軸に時間のグリッドを0時から36時まで1分を6pxで計算して描画。
-        # 毎時5、15、25、35、45、55分の位置には色コード#ddddddの点線で幅1pxの縦線を表示する。
-        # 毎時10分、20分、30分、40分、50分の位置には色コード#ddddddで幅1pxの実線の縦線を表示する。
-        # 毎時0分の位置には色コード#aaaaaaで幅2pxの縦線を上下60pxの余白を空けて表示する。
         pen_5min = QPen(QColor("#dddddd"), 1)
         pen_5min.setStyle(Qt.DotLine)
 
@@ -324,7 +333,7 @@ class DiagramScene(QGraphicsScene):
 
         # 毎時0分の縦線: ビューの上端から下端まで (0 から total_scene_h)
         for hour in range(37):  # 0時から36時
-            hour_x = hour * 60 * 6
+            hour_x = hour * 60 * self.scale_x
 
             # 毎時0分の縦線 (上端から下端まで)
             line_item = self.addLine(hour_x, 0, hour_x, total_scene_h, pen_hour)
@@ -334,13 +343,13 @@ class DiagramScene(QGraphicsScene):
             if hour < 36:
                 # 毎時5、15、25、35、45、55分（点線）
                 for minute_step in [5, 15, 25, 35, 45, 55]:
-                    min_x = hour_x + minute_step * 6
+                    min_x = hour_x + minute_step * self.scale_x
                     m_line = self.addLine(min_x, top_y_grid, min_x, bottom_y_grid, pen_5min)
                     m_line.setZValue(0)
 
                 # 毎時10分、20分、30分、40分、50分（実線）
                 for minute_step in [10, 20, 30, 40, 50]:
-                    min_x = hour_x + minute_step * 6
+                    min_x = hour_x + minute_step * self.scale_x
                     m_line = self.addLine(min_x, top_y_grid, min_x, bottom_y_grid, pen_10min)
                     m_line.setZValue(0)
 
@@ -434,16 +443,16 @@ class DiagramScene(QGraphicsScene):
             y = target_entry["y"]
 
             if arr_sec is not None and dep_sec is not None:
-                x_arr = (arr_sec / 60.0) * 6.0
-                x_dep = (dep_sec / 60.0) * 6.0
+                x_arr = (arr_sec / 60.0) * self.scale_x
+                x_dep = (dep_sec / 60.0) * self.scale_x
                 current_subpath.append((x_arr, y))
                 if x_arr != x_dep:
                     current_subpath.append((x_dep, y))
             elif arr_sec is not None:
-                x_arr = (arr_sec / 60.0) * 6.0
+                x_arr = (arr_sec / 60.0) * self.scale_x
                 current_subpath.append((x_arr, y))
             elif dep_sec is not None:
-                x_dep = (dep_sec / 60.0) * 6.0
+                x_dep = (dep_sec / 60.0) * self.scale_x
                 current_subpath.append((x_dep, y))
 
             prev_seg_id = seg_id
@@ -516,16 +525,16 @@ class DiagramScene(QGraphicsScene):
                         y = station_y_map[sid]
 
                         if arr_sec is not None and dep_sec is not None:
-                            x_arr = (arr_sec / 60.0) * 6.0
-                            x_dep = (dep_sec / 60.0) * 6.0
+                            x_arr = (arr_sec / 60.0) * self.scale_x
+                            x_dep = (dep_sec / 60.0) * self.scale_x
                             current_subpath.append((x_arr, y))
                             if x_arr != x_dep:
                                 current_subpath.append((x_dep, y))
                         elif arr_sec is not None:
-                            x_arr = (arr_sec / 60.0) * 6.0
+                            x_arr = (arr_sec / 60.0) * self.scale_x
                             current_subpath.append((x_arr, y))
                         elif dep_sec is not None:
-                            x_dep = (dep_sec / 60.0) * 6.0
+                            x_dep = (dep_sec / 60.0) * self.scale_x
                             current_subpath.append((x_dep, y))
 
                     if len(current_subpath) >= 2:

@@ -1,11 +1,10 @@
 import csv
 import re
-import random
-import string
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QCheckBox, QPushButton, QMessageBox, QFileDialog, QLabel, QComboBox, QProgressDialog, QApplication
 )
 from PySide6.QtCore import Qt
+from core.project import generate_random_id
 
 # インポートオプションダイアログ
 class ImportCsvSettingsDialog(QDialog):
@@ -377,8 +376,6 @@ def import_timetable_from_csv(parent_window):
         imported_train_ids = []
         imported_train_subsequents = [] # (new_tid, raw_subsequent_str, diagram_id) 一時保存用
         
-        chars = string.ascii_letters + string.digits
-        
         # 重複列車番号チェック用に既存列車番号セットを収集
         existing_train_numbers = set()
         if not dialog.chk_delete_existing.isChecked() and dialog.chk_skip_duplicate_number.isChecked():
@@ -494,7 +491,7 @@ def import_timetable_from_csv(parent_window):
                 if not train_type_id:
                     # 新規種別を生成
                     while True:
-                        new_tt_id = "".join(random.choices(chars, k=10))
+                        new_tt_id = generate_random_id(12)
                         if new_tt_id not in project.train_types:
                             break
                     new_type = {
@@ -547,7 +544,7 @@ def import_timetable_from_csv(parent_window):
                             
             # 列車ID生成
             while True:
-                new_tid = "".join(random.choices(chars, k=16))
+                new_tid = generate_random_id()
                 if new_tid not in m_trains:
                     break
                     
@@ -574,7 +571,7 @@ def import_timetable_from_csv(parent_window):
                         if not found_op_id:
                             # 運用を新規作成
                             while True:
-                                new_op_id = "".join(random.choices(chars, k=10))
+                                new_op_id = generate_random_id()
                                 if new_op_id not in ops_dict:
                                     break
                             new_op = {
@@ -603,7 +600,7 @@ def import_timetable_from_csv(parent_window):
                                     break
                             if not group_id:
                                 while True:
-                                    new_og_id = "".join(random.choices(chars, k=8))
+                                    new_og_id = generate_random_id(12)
                                     if new_og_id not in op_groups:
                                         break
                                 new_group = {

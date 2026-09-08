@@ -1,5 +1,3 @@
-import random
-import string
 import re
 from PySide6.QtCore import Qt, QModelIndex
 from PySide6.QtGui import QColor, QFont
@@ -8,7 +6,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QListWidget, QListWidgetItem, QStackedWidget, QComboBox, QFormLayout,
     QWidget, QPushButton, QSizePolicy, QScrollArea
 )
-from core.project import OptDiaProject
+from core.project import OptDiaProject, generate_random_id
 
 # 運行系統の追加ダイアログ
 class AddRouteDialog(QDialog):
@@ -272,7 +270,7 @@ class SelectSegmentDialog(QDialog):
         if self.editing_segment_index is not None and 0 <= self.editing_segment_index < len(self.existing_segments):
             segment_id = self.existing_segments[self.editing_segment_index].get("segment_id")
         if not segment_id:
-            segment_id = OptDiaProject._generate_segment_id()
+            segment_id = generate_random_id(12)
 
         return {
             "segment_id": segment_id,
@@ -1075,8 +1073,8 @@ class RouteEditorDialog(QDialog):
             rel_idx = stations_in_this_segment.index(split_sid)
 
             # 新しい2つのセグメントIDを作成
-            seg1_id = OptDiaProject._generate_segment_id()
-            seg2_id = OptDiaProject._generate_segment_id()
+            seg1_id = generate_random_id(12)
+            seg2_id = generate_random_id(12)
             old_seg_id = segment_data.get("segment_id")
 
             for train_key in ["inbound_trains", "outbound_trains"]:

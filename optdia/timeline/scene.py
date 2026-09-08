@@ -319,12 +319,13 @@ class TemporaryStablingItem(TimelineRectItem):
 
 # ガントチャート要素間の空白を埋める透明の矩形アイテム
 class BlankSpaceItem(QGraphicsRectItem):
-    def __init__(self, start_m: float, end_m: float, y_base: float, bar_top_offset: float, bar_height: float, operation: dict, operation_id: str, scene: "TimelineScene"):
-        x = float(start_m)
+    def __init__(self, start_m: float, end_m: float, y_base: float, bar_top_offset: float, bar_height: float, operation: dict, operation_id: str, scene: "TimelineScene", scale_x: float = 2.0):
+        x = float(start_m) * scale_x
         y = float(y_base + bar_top_offset)
-        w = max(1.0, float(end_m - start_m))
+        w = max(1.0, float(end_m - start_m) * scale_x)
         h = float(bar_height)
         super().__init__(x, y, w, h)
+        self.scale_x = scale_x
         self.start_m = start_m
         self.end_m = end_m
         self.operation = operation
@@ -563,17 +564,27 @@ class TimelineScene(QGraphicsScene):
     BAR_HEIGHT = 24
     BAR_TOP_OFFSET = 16
     LABEL_TOP_OFFSET = 16
-    TIMELINE_WIDTH = 2160  # 36 hours * 60 minutes/hour = 2160px
+    BASE_TIMELINE_MINUTES = 2160  # 36 hours * 60 minutes/hour = 2160 minutes
 
-    def __init__(self, parent=None, history_manager=None):
+    def __init__(self, parent=None, history_manager=None, scale_x: float = 2.0):
         super().__init__(parent)
         self.project = None
         self.diagram_id = None
         self.operation_group_id = None
         self.history_manager = history_manager
+        self.scale_x = scale_x
         self.row_items = {}  # op_id -> list of QGraphicsItem
         self.selected_items = []  # list of TimelineRectItem
         self.drag_controller = TimelineDragController(self)
+
+    @property
+    def timeline_width(self) -> float:
+        return self.BASE_TIMELINE_MINUTES * self.scale_x
+
+    def set_scale_x(self, scale_x: float):
+        if self.scale_x != scale_x:
+            self.scale_x = scale_x
+            self.refresh()
 
         if self.history_manager:
             self.history_manager.undone.connect(self._on_history_changed)
@@ -1037,7 +1048,7 @@ class TimelineScene(QGraphicsScene):
         self.row_items.clear()
 
         if not self.project or not self.diagram_id or not self.operation_group_id:
-            self.setSceneRect(0, 0, self.TIMELINE_WIDTH, 0)
+            self.setSceneRect(0, 0, self.timeline_width, 0)
             return
 
         diagram = self.project.diagrams.get(self.diagram_id, {})
@@ -1047,7 +1058,7 @@ class TimelineScene(QGraphicsScene):
 
         total_rows = len(op_ids)
         scene_height = max(0, total_rows * self.ROW_HEIGHT)
-        self.setSceneRect(0, 0, self.TIMELINE_WIDTH, scene_height)
+        self.setSceneRect(0, 0, self.timeline_width, scene_height)
 
         if total_rows == 0:
             return
@@ -1057,13 +1068,13 @@ class TimelineScene(QGraphicsScene):
         solid_pen = QPen(QColor("#cccccc"), 1, Qt.PenStyle.SolidLine)
 
         for hour in range(37):
-            x = hour * 60
+            x = hour * 60 * self.scale_x
             line = self.addLine(x, 0, x, scene_height, dot_pen)
             line.setZValue(0)
 
         for i in range(1, total_rows):
             y = i * self.ROW_HEIGHT
-            line = self.addLine(0, y, self.TIMELINE_WIDTH, y, solid_pen)
+            line = self.addLine(0, y, self.timeline_width, y, solid_pen)
             line.setZValue(0)
 
         # 2. 各運用のガントチャート要素を描画
@@ -1107,7 +1118,7 @@ class TimelineScene(QGraphicsScene):
         for s, e in sorted(elements, key=lambda x: (x[0], x[1])):
             if max_end is not None:
                 if s > max_end:
-                    blank_item = BlankSpaceItem(max_end, s, y_base, self.BAR_TOP_OFFSET, self.BAR_HEIGHT, op, op_id, self)
+                    blank_item = BlankSpaceItem(max_end, s, y_base, self.BAR_TOP_OFFSET, self.BAR_HEIGHT, op, op_id, self, scale_x=self.scale_x)
                     self.addItem(blank_item)
                     created_items.append(blank_item)
                     max_end = max(max_end, e)
@@ -1172,7 +1183,7 @@ class TimelineScene(QGraphicsScene):
                 text_item.setBrush(QBrush(QColor("#000000")))
                 rect = text_item.boundingRect()
                 # テキストの右端が出庫時刻の位置
-                text_item.setPos(start_m - rect.width(), y_base + self.LABEL_TOP_OFFSET)
+                text_item.setPos(start_m * self.scale_x - rect.width(), y_base + self.LABEL_TOP_OFFSET)
                 text_item.setZValue(2)
                 self.addItem(text_item)
                 items.append(text_item)
@@ -1187,7 +1198,7 @@ class TimelineScene(QGraphicsScene):
                 text_item.setFont(font)
                 text_item.setBrush(QBrush(QColor("#000000")))
                 # テキストの左端が入庫時刻の位置
-                text_item.setPos(end_m, y_base + self.LABEL_TOP_OFFSET)
+                text_item.setPos(end_m * self.scale_x, y_base + self.LABEL_TOP_OFFSET)
                 text_item.setZValue(2)
                 self.addItem(text_item)
                 items.append(text_item)
@@ -1201,9 +1212,9 @@ class TimelineScene(QGraphicsScene):
             start_m = self._time_to_minutes(ev.get("start_time"))
             end_m = self._time_to_minutes(ev.get("end_time"))
             if start_m is not None and end_m is not None:
-                w = max(1.0, float(end_m - start_m))
+                w = max(1.0, float(end_m - start_m) * self.scale_x)
                 stabling_item = TemporaryStablingItem(
-                    float(start_m),
+                    float(start_m) * self.scale_x,
                     y_base + float(self.BAR_TOP_OFFSET),
                     w,
                     float(self.BAR_HEIGHT),
@@ -1294,9 +1305,9 @@ class TimelineScene(QGraphicsScene):
         for train in matched_trains:
             first_dep = train["first_dep"]
             last_arr = train["last_arr"]
-            rect_w = max(1.0, float(last_arr - first_dep))
+            rect_w = max(1.0, float(last_arr - first_dep) * self.scale_x)
             rect_h = float(self.BAR_HEIGHT)
-            rect_x = float(first_dep)
+            rect_x = float(first_dep) * self.scale_x
             rect_y = y_base + float(self.BAR_TOP_OFFSET)
 
             elements.append((first_dep, last_arr))
@@ -1361,18 +1372,28 @@ class TimelineScene(QGraphicsScene):
 
 # 運用ガントチャートの見出しのシーン
 class TimelineHeaderScene(QGraphicsScene):
-    TIMELINE_WIDTH = 2160  # 36 hours * 60 minutes/hour = 2160px
+    BASE_TIMELINE_MINUTES = 2160  # 36 hours * 60 minutes/hour = 2160 minutes
     HEADER_HEIGHT = 40
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, scale_x: float = 2.0):
         super().__init__(parent)
         self.right_margin = 0
+        self.scale_x = scale_x
         self.update_header(0)
+
+    @property
+    def timeline_width(self) -> float:
+        return self.BASE_TIMELINE_MINUTES * self.scale_x
+
+    def set_scale_x(self, scale_x: float):
+        if self.scale_x != scale_x:
+            self.scale_x = scale_x
+            self.update_header(self.right_margin)
 
     def update_header(self, right_margin: int = 0):
         self.right_margin = right_margin
         self.clear()
-        scene_w = self.TIMELINE_WIDTH + self.right_margin
+        scene_w = self.timeline_width + self.right_margin
         self.setSceneRect(0, 0, scene_w, self.HEADER_HEIGHT)
 
         solid_pen = QPen(QColor("#cccccc"), 1, Qt.PenStyle.SolidLine)
@@ -1380,7 +1401,7 @@ class TimelineHeaderScene(QGraphicsScene):
         font.setPixelSize(14)
 
         for hour in range(37):
-            x = hour * 60
+            x = hour * 60 * self.scale_x
             # 縦線描画
             line = self.addLine(x, 0, x, self.HEADER_HEIGHT, solid_pen)
             line.setZValue(0)
