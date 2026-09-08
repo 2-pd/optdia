@@ -112,8 +112,21 @@ class TimetableHorizontalHeader(QHeaderView):
         self.setDefaultSectionSize(60)
         self.setSectionResizeMode(QHeaderView.Fixed)
         self.setSectionsMovable(True)
+        self.setSectionsClickable(True)
 
         self.draggable_icon = QIcon(":/assets/draggable.png")
+
+        self.sectionClicked.connect(self._on_section_clicked)
+
+    def _on_section_clicked(self, logicalIndex):
+        view = self.parent()
+        if not view:
+            return
+        model = view.model()
+        if not model:
+            return
+        # 水平ヘッダーがクリックされたときにその列のセルを全て選択状態にする
+        view.selectColumn(logicalIndex)
 
     def paintSection(self, painter, rect, logicalIndex):
         painter.save()
@@ -468,6 +481,16 @@ class TimetableView(QTableView):
             super().contextMenuEvent(event)
             return
 
+        # 選択されている列の集合を取得
+        selected_indexes = self.selectedIndexes()
+        if index in selected_indexes:
+            selected_cols = sorted(list(set(idx.column() for idx in selected_indexes if 0 <= idx.column() < len(model.train_ids))))
+        else:
+            selected_cols = [col]
+
+        if not selected_cols:
+            selected_cols = [col]
+
         menu = QMenu(self)
 
         # 共通列車操作項目
@@ -524,27 +547,41 @@ class TimetableView(QTableView):
             return
 
         from .dialogs import (
-            add_empty_train, duplicate_train, DuplicateTrainWithConditionsDialog,
-            delete_train, split_train_at_cell
+            add_empty_trains, duplicate_trains, DuplicateTrainWithConditionsDialog,
+            delete_trains, split_train_at_cell
         )
 
         if selected_action == add_left_action:
-            add_empty_train(model, col, "left")
+            add_empty_trains(model, selected_cols, "left")
         elif selected_action == add_right_action:
-            add_empty_train(model, col, "right")
+            add_empty_trains(model, selected_cols, "right")
         elif selected_action == dup_action:
-            duplicate_train(model, col, offset_minutes=0, duplicate_subsequent=False)
+            duplicate_trains(model, selected_cols, offset_minutes=0, duplicate_subsequent=False)
         elif selected_action == dup_cond_action:
             dialog = DuplicateTrainWithConditionsDialog(self)
             if dialog.exec() == QDialog.Accepted:
                 offset_min = dialog.get_offset_minutes()
                 dup_subs = dialog.should_duplicate_subsequent()
-                duplicate_train(model, col, offset_minutes=offset_min, duplicate_subsequent=dup_subs)
+                t_inc = dialog.get_train_num_increment()
+                n_inc = dialog.get_named_num_increment()
+                repeat_sec = dialog.get_repeat_until_time_seconds() if dialog.is_repeat_until_enabled() else None
+                duplicate_trains(
+                    model, selected_cols,
+                    offset_minutes=offset_min,
+                    duplicate_subsequent=dup_subs,
+                    train_num_inc=t_inc,
+                    named_num_inc=n_inc,
+                    repeat_until_seconds=repeat_sec
+                )
         elif selected_action == del_action:
-            delete_train(self, model, col)
+            delete_trains(self, model, selected_cols)
         elif selected_action in (stop_action, pass_action, op_stop_action):
             new_val = selected_action.data()
-            model.setData(index, new_val, StopTypeRole)
+            target_indexes = [idx for idx in selected_indexes if len(model.row_headers) <= idx.row() < len(model.row_headers) + len(model.station_rows)]
+            if not target_indexes or index not in selected_indexes:
+                target_indexes = [index]
+            for tgt_idx in target_indexes:
+                model.setData(tgt_idx, new_val, StopTypeRole)
         elif selected_action == split_action:
             split_train_at_cell(self, model, index)
 
