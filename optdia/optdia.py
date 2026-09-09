@@ -454,6 +454,13 @@ class MainWindow(QMainWindow):
         self.diagram_line_combo.setFixedWidth(280)
         self.diagram_line_combo.currentIndexChanged.connect(self._on_diagram_line_combo_changed)
         diagram_header_layout.addWidget(self.diagram_line_combo)
+
+        # 列車種別フィルタコンボボックス
+        self.diagram_type_combo = QComboBox()
+        self.diagram_type_combo.setFixedWidth(120)
+        self.diagram_type_combo.currentIndexChanged.connect(self._on_diagram_type_combo_changed)
+        diagram_header_layout.addWidget(self.diagram_type_combo)
+
         diagram_header_layout.addStretch(1)
 
         # ダイヤグラム表示幅コンボボックス (狭め: 3px/分, 標準: 6px/分, やや広め: 15px/分, 広め: 30px/分)
@@ -934,6 +941,7 @@ class MainWindow(QMainWindow):
             # ダイヤグラムタブ選択時
             # 運行系統リストの有効/無効は路線選択コンボボックスの状態に応じる
             self._update_diagram_line_combo()
+            self._update_diagram_type_combo()
             is_route_selected = (self.diagram_line_combo.currentData() == "route")
             self.route_list_widget.setEnabled(is_route_selected)
         elif tab_index == 3:
@@ -1314,6 +1322,38 @@ class MainWindow(QMainWindow):
         self.route_list_widget.setEnabled(is_route_selected)
         self._update_diagram_view()
 
+    def _update_diagram_type_combo(self):
+        """ダイヤグラム上部の列車種別フィルタコンボボックスの選択肢を更新する"""
+        current_data = self.diagram_type_combo.currentData()
+
+        self.diagram_type_combo.blockSignals(True)
+        self.diagram_type_combo.clear()
+
+        # 選択肢1: 「全ての種別」(Noneをデータとして使用)
+        self.diagram_type_combo.addItem("全ての種別", None)
+
+        # 選択肢2以降: プロジェクトデータに登録されている各列車種別
+        for ttid in self.project.train_types_order:
+            tt = self.project.train_types.get(ttid, {})
+            tt_name = tt.get("train_type_name", ttid)
+            self.diagram_type_combo.addItem(tt_name, ttid)
+
+        # 以前選択していた値があれば再選択
+        if current_data is not None:
+            idx = self.diagram_type_combo.findData(current_data)
+            if idx >= 0:
+                self.diagram_type_combo.setCurrentIndex(idx)
+            else:
+                self.diagram_type_combo.setCurrentIndex(0)
+        else:
+            self.diagram_type_combo.setCurrentIndex(0)
+
+        self.diagram_type_combo.blockSignals(False)
+
+    def _on_diagram_type_combo_changed(self, index: int):
+        """ダイヤグラム上部の列車種別フィルタコンボボックスの変更時"""
+        self._update_diagram_view()
+
     def _get_timeline_scale_x(self) -> float:
         """選択中の運用ガントチャート表示幅に応じたスケール値 (px/分) を返す"""
         key = self.timeline_width_combo.currentData() if hasattr(self, "timeline_width_combo") else "standard"
@@ -1375,12 +1415,15 @@ class MainWindow(QMainWindow):
     def _update_diagram_view(self):
         """ダイヤグラムビューの描画内容を更新する"""
         selected_target = self.diagram_line_combo.currentData() or "route"
-        
+
         route_item = self.route_list_widget.currentItem()
         diagram_item = self.diagram_list_widget.currentItem()
-        
+
         route_id = route_item.data(Qt.UserRole) if route_item else None
         diagram_id = diagram_item.data(Qt.UserRole) if diagram_item else None
+
+        # 列車種別フィルタ (「全ての種別」の場合はNone)
+        filter_train_type_id = self.diagram_type_combo.currentData() if hasattr(self, "diagram_type_combo") else None
 
         scale_x = self._get_diagram_scale_x()
         scale_y = self._get_diagram_scale_y()
@@ -1388,7 +1431,10 @@ class MainWindow(QMainWindow):
         self.diagram_view.scene.set_scales(scale_x, scale_y)
         self.diagram_header_view.scene.set_scale_x(scale_x)
 
-        stations_data = self.diagram_view.update_diagram(self.project, selected_target, route_id, diagram_id)
+        stations_data = self.diagram_view.update_diagram(
+            self.project, selected_target, route_id, diagram_id,
+            filter_train_type_id=filter_train_type_id
+        )
         self.diagram_header_view.update_header()
         self.diagram_station_view.update_stations(self.project, stations_data)
 

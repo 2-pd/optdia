@@ -54,6 +54,8 @@ class DiagramView(QGraphicsView):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
-    def update_diagram(self, project, selected_target: str, route_id: str, diagram_id: str):
-        return self.scene.update_diagram(project, selected_target, route_id, diagram_id)
+    def update_diagram(self, project, selected_target: str, route_id: str, diagram_id: str,
+                       filter_train_type_id: str = None):
+        return self.scene.update_diagram(project, selected_target, route_id, diagram_id,
+                                         filter_train_type_id=filter_train_type_id)
 

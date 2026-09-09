@@ -110,6 +110,7 @@ class DiagramScene(QGraphicsScene):
         self.selected_target = "route"  # "route" or line_id
         self.route_id = None
         self.diagram_id = None
+        self.filter_train_type_id = None
         self.scale_x = scale_x
         self.scale_y = scale_y
 
@@ -118,17 +119,20 @@ class DiagramScene(QGraphicsScene):
             self.scale_x = scale_x
             self.scale_y = scale_y
 
-    def update_diagram(self, project, selected_target: str, route_id: str, diagram_id: str):
+    def update_diagram(self, project, selected_target: str, route_id: str, diagram_id: str,
+                       filter_train_type_id: str = None):
         """
         運行ダイヤグラムを更新描画する。
         selected_target: "route" または line_id (str)
         route_id: 運行系統リストで選択中のroute_id
         diagram_id: 運転ダイヤリストで選択中のdiagram_id
+        filter_train_type_id: 表示する列車種別のID。Noneの場合は全種別を表示
         """
         self.project = project
         self.selected_target = selected_target
         self.route_id = route_id
         self.diagram_id = diagram_id
+        self.filter_train_type_id = filter_train_type_id
 
         self.clear()
 
@@ -380,6 +384,10 @@ class DiagramScene(QGraphicsScene):
                 m_train = m_dict.get(tid)
                 if not m_train:
                     continue
+                # 列車種別フィルタ
+                if self.filter_train_type_id is not None:
+                    if m_train.get("train_type_id") != self.filter_train_type_id:
+                        continue
                 self._draw_single_train_for_route(m_train, stations_data, route)
 
     def _draw_single_train_for_route(self, train, stations_data, route):
@@ -496,6 +504,11 @@ class DiagramScene(QGraphicsScene):
                     m_train = m_dict.get(tid)
                     if not m_train:
                         continue
+
+                    # 列車種別フィルタ
+                    if self.filter_train_type_id is not None:
+                        if m_train.get("train_type_id") != self.filter_train_type_id:
+                            continue
 
                     stops = m_train.get("stops", [])
                     subpaths = []
