@@ -67,6 +67,7 @@ class ExportCsvSettingsDialog(QDialog):
         # ボタン (OK / キャンセル)
         btn_layout = QHBoxLayout()
         self.btn_ok = QPushButton("OK", self)
+        self.btn_ok.setProperty("class", "ok_button")
         self.btn_cancel = QPushButton("キャンセル", self)
         
         self.btn_ok.clicked.connect(self.accept)

@@ -54,6 +54,7 @@ class AboutDialog(QDialog):
         copy_btn.clicked.connect(self._copy_to_clipboard)
         ok_btn = QPushButton("OK")
         ok_btn.clicked.connect(self.accept)
+        ok_btn.setProperty("class", "ok_button")
         button_layout.addStretch()
         button_layout.addWidget(copy_btn)
         button_layout.addWidget(ok_btn)
@@ -80,7 +81,8 @@ class AboutDialog(QDialog):
         def make_button(text, callback):
             btn = QPushButton(text)
             btn.setFlat(True)
-            btn.setStyleSheet("text-decoration: underline; color: #0066CC;")
+            btn.setProperty("class", "text_button")
+            btn.setStyleSheet("color: #0066cc;")
             btn.clicked.connect(callback)
             return btn
 
@@ -129,6 +131,7 @@ class AboutDialog(QDialog):
         # OKボタン
         ok_btn = QPushButton("OK")
         ok_btn.setFixedWidth(100)
+        ok_btn.setProperty("class", "ok_button")
         ok_btn.clicked.connect(dialog.accept)
         button_layout = QHBoxLayout()
         button_layout.addStretch()
@@ -157,6 +160,7 @@ class AboutDialog(QDialog):
         main_layout.addWidget(label)
         ok_btn = QPushButton("OK")
         ok_btn.setFixedWidth(100)
+        ok_btn.setProperty("class", "ok_button")
         ok_btn.clicked.connect(dialog.accept)
         button_layout = QHBoxLayout()
         button_layout.addStretch()

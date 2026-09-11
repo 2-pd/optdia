@@ -4,10 +4,11 @@
 import sys
 import os
 import subprocess
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QFile, QTextStream, QSize
 from PySide6.QtGui import QIcon, QAction, QPixmap, QTransform
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
+    QApplication, QMainWindow, QStyleFactory,
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QPushButton, QFileDialog, QMessageBox, QDialog, QLabel, QComboBox,
     QListWidget, QListWidgetItem, QStackedWidget, QLineEdit,
     QTabBar, QHeaderView, QMenu, QAbstractItemView, QFrame
@@ -48,7 +49,7 @@ class MainWindow(QMainWindow):
 
         # 初期タイトルと初期サイズ
         self._update_window_title()
-        self.resize(960, 640)
+        self.resize(1200, 700)
         self.app_settings.load_window_settings(self)
 
         # メニューバーの設定
@@ -67,26 +68,10 @@ class MainWindow(QMainWindow):
         sidebar = QWidget()
         sidebar.setObjectName("sidebar")
         sidebar.setFixedWidth(240)
-        sidebar.setStyleSheet("#sidebar { background-color: #f7f7f7; border-right: 1px solid #dddddd; }")
         
         sidebar_layout = QVBoxLayout(sidebar)
         sidebar_layout.setContentsMargins(0, 0, 0, 0)
         sidebar_layout.setSpacing(0)
-
-        # ボタンの共通スタイル定義
-        button_style = """
-            QPushButton {
-                border: none;
-                text-align: left;
-                text-decoration: underline;
-                padding-left: 10px;
-                font-size: 15px;
-                background-color: transparent;
-            }
-            QPushButton:hover {
-                background-color: #eeeeee;
-            }
-        """
 
         # 1つ目のボタン: 路線・駅情報
         self.btn_lines = QPushButton("路線・駅情報")
@@ -94,7 +79,7 @@ class MainWindow(QMainWindow):
         self.btn_lines.setIcon(QIcon(':/assets/line.png'))
         self.btn_lines.setIconSize(QSize(30, 30))
         self.btn_lines.clicked.connect(self._on_edit_lines_stations)
-        self.btn_lines.setStyleSheet(button_style)
+        self.btn_lines.setProperty("class", "sidebar_button")
         sidebar_layout.addWidget(self.btn_lines)
 
         # 2つ目のボタン: 種別情報
@@ -103,7 +88,7 @@ class MainWindow(QMainWindow):
         self.btn_types.setIcon(QIcon(':/assets/train_type.png'))
         self.btn_types.setIconSize(QSize(30, 30))
         self.btn_types.clicked.connect(self._on_edit_train_types)
-        self.btn_types.setStyleSheet(button_style)
+        self.btn_types.setProperty("class", "sidebar_button")
         sidebar_layout.addWidget(self.btn_types)
 
         # 運行系統セクション
@@ -114,18 +99,16 @@ class MainWindow(QMainWindow):
 
         route_header_layout = QHBoxLayout()
         lbl_route = QLabel("運行系統")
-        lbl_route.setStyleSheet("font-size: 14px; border: none;")
         route_header_layout.addWidget(lbl_route)
         self.btn_edit_routes = QPushButton("編集")
         self.btn_edit_routes.setFixedWidth(60)
-        self.btn_edit_routes.setStyleSheet("QPushButton { border: none; text-decoration: underline; background-color: transparent; }")
+        self.btn_edit_routes.setProperty("class", "text_button")
         self.btn_edit_routes.clicked.connect(self._on_edit_routes)
         route_header_layout.addWidget(self.btn_edit_routes)
         route_layout.addLayout(route_header_layout)
 
         # 運行系統リスト
         self.route_list_widget = QListWidget()
-        self.route_list_widget.setStyleSheet("font-size: 14px; QListWidget::item {height: 32px;}")
         self.route_list_widget.setIconSize(QSize(24, 24))
         self.route_list_widget.setDragDropMode(QListWidget.InternalMove)
         self.route_list_widget.model().rowsMoved.connect(self._on_routes_reordered)
@@ -143,18 +126,16 @@ class MainWindow(QMainWindow):
 
         diagram_header_layout = QHBoxLayout()
         lbl_diagram = QLabel("ダイヤ")
-        lbl_diagram.setStyleSheet("font-size: 14px; border: none;")
         diagram_header_layout.addWidget(lbl_diagram)
         self.btn_edit_diagrams = QPushButton("編集")
         self.btn_edit_diagrams.setFixedWidth(60)
-        self.btn_edit_diagrams.setStyleSheet("QPushButton { border: none; text-decoration: underline; background-color: transparent; }")
+        self.btn_edit_diagrams.setProperty("class", "text_button")
         self.btn_edit_diagrams.clicked.connect(self._on_edit_diagrams)
         diagram_header_layout.addWidget(self.btn_edit_diagrams)
         diagram_layout.addLayout(diagram_header_layout)
 
         # 運転ダイヤリスト
         self.diagram_list_widget = QListWidget()
-        self.diagram_list_widget.setStyleSheet("font-size: 14px; QListWidget::item {height: 32px;}")
         self.diagram_list_widget.setIconSize(QSize(24, 24))
         self.diagram_list_widget.setDragDropMode(QListWidget.InternalMove)
         self.diagram_list_widget.model().rowsMoved.connect(self._on_diagrams_reordered)
@@ -176,19 +157,16 @@ class MainWindow(QMainWindow):
         self.timetable_layout.setContentsMargins(0, 0, 0, 0)
         self.timetable_layout.setSpacing(0)
 
-        # 方面選択用タブバー
-        self.direction_tab_bar = QTabBar()
-        self.direction_tab_bar.addTab(QIcon(":/assets/outbound.png"), "下り時刻表")
-        self.direction_tab_bar.addTab(QIcon(":/assets/inbound.png"), "上り時刻表")
-        self.direction_tab_bar.addTab(QIcon(":/assets/diagram.png"), "ダイヤグラム")
-        self.direction_tab_bar.addTab(QIcon(":/assets/timeline.png"), "車両運用表")
-        self.direction_tab_bar.setExpanding(False)
-        self.direction_tab_bar.setStyleSheet("""
-            QTabBar::tab { height: 35px; width: 135px; padding-left: 10px; padding-right: 30px; background-color: #e7e7e7; }
-            QTabBar::tab:selected { background-color: #f7f7f7; }
-        """)
-        self.direction_tab_bar.currentChanged.connect(self._on_timetable_settings_changed)
-        self.timetable_layout.addWidget(self.direction_tab_bar)
+        # メインタブバー
+        self.main_tab_bar = QTabBar()
+        self.main_tab_bar.addTab(QIcon(":/assets/outbound.png"), "下り時刻表")
+        self.main_tab_bar.addTab(QIcon(":/assets/inbound.png"), "上り時刻表")
+        self.main_tab_bar.addTab(QIcon(":/assets/diagram.png"), "ダイヤグラム")
+        self.main_tab_bar.addTab(QIcon(":/assets/timeline.png"), "車両運用表")
+        self.main_tab_bar.setExpanding(False)
+        self.main_tab_bar.setObjectName("main_tab_bar")
+        self.main_tab_bar.currentChanged.connect(self._on_timetable_settings_changed)
+        self.timetable_layout.addWidget(self.main_tab_bar)
 
         # 時刻表テーブル
         self.timetable_model = TimetableModel(self.project, self.history_manager)
@@ -217,21 +195,12 @@ class MainWindow(QMainWindow):
         # 検索バーウィジェット（高さ40px）
         self.timetable_search_bar = QWidget()
         self.timetable_search_bar.setFixedHeight(40)
-        self.timetable_search_bar.setStyleSheet("background-color: #f7f7f7; border-bottom: 1px solid #dddddd;")
+        self.timetable_search_bar.setProperty("class", "header_bar")
         timetable_search_layout = QHBoxLayout(self.timetable_search_bar)
         timetable_search_layout.setContentsMargins(5, 0, 5, 0)
         timetable_search_layout.setSpacing(0)
 
         flip_h_transform = QTransform().scale(-1, 1)
-        borderless_btn_style = """
-            QPushButton {
-                border: none;
-                background-color: transparent;
-            }
-            QPushButton:hover {
-                background-color: #eeeeee;
-            }
-        """
 
         # 元に戻すボタン用のアイコンを読み込み、やり直しボタン用に左右反転したアイコンを生成
         undo_pixmap = QPixmap(":/assets/undo.png")
@@ -243,7 +212,7 @@ class MainWindow(QMainWindow):
         self.btn_undo.setIcon(undo_icon)
         self.btn_undo.setFixedWidth(30)
         self.btn_undo.setFixedHeight(30)
-        self.btn_undo.setStyleSheet(borderless_btn_style)
+        self.btn_undo.setProperty("class", "borderless_button")
         self.btn_undo.clicked.connect(self._on_undo)
         self.btn_undo.setToolTip("元に戻す")
         timetable_search_layout.addWidget(self.btn_undo)
@@ -253,7 +222,7 @@ class MainWindow(QMainWindow):
         self.btn_redo.setIcon(redo_icon)
         self.btn_redo.setFixedWidth(30)
         self.btn_redo.setFixedHeight(30)
-        self.btn_redo.setStyleSheet(borderless_btn_style)
+        self.btn_redo.setProperty("class", "borderless_button")
         self.btn_redo.clicked.connect(self._on_redo)
         self.btn_redo.setToolTip("やり直し")
         timetable_search_layout.addWidget(self.btn_redo)
@@ -270,7 +239,7 @@ class MainWindow(QMainWindow):
 
         self.train_search_label = QLabel()
         self.train_search_label.setFixedWidth(50)
-        self.train_search_label.setStyleSheet("font-size: 12px;")
+        self.train_search_label.setProperty("class", "search_label")
         timetable_search_layout.addWidget(self.train_search_label)
 
         # 左移動ボタン用のアイコンを読み込み、右移動ボタン用に左右反転したアイコンを生成
@@ -283,7 +252,7 @@ class MainWindow(QMainWindow):
         self.btn_search_prev.setIcon(right_icon)
         self.btn_search_prev.setFixedWidth(30)
         self.btn_search_prev.setFixedHeight(30)
-        self.btn_search_prev.setStyleSheet(borderless_btn_style)
+        self.btn_search_prev.setProperty("class", "borderless_button")
         self.btn_search_prev.clicked.connect(self._on_search_prev_clicked)
         timetable_search_layout.addWidget(self.btn_search_prev)
 
@@ -291,7 +260,7 @@ class MainWindow(QMainWindow):
         self.btn_search_next.setIcon(left_icon)
         self.btn_search_next.setFixedWidth(30)
         self.btn_search_next.setFixedHeight(30)
-        self.btn_search_next.setStyleSheet(borderless_btn_style)
+        self.btn_search_next.setProperty("class", "borderless_button")
         self.btn_search_next.clicked.connect(self._on_search_next_clicked)
         timetable_search_layout.addWidget(self.btn_search_next)
 
@@ -311,7 +280,7 @@ class MainWindow(QMainWindow):
         # 運用表示エリアの上部コントロールバー (高さ40px)
         self.op_control_bar = QWidget()
         self.op_control_bar.setFixedHeight(40)
-        self.op_control_bar.setStyleSheet("background-color: #f7f7f7; border-bottom: 1px solid #dddddd;")
+        self.op_control_bar.setProperty("class", "header_bar")
         op_control_layout = QHBoxLayout(self.op_control_bar)
         op_control_layout.setContentsMargins(10, 0, 10, 0)
         op_control_layout.setSpacing(10)
@@ -324,7 +293,7 @@ class MainWindow(QMainWindow):
 
         self.btn_edit_operations = QPushButton("編集")
         self.btn_edit_operations.setFixedWidth(60)
-        self.btn_edit_operations.setStyleSheet("QPushButton { border: none; text-decoration: underline; background-color: transparent; font-size: 14px; }")
+        self.btn_edit_operations.setProperty("class", "text_button")
         self.btn_edit_operations.clicked.connect(self._on_edit_operations_clicked)
         op_control_layout.addWidget(self.btn_edit_operations)
         
@@ -332,7 +301,6 @@ class MainWindow(QMainWindow):
 
         # 運用表示エリアの表示幅コンボボックス (狭め: 1px/分, 標準: 2px/分, やや広め: 3px/分, 広め: 4px/分)
         lbl_op_width = QLabel("表示幅:")
-        lbl_op_width.setStyleSheet("font-size: 14px; border: none;")
         op_control_layout.addWidget(lbl_op_width)
 
         self.timeline_width_combo = QComboBox()
@@ -356,7 +324,7 @@ class MainWindow(QMainWindow):
         # 運用表示エリアの見出しバー (高さ40px)
         op_header_bar = QWidget()
         op_header_bar.setFixedHeight(40)
-        op_header_bar.setStyleSheet("background-color: #f7f7f7; border-bottom: 1px solid #dddddd;")
+        op_header_bar.setProperty("class", "header_bar")
         op_header_layout = QHBoxLayout(op_header_bar)
         op_header_layout.setContentsMargins(0, 0, 0, 0)
         op_header_layout.setSpacing(0)
@@ -394,17 +362,7 @@ class MainWindow(QMainWindow):
         self.op_list_widget.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.op_list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.op_list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.op_list_widget.setStyleSheet("""
-            QListWidget {
-                border: none;
-                border-right: 1px solid #dddddd;
-                background-color: #ffffff;
-            }
-            QListWidget::item {
-                height: 70px;
-                border-bottom: 1px solid #eeeeee;
-            }
-        """)
+        self.op_list_widget.setObjectName("operation_list")
         op_body_layout.addWidget(self.op_list_widget)
 
         # 運用ガントチャート
@@ -445,7 +403,7 @@ class MainWindow(QMainWindow):
         # ダイヤグラム表示エリアのヘッダーウィジェット (高さ40px)
         self.diagram_header_widget = QWidget()
         self.diagram_header_widget.setFixedHeight(40)
-        self.diagram_header_widget.setStyleSheet("background-color: #f7f7f7; border-bottom: 1px solid #dddddd;")
+        self.diagram_header_widget.setProperty("class", "header_bar")
         diagram_header_layout = QHBoxLayout(self.diagram_header_widget)
         diagram_header_layout.setContentsMargins(10, 0, 10, 0)
         diagram_header_layout.setSpacing(10)
@@ -465,7 +423,6 @@ class MainWindow(QMainWindow):
 
         # ダイヤグラム表示幅コンボボックス (狭め: 3px/分, 標準: 6px/分, やや広め: 15px/分, 広め: 30px/分)
         lbl_diag_width = QLabel("表示幅:")
-        lbl_diag_width.setStyleSheet("font-size: 14px; border: none;")
         diagram_header_layout.addWidget(lbl_diag_width)
 
         self.diagram_width_combo = QComboBox()
@@ -486,7 +443,6 @@ class MainWindow(QMainWindow):
 
         # ダイヤグラム表示高さコンボボックス (狭め: 6秒/px, 標準: 3秒/px, やや広め: 2秒/px, 広め: 1秒/px)
         lbl_diag_height = QLabel("表示高さ:")
-        lbl_diag_height.setStyleSheet("font-size: 14px; border: none;")
         diagram_header_layout.addWidget(lbl_diag_height)
 
         self.diagram_height_combo = QComboBox()
@@ -556,7 +512,7 @@ class MainWindow(QMainWindow):
         placeholder_layout = QVBoxLayout(self.placeholder_page)
         placeholder_label = QLabel("時刻表を編集するには、路線情報・運行系統・ダイヤの設定を完了してください")
         placeholder_label.setAlignment(Qt.AlignCenter)
-        placeholder_label.setStyleSheet("color: #888888; font-size: 18px;")
+        placeholder_label.setProperty("class", "placeholder_label")
         placeholder_layout.addWidget(placeholder_label)
         
         self.right_stack.addWidget(self.placeholder_page)
@@ -722,13 +678,13 @@ class MainWindow(QMainWindow):
     def _on_undo(self):
         if self.history_manager.undo(self.project):
             self.set_modified(True)
-            if self.direction_tab_bar.currentIndex() == 2:
+            if self.main_tab_bar.currentIndex() == 2:
                 self._update_diagram_view()
 
     def _on_redo(self):
         if self.history_manager.redo(self.project):
             self.set_modified(True)
-            if self.direction_tab_bar.currentIndex() == 2:
+            if self.main_tab_bar.currentIndex() == 2:
                 self._update_diagram_view()
 
     def _on_auto_fill_triggered(self, checked: bool):
@@ -935,7 +891,7 @@ class MainWindow(QMainWindow):
             self.right_stack.setCurrentIndex(0)
 
         # タブのインデックスに基づいて表示エリア（スタックドウィジェット）を切り替える
-        tab_index = self.direction_tab_bar.currentIndex()
+        tab_index = self.main_tab_bar.currentIndex()
         if tab_index == 2:
             self.timetable_content_stack.setCurrentIndex(1)
             # ダイヤグラムタブ選択時
@@ -990,7 +946,6 @@ class MainWindow(QMainWindow):
         query = self.train_search_edit.text().strip()
         if not query:
             self.train_search_label.setText("")
-            self.train_search_label.setStyleSheet("font-size: 12px; color: #555555;")
             self.btn_search_prev.setEnabled(False)
             self.btn_search_next.setEnabled(False)
             return
@@ -1000,7 +955,7 @@ class MainWindow(QMainWindow):
 
         if total == 0:
             self.train_search_label.setText("該当無し")
-            self.train_search_label.setStyleSheet("font-size: 12px; color: #cc3333;")
+            self.train_search_label.setStyleSheet("color: #cc3333;")
             self.btn_search_prev.setEnabled(False)
             self.btn_search_next.setEnabled(False)
         else:
@@ -1019,7 +974,7 @@ class MainWindow(QMainWindow):
                     current_rank = "-"
 
             self.train_search_label.setText(f"{current_rank}/{total}")
-            self.train_search_label.setStyleSheet("font-size: 12px; color: #333333;")
+            self.train_search_label.setStyleSheet("color: #333333;")
 
     def _select_train_column(self, col: int):
         """指定した列の列車番号セル（行0）を選択してスクロールする"""
@@ -1450,6 +1405,13 @@ def main():
 
     # アプリケーションアイコンの設定
     app.setWindowIcon(QIcon(":/assets/app_icon.ico"))
+
+    # UIスタイルの設定
+    app.setStyle(QStyleFactory.create("Fusion"))
+    file = QFile(":/assets/style.css")
+    if file.open(QFile.ReadOnly | QFile.Text):
+        stream = QTextStream(file)
+        app.setStyleSheet(stream.readAll())
 
     # コマンドライン引数でファイルパスが指定されている場合はロード、
     # そうでない場合は新規プロジェクトを生成

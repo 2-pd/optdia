@@ -27,7 +27,7 @@ class AddRouteDialog(QDialog):
 
         # 警告表示スペース
         self.warning_label = QLabel("")
-        self.warning_label.setStyleSheet("color: red; padding-left: 5px;")
+        self.warning_label.setStyleSheet("color: #cc3333; padding-left: 5px;")
         layout.addWidget(self.warning_label)
 
         # 運行系統名
@@ -41,6 +41,7 @@ class AddRouteDialog(QDialog):
         # ボタンエリア (追加 / キャンセル)
         button_layout = QHBoxLayout()
         self.add_button = QPushButton("追加")
+        self.add_button.setProperty("class", "ok_button")
         self.cancel_button = QPushButton("キャンセル")
         button_layout.addStretch()
         button_layout.addWidget(self.add_button)
@@ -108,7 +109,7 @@ class SelectSegmentDialog(QDialog):
 
         # 起点と終点の反転
         self.invert_btn = QPushButton("起点と終点の反転")
-        self.invert_btn.setStyleSheet("QPushButton { border: none; text-decoration: underline; background-color: transparent; }")
+        self.invert_btn.setProperty("class", "text_button")
         self.invert_btn.setCursor(Qt.PointingHandCursor)
         self.invert_btn.clicked.connect(self._invert_stations)
 
@@ -132,7 +133,7 @@ class SelectSegmentDialog(QDialog):
         # 説明文
         desc_label = QLabel("区間を逆向きに設定することで、上り列車が別路線に下り列車として直通するような運行系統を設定できます")
         desc_label.setWordWrap(True)
-        desc_label.setStyleSheet("color: #888888; font-size: 12px;")
+        desc_label.setProperty("class", "informational_text")
         layout.addWidget(desc_label)
 
         layout.addStretch()
@@ -141,6 +142,7 @@ class SelectSegmentDialog(QDialog):
         button_layout = QHBoxLayout()
         button_layout.addStretch()
         self.ok_button = QPushButton("追加" if is_add else "決定")
+        self.ok_button.setProperty("class", "ok_button")
         self.cancel_button = QPushButton("キャンセル")
         button_layout.addWidget(self.ok_button)
         button_layout.addWidget(self.cancel_button)
@@ -361,6 +363,7 @@ class SplitSegmentDialog(QDialog):
         button_layout = QHBoxLayout()
         button_layout.addStretch()
         self.split_button = QPushButton("分割")
+        self.split_button.setProperty("class", "ok_button")
         self.cancel_button = QPushButton("キャンセル")
         button_layout.addWidget(self.split_button)
         button_layout.addWidget(self.cancel_button)
@@ -388,9 +391,8 @@ class RouteEditorDialog(QDialog):
 
         # 左側のサイドバー (幅200px固定)
         sidebar = QWidget()
-        sidebar.setObjectName("route_editor_sidebar")
         sidebar.setFixedWidth(200)
-        sidebar.setStyleSheet("#route_editor_sidebar { background-color: #f7f7f7; border-right: 1px solid #dddddd; }")
+        sidebar.setProperty("class", "dialog_sidebar")
         sidebar_layout = QVBoxLayout(sidebar)
         sidebar_layout.setContentsMargins(10, 10, 10, 10)
         sidebar_layout.setSpacing(5)
@@ -413,7 +415,7 @@ class RouteEditorDialog(QDialog):
         sidebar_layout.addSpacing(10)
         desc_label = QLabel("運行系統や路線の区間はドラッグ操作で並び替え可能です")
         desc_label.setWordWrap(True)
-        desc_label.setStyleSheet("color: #888888; font-size: 12px;")
+        desc_label.setProperty("class", "informational_text")
         sidebar_layout.addWidget(desc_label)
 
         main_layout.addWidget(sidebar)
@@ -427,7 +429,7 @@ class RouteEditorDialog(QDialog):
         placeholder_layout = QVBoxLayout(self.placeholder_page)
         placeholder_label = QLabel("運行系統を追加してください")
         placeholder_label.setAlignment(Qt.AlignCenter)
-        placeholder_label.setStyleSheet("color: #888888; font-size: 18px;")
+        placeholder_label.setProperty("class", "placeholder_label")
         placeholder_layout.addWidget(placeholder_label)
         self.right_stack.addWidget(self.placeholder_page)
 
@@ -447,7 +449,6 @@ class RouteEditorDialog(QDialog):
         route_info_form = QFormLayout()
         self.route_id_edit = QLineEdit()
         self.route_id_edit.setReadOnly(True)
-        self.route_id_edit.setStyleSheet("background-color: #eeeeee; color: #888888;")
         route_info_form.addRow("運行系統ID(変更不可):", self.route_id_edit)
 
         self.route_name_edit = QLineEdit()
@@ -493,9 +494,8 @@ class RouteEditorDialog(QDialog):
         self.segment_list_widget.setFocusPolicy(Qt.NoFocus)
         self.segment_list_widget.setStyleSheet(
             "QListWidget { border: none; background-color: transparent; }"
-            "QListWidget::item:hover { background-color: #dddddd; }"
+            "QListWidget::item:hover, QListWidget::item:selected:hover { background-color: #dddddd; }"
             "QListWidget::item:selected { background-color: transparent; }"
-            "QListWidget::item:selected:hover { background-color: #dddddd; }"
         )
         self.segment_list_widget.model().rowsMoved.connect(self._on_segments_reordered)
         self.form_main_layout.addWidget(self.segment_list_widget)
@@ -509,7 +509,7 @@ class RouteEditorDialog(QDialog):
         self.delete_route_button = QPushButton("この運行系統を削除")
         self.delete_route_button.setFixedSize(120, 30)
         self.delete_route_button.clicked.connect(self._on_delete_route)
-        self.delete_route_button.setStyleSheet("QPushButton { color: #cc3333; border: none; text-decoration: underline; background-color: transparent; }")
+        self.delete_route_button.setProperty("class", "delete_button")
         self.form_main_layout.addWidget(self.delete_route_button, alignment=Qt.AlignRight)
 
         edit_form_layout.addWidget(self.form_main_area, stretch=1)
@@ -521,6 +521,7 @@ class RouteEditorDialog(QDialog):
         self.station_preview_area.setStyleSheet("QScrollArea { border: none; border-left: 1px solid #dddddd; }")
         
         self.station_preview_content = QWidget()
+        self.station_preview_content.setProperty("class", "scroll_content")
         self.station_preview_layout = QVBoxLayout(self.station_preview_content)
         self.station_preview_layout.setContentsMargins(10, 10, 10, 10)
         self.station_preview_layout.setSpacing(0)
@@ -531,7 +532,8 @@ class RouteEditorDialog(QDialog):
         self.station_preview_layout.addWidget(lbl_preview)
         
         self.direction_label = QLabel("下り列車の経由順で表示中")
-        self.direction_label.setStyleSheet("font-size: 12px; color: #888888; padding-top: 10px; padding-bottom: 20px;")
+        self.direction_label.setProperty("class", "informational_text")
+        self.direction_label.setStyleSheet("padding-top: 10px; padding-bottom: 20px;")
         self.station_preview_layout.addWidget(self.direction_label)
 
         self.station_preview_layout.addStretch() # 内容を上部に寄せる
@@ -699,10 +701,10 @@ class RouteEditorDialog(QDialog):
                 station_data = self.project.stations.get(sid, {})
                 if sid in all_endpoints and sid != start_sid and sid != end_sid:
                     # 他区間の末端駅はオレンジ色
-                    station_label.setStyleSheet("color: orange;")
+                    station_label.setStyleSheet("color: #cc9900;")
                 elif station_data.get("is_signal_station", False):
                     # 信号場は灰色
-                    station_label.setStyleSheet("color: gray;")
+                    station_label.setStyleSheet("color: #666666;")
                 elif station_data.get("is_major_station", False):
                     # 主要駅は太字
                     font = station_label.font()
@@ -790,6 +792,7 @@ class RouteEditorDialog(QDialog):
             btn_split.setFixedSize(50, 30)
             btn_split.clicked.connect(lambda _, s=seg, idx=i: self._on_split_segment(s, idx))
             btn_delete = QPushButton("削除")
+            btn_delete.setStyleSheet("color: #cc3333;")
             btn_delete.setFixedSize(50, 30)
             btn_delete.clicked.connect(lambda _, idx=i: self._on_delete_segment(idx))
             btn_layout.addWidget(btn_edit)

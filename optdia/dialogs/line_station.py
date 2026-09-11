@@ -29,7 +29,7 @@ class AddLineDialog(QDialog):
 
         # 警告表示スペース
         self.warning_label = QLabel("")
-        self.warning_label.setStyleSheet("color: red; padding-left: 5px;")
+        self.warning_label.setStyleSheet("color: #cc3333; padding-left: 5px;")
         layout.addWidget(self.warning_label)
 
         # 路線名
@@ -43,6 +43,7 @@ class AddLineDialog(QDialog):
         # ボタンエリア (追加 / キャンセル)
         button_layout = QHBoxLayout()
         self.add_button = QPushButton("追加")
+        self.add_button.setProperty("class", "ok_button")
         self.cancel_button = QPushButton("キャンセル")
 
         button_layout.addStretch()
@@ -117,7 +118,7 @@ class AddStationDialog(QDialog):
 
         # 警告表示スペース
         self.warning_label = QLabel("")
-        self.warning_label.setStyleSheet("color: red; padding-left: 5px;")
+        self.warning_label.setStyleSheet("color: #cc3333; padding-left: 5px;")
         new_layout.addWidget(self.warning_label)
 
         new_layout.addWidget(QLabel("駅名:"))
@@ -204,6 +205,7 @@ class AddStationDialog(QDialog):
         # ボタンエリア
         button_layout = QHBoxLayout()
         self.add_button = QPushButton("追加")
+        self.add_button.setProperty("class", "ok_button")
         self.cancel_button = QPushButton("キャンセル")
         button_layout.addStretch()
         button_layout.addWidget(self.add_button)
@@ -288,7 +290,7 @@ class AddTrackDialog(QDialog):
 
         # 警告表示
         self.warning_label = QLabel("")
-        self.warning_label.setStyleSheet("color: red; padding-left: 5px;")
+        self.warning_label.setStyleSheet("color: #cc3333; padding-left: 5px;")
         layout.addWidget(self.warning_label)
 
         # 発着番線名
@@ -311,6 +313,7 @@ class AddTrackDialog(QDialog):
         # ボタンエリア
         button_layout = QHBoxLayout()
         self.add_button = QPushButton("追加")
+        self.add_button.setProperty("class", "ok_button")
         self.cancel_button = QPushButton("キャンセル")
         button_layout.addStretch()
         button_layout.addWidget(self.add_button)
@@ -397,7 +400,6 @@ class EditTrackDialog(QDialog):
         layout.addWidget(QLabel("発着番線ID(変更不可):"))
         self.id_edit = QLineEdit(track_id)
         self.id_edit.setReadOnly(True)
-        self.id_edit.setStyleSheet("background-color: #eeeeee; color: #888888;")
         layout.addWidget(self.id_edit)
 
         # 発着番線名
@@ -416,6 +418,7 @@ class EditTrackDialog(QDialog):
         # ボタンエリア
         button_layout = QHBoxLayout()
         self.ok_button = QPushButton("OK")
+        self.ok_button.setProperty("class", "ok_button")
         self.cancel_button = QPushButton("キャンセル")
         button_layout.addStretch()
         button_layout.addWidget(self.ok_button)
@@ -468,7 +471,7 @@ class LineStationEditorDialog(QDialog):
         # 左側の垂直レイアウト (幅200px固定)
         left_panel = QWidget()
         left_panel.setFixedWidth(200)
-        left_panel.setStyleSheet("background-color: #f7f7f7;")
+        left_panel.setProperty("class", "dialog_sidebar")
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(10, 10, 10, 10)
         left_layout.setSpacing(5)
@@ -493,7 +496,7 @@ class LineStationEditorDialog(QDialog):
         left_layout.addSpacing(10)
         drag_info_label = QLabel("路線や駅はドラッグ操作で並び替え可能です")
         drag_info_label.setWordWrap(True)
-        drag_info_label.setStyleSheet("color: #888888; font-size: 12px;")
+        drag_info_label.setProperty("class", "informational_text")
         left_layout.addWidget(drag_info_label)
 
         main_layout.addWidget(left_panel)
@@ -507,7 +510,7 @@ class LineStationEditorDialog(QDialog):
         placeholder_layout = QVBoxLayout(self.placeholder_widget)
         placeholder_label = QLabel("まずは路線を追加してください")
         placeholder_label.setAlignment(Qt.AlignCenter)
-        placeholder_label.setStyleSheet("color: #888888; font-size: 18px;")
+        placeholder_label.setProperty("class", "placeholder_label")
         placeholder_layout.addWidget(placeholder_label)
         self.right_stack.addWidget(self.placeholder_widget)
 
@@ -525,7 +528,7 @@ class LineStationEditorDialog(QDialog):
         station_left_panel = QWidget()
         station_left_panel.setObjectName("station_left_panel")
         station_left_panel.setFixedWidth(180)
-        station_left_panel.setStyleSheet("#station_left_panel { background-color: #f7f7f7; border-right: 1px solid #dddddd; }")
+        station_left_panel.setProperty("class", "dialog_sidebar")
         station_left_layout = QVBoxLayout(station_left_panel)
         station_left_layout.setContentsMargins(10, 10, 10, 10)
         station_left_layout.setSpacing(5)
@@ -558,7 +561,6 @@ class LineStationEditorDialog(QDialog):
         base_info_layout = QFormLayout(self.base_info_group)
         self.station_id_edit = QLineEdit()
         self.station_id_edit.setReadOnly(True)
-        self.station_id_edit.setStyleSheet("background-color: #eeeeee; color: #888888;")
         base_info_layout.addRow("駅ID(変更不可):", self.station_id_edit)
 
         self.station_name_edit = QLineEdit()
@@ -589,7 +591,7 @@ class LineStationEditorDialog(QDialog):
         # 1文字表記に関する説明文
         initial_info_label = QLabel("1文字表記はその駅を始発・終着とする列車が設定されている駅と路線の分岐駅で必須です")
         initial_info_label.setWordWrap(True)
-        initial_info_label.setStyleSheet("color: #888888; font-size: 12px;")
+        initial_info_label.setProperty("class", "informational_text")
         left_vertical_layout.addWidget(initial_info_label)
 
         # 各種チェックボックス
@@ -669,7 +671,7 @@ class LineStationEditorDialog(QDialog):
 
         # 説明文の追加
         calc_info_label = QLabel("基準運転時分は入力済みの時刻表から自動算出することもできます")
-        calc_info_label.setStyleSheet("color: #888888; font-size: 12px;")
+        calc_info_label.setProperty("class", "informational_text")
         line_station_main_layout.addWidget(calc_info_label)
 
         station_form_layout.addWidget(self.line_station_group)
@@ -680,7 +682,7 @@ class LineStationEditorDialog(QDialog):
         self.delete_station_button = QPushButton("この駅を削除")
         self.delete_station_button.setFixedSize(120, 30)
         self.delete_station_button.clicked.connect(self._on_delete_station)
-        self.delete_station_button.setStyleSheet("QPushButton { color: #cc3333; border: none; text-decoration: underline; background-color: transparent; }")
+        self.delete_station_button.setProperty("class", "delete_button")
         station_form_layout.addWidget(self.delete_station_button, alignment=Qt.AlignRight)
 
         # 駅情報タブの右側をスタックウィジェット化（フォームとプレースホルダーの切り替え）
@@ -693,7 +695,7 @@ class LineStationEditorDialog(QDialog):
         empty_layout.setAlignment(Qt.AlignCenter)
 
         label_main = QLabel("駅を追加してください")
-        label_main.setStyleSheet("font-size: 18px; color: #888888;")
+        label_main.setProperty("class", "placeholder_label")
         label_main.setAlignment(Qt.AlignCenter)
 
         label_sub = QLabel("路線情報は路線情報タブで編集できます")
@@ -720,7 +722,6 @@ class LineStationEditorDialog(QDialog):
         self.line_info_layout.addWidget(QLabel("路線ID(変更不可):"))
         self.line_id_display = QLineEdit()
         self.line_id_display.setReadOnly(True)
-        self.line_id_display.setStyleSheet("background-color: #eeeeee; color: #888888;")
         self.line_info_layout.addWidget(self.line_id_display)
 
         # 路線名
@@ -753,10 +754,8 @@ class LineStationEditorDialog(QDialog):
         # 基準運転時分の自動算出ボタン
         self.calc_running_time_button = QPushButton("この路線の基準運転時分を自動算出")
         self.calc_running_time_button.clicked.connect(self._on_calc_running_time)
-        self.calc_running_time_button.setStyleSheet(
-            "QPushButton { border: none; text-decoration: underline; background-color: transparent; text-align: left; }"
-            "QPushButton:disabled { color: #aaaaaa; }"
-        )
+        self.calc_running_time_button.setProperty("class", "text_button")
+        self.calc_running_time_button.setStyleSheet("text-align: left;")
         self.line_info_layout.addWidget(self.calc_running_time_button)
 
         self.line_info_layout.addStretch() # 内容を上部に寄せる
@@ -765,7 +764,7 @@ class LineStationEditorDialog(QDialog):
         self.delete_line_button = QPushButton("この路線を削除")
         self.delete_line_button.setFixedSize(120, 30)
         self.delete_line_button.clicked.connect(self._on_delete_line)
-        self.delete_line_button.setStyleSheet("QPushButton { color: #cc3333; border: none; text-decoration: underline; background-color: transparent; }")
+        self.delete_line_button.setProperty("class", "delete_button")
         self.line_info_layout.addWidget(self.delete_line_button, alignment=Qt.AlignRight)
 
         self.right_panel_tabs.addTab(self.line_info_tab, "路線情報")
@@ -854,7 +853,7 @@ class LineStationEditorDialog(QDialog):
             name = line.get("line_name", "")
             color = line.get("line_color", "#333333")
             # 記号部分を路線の色で着色するHTML
-            display_text = f"<font color='{color}'><b>[{symbol}]</b></font> {name}" if symbol else name
+            display_text = f"<font color='{color}'><b>[{symbol}]</b></font><font color='#333333'> {name}</font>" if symbol else name
             
             item = QListWidgetItem(display_text)
             item.setData(Qt.UserRole, line_id)

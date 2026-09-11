@@ -128,7 +128,7 @@ class VehicleOperationEditorDialog(QDialog):
         # 左側の垂直レイアウト (幅240px固定)
         left_panel = QWidget()
         left_panel.setFixedWidth(240)
-        left_panel.setStyleSheet("background-color: #f7f7f7;")
+        left_panel.setProperty("class", "dialog_sidebar")
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(10, 10, 10, 10)
         left_layout.setSpacing(5)
@@ -175,7 +175,7 @@ class VehicleOperationEditorDialog(QDialog):
         left_layout.addSpacing(10)
         drag_info_label = QLabel("ドラッグ操作により運用の並び替えや別の運用グループへの移動が可能です")
         drag_info_label.setWordWrap(True)
-        drag_info_label.setStyleSheet("color: #888888; font-size: 12px;")
+        drag_info_label.setProperty("class", "informational_text")
         left_layout.addWidget(drag_info_label)
             
         main_layout.addWidget(left_panel, stretch=1)
@@ -307,7 +307,8 @@ class VehicleOperationEditorDialog(QDialog):
 
         self.btn_use_first_train = QPushButton("初列車の情報を使用")
         self.btn_use_first_train.setCursor(Qt.PointingHandCursor)
-        self.btn_use_first_train.setStyleSheet("QPushButton { border: none; text-decoration: underline; background-color: transparent; font-size: 12px; }")
+        self.btn_use_first_train.setProperty("class", "borderless_button")
+        self.btn_use_first_train.setStyleSheet("font-size: 12px;")
         self.btn_use_first_train.clicked.connect(self._on_use_first_train_info)
         start_time_layout.addWidget(self.btn_use_first_train)
 
@@ -340,7 +341,8 @@ class VehicleOperationEditorDialog(QDialog):
 
         self.btn_use_last_train = QPushButton("終列車の情報を使用")
         self.btn_use_last_train.setCursor(Qt.PointingHandCursor)
-        self.btn_use_last_train.setStyleSheet("QPushButton { border: none; text-decoration: underline; background-color: transparent; font-size: 12px; }")
+        self.btn_use_last_train.setProperty("class", "borderless_button")
+        self.btn_use_last_train.setStyleSheet("font-size: 12px;")
         self.btn_use_last_train.clicked.connect(self._on_use_last_train_info)
         end_time_layout.addWidget(self.btn_use_last_train)
 
@@ -386,7 +388,7 @@ class VehicleOperationEditorDialog(QDialog):
         placeholder_layout = QVBoxLayout(self.placeholder_page)
         placeholder_label = QLabel("運用グループを追加してください")
         placeholder_label.setAlignment(Qt.AlignCenter)
-        placeholder_label.setStyleSheet("color: #888888; font-size: 18px;")
+        placeholder_label.setProperty("class", "placeholder_label")
         placeholder_layout.addWidget(placeholder_label)
         self.stacked_widget.addWidget(self.placeholder_page)
 
@@ -901,7 +903,6 @@ class VehicleOperationEditorDialog(QDialog):
             return
 
         # ランダムな英数字16文字のIDを生成
-        chars = string.ascii_letters + string.digits
         operations = diagram.get("operations", {})
         while True:
             new_op_id = generate_random_id()

@@ -39,6 +39,7 @@ class AddTrainTypeDialog(QDialog):
         # ボタンエリア
         button_layout = QHBoxLayout()
         self.add_button = QPushButton("追加")
+        self.add_button.setProperty("class", "ok_button")
         self.cancel_button = QPushButton("キャンセル")
         button_layout.addStretch()
         button_layout.addWidget(self.add_button)
@@ -73,9 +74,8 @@ class TrainTypeEditorDialog(QDialog):
 
         # 左側の垂直レイアウト (幅180px固定)
         left_panel = QWidget()
-        left_panel.setObjectName("train_type_left_panel")
         left_panel.setFixedWidth(180)
-        left_panel.setStyleSheet("#train_type_left_panel { background-color: #f7f7f7; border-right: 1px solid #dddddd; }")
+        left_panel.setProperty("class", "dialog_sidebar")
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(10, 10, 10, 10)
         left_layout.setSpacing(5)
@@ -183,6 +183,7 @@ class TrainTypeEditorDialog(QDialog):
         # 複製ボタン
         self.duplicate_tt_button = QPushButton("この種別のコピーを作成")
         self.duplicate_tt_button.setFixedWidth(200)
+        self.duplicate_tt_button.setProperty("class", "text_button")
         self.duplicate_tt_button.clicked.connect(self._on_duplicate_train_type)
         bottom_button_layout.addWidget(self.duplicate_tt_button)
         
@@ -190,7 +191,7 @@ class TrainTypeEditorDialog(QDialog):
         self.delete_tt_button = QPushButton("この種別を削除")
         self.delete_tt_button.setFixedSize(120, 30)
         self.delete_tt_button.clicked.connect(self._on_delete_train_type)
-        self.delete_tt_button.setStyleSheet("QPushButton { color: #cc3333; border: none; text-decoration: underline; background-color: transparent; }")
+        self.delete_tt_button.setProperty("class", "delete_button")
         bottom_button_layout.addWidget(self.delete_tt_button)
         
         self.tt_editor_layout.addLayout(bottom_button_layout)
@@ -202,7 +203,7 @@ class TrainTypeEditorDialog(QDialog):
         self.tt_placeholder_layout = QVBoxLayout(self.tt_placeholder_page)
         self.tt_empty_label = QLabel("種別を追加してください")
         self.tt_empty_label.setAlignment(Qt.AlignCenter)
-        self.tt_empty_label.setStyleSheet("color: #888888; font-size: 18px;")
+        self.tt_empty_label.setProperty("class", "placeholder_label")
         self.tt_placeholder_layout.addWidget(self.tt_empty_label)
         
         self.tt_right_stack.addWidget(self.tt_placeholder_page)
