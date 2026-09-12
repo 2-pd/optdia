@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QListWidget, QListWidgetItem, QCheckBox, QStackedWidget,
     QRadioButton, QComboBox, QGroupBox, QFormLayout, QSpinBox, QWidget, QTabWidget
 )
-from core.project import OptDiaProject
+from core.project import OptDiaProject, generate_random_id
 from common.gui_utils import HtmlDelegate, create_color_square_pixmap
 from common.widgets import ColorPickerWidget
 
@@ -1772,13 +1772,17 @@ class LineStationEditorDialog(QDialog):
                 QMessageBox.warning(self, "エラー", "選択された駅は編集中の路線に登録済みです。")
                 return
             
+            station_entry_id = generate_random_id(12)
             station_list.append({
+                "station_entry_id": station_entry_id,
                 "station_id": new_station_id,
                 "station_number": None,
                 "inbound_main_track": inbound_main,
                 "outbound_main_track": outbound_main,
                 "absolute_standard_running_time": None
             })
+            if hasattr(self.project, "station_entry_to_station_id"):
+                self.project.station_entry_to_station_id[station_entry_id] = new_station_id
             self.current_selected_line_data["station_list"] = station_list
             
             # UI更新
