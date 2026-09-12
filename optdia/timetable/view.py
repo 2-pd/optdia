@@ -69,7 +69,8 @@ class TimetableVerticalHeader(QHeaderView):
             row_idx = logicalIndex - len(model.row_headers)
             if 0 <= row_idx < len(model.station_rows):
                 station_row_data = model.station_rows[row_idx]
-                station_id = model.full_stop_sequence[station_row_data["stop_idx"]]
+                config = model.full_stop_configs[station_row_data["stop_idx"]]
+                station_id = config.get("station_id") or getattr(model.project, "station_entry_to_station_id", {}).get(config.get("station_entry_id"))
                 station_data = model.project.stations.get(station_id, {})
 
                 if station_data.get("is_signal_station", False):
@@ -408,7 +409,8 @@ class TimetableView(QTableView):
                         row_def = model.station_rows[row_idx]
                         stop_idx = row_def["stop_idx"]
                         config = model.full_stop_configs[stop_idx]
-                        station_data = model.project.stations.get(config["station_id"], {})
+                        station_id = config.get("station_id") or getattr(model.project, "station_entry_to_station_id", {}).get(config.get("station_entry_id"))
+                        station_data = model.project.stations.get(station_id, {})
                         is_seg_boundary = config.get("is_segment_start") or config.get("is_segment_end")
                         show_arr = is_seg_boundary or station_data.get("show_arrival_time", False)
 

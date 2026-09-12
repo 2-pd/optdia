@@ -96,7 +96,7 @@ class AddStationDialog(QDialog):
 
         # 選択肢
         self.new_station_radio = QRadioButton("このプロジェクトでは未登録の駅を追加する")
-        self.existing_station_radio = QRadioButton("既に別路線に登録済みの駅を追加する")
+        self.existing_station_radio = QRadioButton("既に別路線等に登録済みの駅を追加する")
         self.new_station_radio.setChecked(True)
         layout.addWidget(self.new_station_radio)
         layout.addWidget(self.existing_station_radio)
@@ -188,14 +188,8 @@ class AddStationDialog(QDialog):
 
         # 既存駅ページ用のデータ投入
         for line_id in self.project.lines_order:
-            if line_id == exclude_line_id:
-                continue
             line_name = self.project.lines[line_id].get("line_name", line_id)
             self.line_combo.addItem(line_name, line_id)
-        
-        # 他の路線が存在しない場合は、既存駅からの追加を選択不可にする
-        if self.line_combo.count() == 0:
-            self.existing_station_radio.setEnabled(False)
 
         self.line_combo.currentIndexChanged.connect(self._on_line_combo_changed)
         self._on_line_combo_changed() # 初期化
@@ -1540,10 +1534,17 @@ class LineStationEditorDialog(QDialog):
 
         # 1. 運行系統の制約チェック
         # 全ての運行系統を走査し、編集中の路線の部分区間の始点・終点になっていないか確認
+        row = self.station_list_widget.currentRow()
+        station_list = self.current_selected_line_data.get("station_list", [])
+        station_entry_id = station_list[row].get("station_entry_id") if 0 <= row < len(station_list) else None
+
         for route in self.project.routes.values():
             for seg in route.get("line_segments", []):
                 if seg.get("line_id") == self.current_selected_line_id:
-                    if seg.get("start_station") == station_id or seg.get("end_station") == station_id:
+                    start_val = seg.get("start_station_entry")
+                    end_val = seg.get("end_station_entry") or seg.get("end_station")
+                    if (station_entry_id and (start_val == station_entry_id or end_val == station_entry_id)) or \
+                       (start_val == station_id or end_val == station_id):
                         QMessageBox.warning(
                             self,
                             "エラー",
@@ -1767,10 +1768,6 @@ class LineStationEditorDialog(QDialog):
 
             # 選択中の路線の駅リストに追加
             station_list = self.current_selected_line_data.get("station_list", [])
-            # 重複チェック
-            if any(s.get("station_id") == new_station_id for s in station_list):
-                QMessageBox.warning(self, "エラー", "選択された駅は編集中の路線に登録済みです。")
-                return
             
             station_entry_id = generate_random_id(12)
             station_list.append({

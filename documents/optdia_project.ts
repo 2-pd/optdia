@@ -104,8 +104,8 @@ interface optdia_route {
 interface optdia_line_segment {
     segment_id: string; // 部分区間ID(ランダムな英数字12文字)
     line_id: string; // 路線ID
-    start_station: string; // 区間の始点となる駅のID
-    end_station: string; // 区間の終点となる駅のID(始点と終点の位置関係が路線情報での駅の順序と逆の場合は、路線が逆向きで経路に配置されていることを意味する)
+    start_station_entry: string; // 区間の始点となる駅の路線-駅対応ID
+    end_station_entry: string; // 区間の終点となる駅の路線-駅対応ID(始点と終点の位置関係が路線情報での駅の順序と逆の場合は、路線が逆向きで経路に配置されていることを意味する)
 }
 
 

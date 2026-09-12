@@ -594,7 +594,8 @@ class AddTrainStopEvent(BaseEvent):
     def validate_redo(self, project) -> None:
         if self.route_id not in project.routes:
             raise HistoryExecutionError("運行系統情報が変更されたためこれ以上操作をやり直すことができません")
-        station_id = self.stop.get("station_id")
+        station_entry_id = self.stop.get("station_entry_id")
+        station_id = self.stop.get("station_id") or getattr(project, "station_entry_to_station_id", {}).get(station_entry_id)
         if station_id and station_id not in project.stations:
             raise HistoryExecutionError("駅情報が変更されたためこれ以上操作をやり直すことができません")
 
@@ -633,7 +634,8 @@ class RemoveTrainStopEvent(BaseEvent):
     def validate_undo(self, project) -> None:
         if self.route_id not in project.routes:
             raise HistoryExecutionError("運行系統情報が変更されたためこれ以上操作を元に戻すことができません")
-        station_id = self.stop.get("station_id")
+        station_entry_id = self.stop.get("station_entry_id")
+        station_id = self.stop.get("station_id") or getattr(project, "station_entry_to_station_id", {}).get(station_entry_id)
         if station_id and station_id not in project.stations:
             raise HistoryExecutionError("駅情報が変更されたためこれ以上操作を元に戻すことができません")
 
@@ -677,14 +679,16 @@ class ChangeTrainStopEvent(BaseEvent):
     def validate_undo(self, project) -> None:
         if self.route_id not in project.routes:
             raise HistoryExecutionError("運行系統情報が変更されたためこれ以上操作を元に戻すことができません")
-        station_id = self.old_stop.get("station_id")
+        old_entry_id = self.old_stop.get("station_entry_id")
+        station_id = self.old_stop.get("station_id") or getattr(project, "station_entry_to_station_id", {}).get(old_entry_id)
         if station_id and station_id not in project.stations:
             raise HistoryExecutionError("駅情報が変更されたためこれ以上操作を元に戻すことができません")
 
     def validate_redo(self, project) -> None:
         if self.route_id not in project.routes:
             raise HistoryExecutionError("運行系統情報が変更されたためこれ以上操作をやり直すことができません")
-        station_id = self.new_stop.get("station_id")
+        new_entry_id = self.new_stop.get("station_entry_id")
+        station_id = self.new_stop.get("station_id") or getattr(project, "station_entry_to_station_id", {}).get(new_entry_id)
         if station_id and station_id not in project.stations:
             raise HistoryExecutionError("駅情報が変更されたためこれ以上操作をやり直すことができません")
 

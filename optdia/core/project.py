@@ -52,6 +52,7 @@ def migrate_to_2026_09_002(data: dict) -> dict:
     2026.09.002 未満の仕様で作成されたプロジェクトデータ辞書を 2026.09.002 の仕様へ移行する。
     - optdia_line_station_entry に station_entry_id (英数字12文字) を追加
     - optdia_train_stop の station_id を station_entry_id に置換
+    - optdia_line_segment の start_station と end_station を start_station_entry と end_station_entry に置換
     - metadata.project_schema_version を 2026.09.002 に更新
     """
     entities = data.get("entities", {})
@@ -75,13 +76,26 @@ def migrate_to_2026_09_002(data: dict) -> dict:
 
     routes = entities.get("routes", [])
     for route in routes:
-        # segment_id -> line_id マッピング
+        # segment_id -> line_id マッピングおよび line_segments の移行
         segment_to_line = {}
         for seg in route.get("line_segments", []):
             seg_id = seg.get("segment_id")
             lid = seg.get("line_id")
             if seg_id and lid:
                 segment_to_line[seg_id] = lid
+
+            if "start_station" in seg and "start_station_entry" not in seg:
+                start_sid = seg.get("start_station")
+                start_eid = line_station_to_entry_id.get(lid, {}).get(start_sid) or (station_to_entry_ids.get(start_sid, [None])[0])
+                seg["start_station_entry"] = start_eid
+            if "end_station" in seg and "end_station_entry" not in seg:
+                end_sid = seg.get("end_station")
+                end_eid = line_station_to_entry_id.get(lid, {}).get(end_sid) or (station_to_entry_ids.get(end_sid, [None])[0])
+                seg["end_station_entry"] = end_eid
+            if "start_station" in seg:
+                del seg["start_station"]
+            if "end_station" in seg:
+                del seg["end_station"]
 
         # inbound_trains と outbound_trains 内の stops を更新
         for train_key in ["inbound_trains", "outbound_trains"]:
@@ -118,6 +132,7 @@ class OptDiaProject:
     """
 
     def __init__(self, data: dict = None):
+        # 引数 data はプロジェクトファイル(JSON)をパースした辞書
         if data is None:
             data = {}
 
@@ -150,7 +165,6 @@ class OptDiaProject:
                 sid = entry.get("station_id")
                 if eid and sid:
                     self.station_entry_to_station_id[eid] = sid
-        self.station_entry_id_to_station_id = self.station_entry_to_station_id
 
         # 駅 (stations): 連想配列だが、内部の tracks (optdia_station_track[]) を分割
         self.stations = entities.get("stations", {})

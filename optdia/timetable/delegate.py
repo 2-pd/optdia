@@ -84,13 +84,14 @@ class TimetableDelegate(QStyledItemDelegate):
                 # フォーカスや選択がない場合のみプレースホルダーを表示
                 if not (option.state & (QStyle.State_HasFocus | QStyle.State_Selected)):
                     placeholder_symbol = self._get_placeholder_symbol(index)
-        
+
         if row >= num_headers:
             row_idx = row - num_headers
             if 0 <= row_idx < len(model.station_rows):
                 row_def = model.station_rows[row_idx]
                 config = model.full_stop_configs[row_def["stop_idx"]]
-                station_data = model.project.stations.get(config["station_id"], {})
+                station_id = config.get("station_id") or getattr(model.project, "station_entry_to_station_id", {}).get(config.get("station_entry_id"))
+                station_data = model.project.stations.get(station_id, {})
                 if station_data.get("show_track_name", False):
                     draw_track_box = True
                     # 時刻情報に対応する番線名を取得
@@ -112,7 +113,7 @@ class TimetableDelegate(QStyledItemDelegate):
             track_rect = QRect(option.rect.left(), option.rect.top(), track_box_width, option.rect.height())
             painter.save() # 変更開始
             painter.fillRect(track_rect, QColor("#f7f7f7")) # 背景色を #f7f7f7 に変更
-            
+
             painter.setPen(QColor("#333333"))
             font = painter.font()
             font.setPointSize(10)
@@ -194,7 +195,7 @@ class TimetableDelegate(QStyledItemDelegate):
         # セルが選択されていれば濃い枠線を描画
         if option.state & QStyle.State_Selected:
             # ハイライト枠線の色と太さを設定
-            pen = QPen(QColor("#333333"))
+            pen = QPen(QColor("#55aaff"))
             pen.setWidth(1)
             painter.setPen(pen)
 
@@ -343,7 +344,8 @@ class TimetableDelegate(QStyledItemDelegate):
         row_idx = index.row() - len(model.row_headers)
         row_def = model.station_rows[row_idx]
         config = model.full_stop_configs[row_def["stop_idx"]]
-        station_data = model.project.stations.get(config["station_id"], {})
+        station_id = config.get("station_id") or getattr(model.project, "station_entry_to_station_id", {}).get(config.get("station_entry_id"))
+        station_data = model.project.stations.get(station_id, {})
         return station_data.get("show_track_name", False)
 
     def _show_track_menu(self, index, model, widget):
@@ -352,7 +354,8 @@ class TimetableDelegate(QStyledItemDelegate):
         num_headers = len(model.row_headers)
         row_def = model.station_rows[row - num_headers]
         config = model.full_stop_configs[row_def["stop_idx"]]
-        station_data = model.project.stations.get(config["station_id"], {})
+        station_id = config.get("station_id") or getattr(model.project, "station_entry_to_station_id", {}).get(config.get("station_entry_id"))
+        station_data = model.project.stations.get(station_id, {})
         
         # 現在の番線IDを取得
         train_id = model.train_ids[col]

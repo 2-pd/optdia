@@ -71,7 +71,9 @@ class TrainPicker(QDialog):
             tt_display = f"<font color='{tt_color}'>{tt_short}</font>"
             
             if first_stop:
-                s_name = project.stations.get(first_stop["station_id"], {}).get("station_name", first_stop["station_id"])
+                seid = first_stop.get("station_entry_id")
+                sid = getattr(project, "station_entry_to_station_id", {}).get(seid, first_stop.get("station_id"))
+                s_name = project.stations.get(sid, {}).get("station_name", sid or "")
                 display_text = f"{num} {tt_display} <font color='#666666'>({s_name} {first_stop['departure_time'][:5]}発)</font>"
                 search_text = f"{num} {tt_short} {s_name}"
             else:
@@ -914,7 +916,9 @@ class SubsequentTrainDialog(QDialog):
         # 始発駅と時刻
         first_stop = next((s for s in m_train.get("stops", []) if s.get("departure_time")), None)
         if first_stop:
-            s_name = self.project.stations.get(first_stop["station_id"], {}).get("station_name", first_stop["station_id"])
+            seid = first_stop.get("station_entry_id")
+            sid = getattr(self.project, "station_entry_to_station_id", {}).get(seid, first_stop.get("station_id"))
+            s_name = self.project.stations.get(sid, {}).get("station_name", sid or "")
             return f"{num} {tt_display} <font color='#666666'>({s_name} {first_stop['departure_time'][:5]}発)</font>"
         return f"{num} {tt_display}"
 
@@ -974,7 +978,8 @@ def split_train_at_cell(parent, model, index):
     row_def = model.station_rows[row_idx]
     stop_idx = row_def["stop_idx"]
     cfg = model.full_stop_configs[stop_idx]
-    station_id = cfg["station_id"]
+    station_entry_id = cfg.get("station_entry_id")
+    station_id = cfg.get("station_id") or getattr(model.project, "station_entry_to_station_id", {}).get(station_entry_id)
 
     route_id = model.route_id
     diagram_id = model.diagram_id
@@ -1014,10 +1019,10 @@ def split_train_at_cell(parent, model, index):
         QMessageBox.warning(parent, "エラー", "列車は途中の停車駅でのみ分割可能です")
         return
 
-    first_station_id = timed_stops[0]["station_id"]
-    last_station_id = timed_stops[-1]["station_id"]
+    first_station_entry_id = timed_stops[0].get("station_entry_id")
+    last_station_entry_id = timed_stops[-1].get("station_entry_id")
 
-    if station_id == first_station_id or station_id == last_station_id:
+    if station_entry_id == first_station_entry_id or station_entry_id == last_station_entry_id:
         QMessageBox.warning(parent, "エラー", "列車は途中の停車駅でのみ分割可能です")
         return
 
@@ -1063,7 +1068,8 @@ def split_train_at_cell(parent, model, index):
     orig_stops = []
     for s in m_train.get("stops", []):
         s_copy = s.copy()
-        if s_copy["stop_idx"] == stop_idx and model.project.stations.get(s_copy["station_id"], {}).get("show_arrival_time", False):
+        s_sid = getattr(model.project, "station_entry_to_station_id", {}).get(s_copy.get("station_entry_id"), s_copy.get("station_id"))
+        if s_copy["stop_idx"] == stop_idx and model.project.stations.get(s_sid, {}).get("show_arrival_time", False):
             s_copy["departure_time"] = None
         elif s_copy["stop_idx"] > stop_idx:
             s_copy["arrival_time"] = None

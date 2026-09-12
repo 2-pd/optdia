@@ -234,8 +234,8 @@ class TimetableModel(QAbstractTableModel):
                         work_segments.append({
                             "segment_id": seg["segment_id"],
                             "line_id": seg["line_id"],
-                            "start_station": seg["end_station"],
-                            "end_station": seg["start_station"]
+                            "start_station_entry": seg.get("end_station_entry"),
+                            "end_station_entry": seg.get("start_station_entry")
                         })
                 else:
                     work_segments = segments
@@ -246,26 +246,41 @@ class TimetableModel(QAbstractTableModel):
                     line_data = self.project.lines.get(line_id, {})
                     line_color = line_data.get("line_color", "#333333")
 
+                    start_entry = seg.get("start_station_entry")
+                    end_entry = seg.get("end_station_entry")
+
                     # 路線内での進行方向(inbound/outbound)を判定
-                    line_station_ids = [s["station_id"] for s in line_data.get("station_list", [])]
+                    line_station_entries = line_data.get("station_list", [])
+                    line_station_entry_ids = [s.get("station_entry_id") for s in line_station_entries]
                     try:
-                        idx_start = line_station_ids.index(seg["start_station"])
-                        idx_end = line_station_ids.index(seg["end_station"])
-                    except ValueError: continue
+                        idx_start = line_station_entry_ids.index(start_entry)
+                        idx_end = line_station_entry_ids.index(end_entry)
+                    except ValueError:
+                        line_station_ids = [s.get("station_id") for s in line_station_entries]
+                        try:
+                            idx_start = line_station_ids.index(start_entry)
+                            idx_end = line_station_ids.index(end_entry)
+                        except ValueError:
+                            continue
                     seg_line_direction = "outbound" if idx_start <= idx_end else "inbound"
 
-                    s_ids = self._get_stations_in_segment(line_id, seg["start_station"], seg["end_station"])
-                    station_list = line_data.get("station_list", [])
-                    for i, sid in enumerate(s_ids):
-                        ls_item = next((s for s in station_list if s["station_id"] == sid), {})
+                    if idx_start <= idx_end:
+                        segment_entries = line_station_entries[idx_start:idx_end + 1]
+                    else:
+                        segment_entries = line_station_entries[idx_start:idx_end - 1 if idx_end > 0 else None:-1] if idx_end > 0 else line_station_entries[idx_start::-1]
+
+                    for i, ls_item in enumerate(segment_entries):
+                        sid = ls_item.get("station_id")
+                        station_entry_id = ls_item.get("station_entry_id")
                         track_id = ls_item.get("inbound_main_track" if seg_line_direction == "inbound" else "outbound_main_track")
                         
                         is_current_segment_start = (i == 0)
-                        is_current_segment_end = (i == len(s_ids) - 1)
+                        is_current_segment_end = (i == len(segment_entries) - 1)
 
                         self.full_stop_sequence.append(sid)
                         self.full_stop_configs.append({
                             "segment_id": segment_id,
+                            "station_entry_id": station_entry_id,
                             "station_id": sid, 
                             "line_id": line_id, 
                             "direction": seg_line_direction, 
@@ -280,7 +295,7 @@ class TimetableModel(QAbstractTableModel):
                         show_arr = is_current_segment_start or is_current_segment_end or s_data.get("show_arrival_time", False)
                         if i == 0:
                             self.station_rows.append({"name": f"{name} [発]", "stop_idx": stop_idx, "type": "dep", "line_color": line_color})
-                        elif i == len(s_ids) - 1:
+                        elif i == len(segment_entries) - 1:
                             self.station_rows.append({"name": f"{name} [着]", "stop_idx": stop_idx, "type": "arr", "line_color": line_color})
                         elif show_arr:
                             self.station_rows.append({"name": f"{name} [着]", "stop_idx": stop_idx, "type": "arr", "line_color": line_color})
@@ -291,7 +306,7 @@ class TimetableModel(QAbstractTableModel):
                 # 駅情報の逆引き用マップ（normalizationの高速化用）
                 self._stop_lookup = {}
                 for i, cfg in enumerate(self.full_stop_configs):
-                    key = (cfg["station_id"], cfg["segment_id"])
+                    key = (cfg.get("station_entry_id"), cfg["segment_id"])
                     if key not in self._stop_lookup: self._stop_lookup[key] = []
                     self._stop_lookup[key].append(i)
 
@@ -367,16 +382,26 @@ class TimetableModel(QAbstractTableModel):
         stops_with_idx = []
 
         for s in train["stops"]:
-            sid, seg_id = s["station_id"], s["segment_id"]
+            seid, seg_id = s.get("station_entry_id"), s.get("segment_id")
             # 高速な逆引きを使用して stop_idx を特定
-            key = (sid, seg_id)
-            for i in self._stop_lookup.get(key, []):
-                cfg = self.full_stop_configs[i]
-                if ((not cfg.get("is_segment_start") or s.get("arrival_time") is None) and
-                    (not cfg.get("is_segment_end") or s.get("departure_time") is None)):
-                    s["stop_idx"] = i
+            key = (seid, seg_id)
+            candidates = self._stop_lookup.get(key, [])
+            if len(candidates) == 1:
+                s["stop_idx"] = candidates[0]
+                stops_with_idx.append(s)
+            elif len(candidates) > 1:
+                matched = False
+                for i in candidates:
+                    cfg = self.full_stop_configs[i]
+                    if ((not cfg.get("is_segment_start") or s.get("arrival_time") is None) and
+                        (not cfg.get("is_segment_end") or s.get("departure_time") is None)):
+                        s["stop_idx"] = i
+                        stops_with_idx.append(s)
+                        matched = True
+                        break
+                if not matched:
+                    s["stop_idx"] = candidates[0]
                     stops_with_idx.append(s)
-                    break
 
         # stop_idx に基づいてソート（これでテーブル上の並び順と一致する）
         train["stops"].sort(key=lambda x: x.get("stop_idx", 0))
@@ -441,14 +466,14 @@ class TimetableModel(QAbstractTableModel):
                     stop_idx = row_def["stop_idx"]
                     config = self.full_stop_configs[stop_idx]
                     seg_id = config["segment_id"]
-                    sid = config["station_id"]
+                    seid = config.get("station_entry_id")
                     
                     if "stops" not in m_train: m_train["stops"] = []
                     stop = next((s for s in m_train["stops"] if s.get("stop_idx") == stop_idx), None)
                     if not stop:
                         stop = {
                             "segment_id": seg_id,
-                            "station_id": sid,
+                            "station_entry_id": seid,
                             "track_id": config["track_id"],
                             "arrival_time": None,
                             "departure_time": None,
@@ -470,13 +495,13 @@ class TimetableModel(QAbstractTableModel):
                             curr_idx = m_train["stops"].index(stop)
                             if curr_idx > 0:
                                 prev_stop = m_train["stops"][curr_idx - 1]
-                                if prev_stop.get("station_id") == stop.get("station_id"):
+                                if prev_stop.get("station_entry_id") == stop.get("station_entry_id"):
                                     old_p = copy.deepcopy(prev_stop)
                                     prev_stop["stop_type"] = value
                                     events_to_push.append(ChangeTrainStopEvent(self.route_id, self.direction, train_id, prev_stop.get("stop_idx"), old_p, prev_stop))
                             if curr_idx < len(m_train["stops"]) - 1:
                                 next_stop = m_train["stops"][curr_idx + 1]
-                                if next_stop.get("station_id") == stop.get("station_id"):
+                                if next_stop.get("station_entry_id") == stop.get("station_entry_id"):
                                     old_n = copy.deepcopy(next_stop)
                                     next_stop["stop_type"] = value
                                     events_to_push.append(ChangeTrainStopEvent(self.route_id, self.direction, train_id, next_stop.get("stop_idx"), old_n, next_stop))
@@ -544,6 +569,7 @@ class TimetableModel(QAbstractTableModel):
                 stop_idx = row_def["stop_idx"]
                 config = self.full_stop_configs[stop_idx]
                 seg_id = config["segment_id"]
+                seid = config.get("station_entry_id")
                 sid = config["station_id"]
 
                 # 番線IDの更新処理
@@ -554,7 +580,7 @@ class TimetableModel(QAbstractTableModel):
                         initial_arr = None
                         initial_dep = None
                         stop = {
-                            "segment_id": seg_id, "station_id": sid,
+                            "segment_id": seg_id, "station_entry_id": seid,
                             "track_id": value,
                             "arrival_time": initial_arr, "departure_time": initial_dep,
                             "stop_type": 1, "stop_idx": stop_idx
@@ -605,7 +631,7 @@ class TimetableModel(QAbstractTableModel):
 
                     stop = {
                         "segment_id": seg_id,
-                        "station_id": sid,
+                        "station_entry_id": seid,
                         "track_id": config["track_id"],
                         "arrival_time": initial_arrival_time,
                         "departure_time": initial_departure_time,
@@ -618,11 +644,11 @@ class TimetableModel(QAbstractTableModel):
                         curr_idx = m_train["stops"].index(stop)
                         if curr_idx > 0:
                             prev_stop = m_train["stops"][curr_idx - 1]
-                            if prev_stop.get("station_id") == stop["station_id"]:
+                            if prev_stop.get("station_entry_id") == stop.get("station_entry_id"):
                                 stop["stop_type"] = prev_stop.get("stop_type", 1)
                         if curr_idx < len(m_train["stops"]) - 1:
                             next_stop = m_train["stops"][curr_idx + 1]
-                            if next_stop.get("station_id") == stop["station_id"]:
+                            if next_stop.get("station_entry_id") == stop.get("station_entry_id"):
                                 stop["stop_type"] = next_stop.get("stop_type", 1)
                     except ValueError:
                         pass
@@ -693,7 +719,7 @@ class TimetableModel(QAbstractTableModel):
                                                 ref_cfg = self.full_stop_configs[ref_idx]
                                                 target_stop_item = {
                                                     "segment_id": ref_cfg["segment_id"],
-                                                    "station_id": ref_stop_item["station_id"],
+                                                    "station_entry_id": ref_stop_item.get("station_entry_id", ref_cfg.get("station_entry_id")),
                                                     "track_id": ref_stop_item.get("track_id", ref_cfg["track_id"]),
                                                     "arrival_time": None,
                                                     "departure_time": None,
@@ -1009,9 +1035,10 @@ class TimetableModel(QAbstractTableModel):
         if not timed_stops:
             return ""
         last_stop = timed_stops[-1]
-        sid = last_stop.get("station_id")
+        station_entry_id = last_stop.get("station_entry_id")
+        sid = self.project.station_entry_to_station_id.get(station_entry_id, last_stop.get("station_id"))
         station_data = self.project.stations.get(sid, {})
-        return station_data.get("station_name", sid)
+        return station_data.get("station_name", sid or "")
 
     def _get_train_pair_from_sub_info(self, sub_info, diagram_id):
         """subsequent_trains の情報から (diagram_train, master_train) を取得する"""

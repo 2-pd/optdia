@@ -821,14 +821,20 @@ class VehicleOperationEditorDialog(QDialog):
                         first_dep_sec = self._time_to_seconds(first_dep_str) if first_dep_str else None
                         last_arr_sec = self._time_to_seconds(last_arr_str) if last_arr_str else None
 
-                        sort_dep_sec = first_dep_sec if first_dep_sec is not None else (last_arr_sec if last_arr_sec is not None else 0)
-
-                        first_station_id = stops[0].get("station_id") if stops else None
-                        last_station_id = stops[-1].get("station_id") if stops else None
+                        first_stop = stops[0] if stops else None
+                        last_stop = stops[-1] if stops else None
+                        first_station_id = (
+                            first_stop.get("station_id") or 
+                            getattr(self.project, "station_entry_to_station_id", {}).get(first_stop.get("station_entry_id"))
+                        ) if first_stop else None
+                        last_station_id = (
+                            last_stop.get("station_id") or 
+                            getattr(self.project, "station_entry_to_station_id", {}).get(last_stop.get("station_entry_id"))
+                        ) if last_stop else None
 
                         matched_trains.append({
                             "train_id": train_id,
-                            "first_dep_sec": sort_dep_sec,
+                            "first_dep_sec": first_dep_sec,
                             "first_dep_str": first_dep_str,
                             "last_arr_sec": last_arr_sec,
                             "last_arr_str": last_arr_str,
