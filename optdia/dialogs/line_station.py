@@ -86,7 +86,7 @@ class AddLineDialog(QDialog):
 
 # 駅の追加ダイアログ
 class AddStationDialog(QDialog):
-    def __init__(self, parent, project: OptDiaProject, exclude_line_id: str = None):
+    def __init__(self, parent, project: OptDiaProject):
         super().__init__(parent)
         self.project = project
         self.setWindowTitle("駅の追加")
@@ -110,9 +110,17 @@ class AddStationDialog(QDialog):
         # --- 選択肢1: 新規駅 ---
         new_station_page = QWidget()
         new_layout = QVBoxLayout(new_station_page)
+
+        # 駅IDの自動生成チェックボックス
+        self.auto_id_checkbox = QCheckBox("駅名のひらがな表記から駅IDを自動生成")
+        self.auto_id_checkbox.setChecked(True)
+        self.auto_id_checkbox.toggled.connect(self._on_auto_id_toggled)
+        new_layout.addWidget(self.auto_id_checkbox)
+
         new_layout.addWidget(QLabel("駅ID:"))
         self.station_id_edit = QLineEdit()
         self.station_id_edit.setPlaceholderText("例) osaka")
+        self.station_id_edit.setEnabled(False)
         self.station_id_edit.textChanged.connect(self._clear_id_error)
         new_layout.addWidget(self.station_id_edit)
 
@@ -130,6 +138,7 @@ class AddStationDialog(QDialog):
         new_layout.addWidget(QLabel("駅名(ひらがな):"))
         self.station_name_kana_edit = QLineEdit()
         self.station_name_kana_edit.setPlaceholderText("例) おおさか")
+        self.station_name_kana_edit.textChanged.connect(self._on_kana_changed)
         new_layout.addWidget(self.station_name_kana_edit)
 
         new_layout.addSpacing(20)
@@ -213,6 +222,119 @@ class AddStationDialog(QDialog):
         """ID入力欄のエラー表示状態をクリアする"""
         self.station_id_edit.setStyleSheet("")
         self.warning_label.setText("")
+
+    def _on_auto_id_toggled(self, checked: bool):
+        """「駅IDを自動生成」チェックボックスの切り替え処理"""
+        self.station_id_edit.setEnabled(not checked)
+        if checked:
+            # チェックを入れ直したときは現在のひらがなから即時生成
+            self._on_kana_changed(self.station_name_kana_edit.text())
+
+    def _on_kana_changed(self, text: str):
+        """ひらがな入力欄の変更に合わせて駅IDを自動生成する"""
+        if not self.auto_id_checkbox.isChecked():
+            return
+        roman = self._hiragana_to_hepburn(text)
+        self.station_id_edit.setText(roman)
+
+    @staticmethod
+    def _hiragana_to_hepburn(text: str) -> str:
+        """ひらがな文字列をヘボン式ローマ字（小文字）に変換する。
+        ひらがな以外の文字と長音符(ー)は除外する。"""
+        # ヘボン式変換テーブル（長い文字列から先にマッチさせるため、2文字組から順に定義）
+        TABLE = [
+            # 拗音（2文字）
+            ("きゃ", "kya"), ("きゅ", "kyu"), ("きょ", "kyo"),
+            ("しゃ", "sha"), ("しゅ", "shu"), ("しょ", "sho"),
+            ("ちゃ", "cha"), ("ちゅ", "chu"), ("ちょ", "cho"),
+            ("にゃ", "nya"), ("にゅ", "nyu"), ("にょ", "nyo"),
+            ("ひゃ", "hya"), ("ひゅ", "hyu"), ("ひょ", "hyo"),
+            ("みゃ", "mya"), ("みゅ", "myu"), ("みょ", "myo"),
+            ("りゃ", "rya"), ("りゅ", "ryu"), ("りょ", "ryo"),
+            ("ぎゃ", "gya"), ("ぎゅ", "gyu"), ("ぎょ", "gyo"),
+            ("じゃ", "ja"),  ("じゅ", "ju"),  ("じょ", "jo"),
+            ("びゃ", "bya"), ("びゅ", "byu"), ("びょ", "byo"),
+            ("ぴゃ", "pya"), ("ぴゅ", "pyu"), ("ぴょ", "pyo"),
+            ("うぃ", "wi"),  ("うぇ", "we"),  ("うぉ", "wo"),
+            ("ふぁ", "fa"),  ("ふぃ", "fi"),  ("ふぇ", "fe"),  ("ふぉ", "fo"),
+            # 促音（っ）は次の子音を重ねる（後処理で対応）
+            # 1文字
+            ("あ", "a"),  ("い", "i"),  ("う", "u"),  ("え", "e"),  ("お", "o"),
+            ("か", "ka"), ("き", "ki"), ("く", "ku"), ("け", "ke"), ("こ", "ko"),
+            ("さ", "sa"), ("し", "shi"),("す", "su"), ("せ", "se"), ("そ", "so"),
+            ("た", "ta"), ("ち", "chi"),("つ", "tsu"),("て", "te"), ("と", "to"),
+            ("な", "na"), ("に", "ni"), ("ぬ", "nu"), ("ね", "ne"), ("の", "no"),
+            ("は", "ha"), ("ひ", "hi"), ("ふ", "fu"), ("へ", "he"), ("ほ", "ho"),
+            ("ま", "ma"), ("み", "mi"), ("む", "mu"), ("め", "me"), ("も", "mo"),
+            ("や", "ya"), ("ゆ", "yu"), ("よ", "yo"),
+            ("ら", "ra"), ("り", "ri"), ("る", "ru"), ("れ", "re"), ("ろ", "ro"),
+            ("わ", "wa"), ("ゐ", "i"),  ("ゑ", "e"),  ("を", "o"),
+            ("ん", "n"),
+            ("が", "ga"), ("ぎ", "gi"), ("ぐ", "gu"), ("げ", "ge"), ("ご", "go"),
+            ("ざ", "za"), ("じ", "ji"), ("ず", "zu"), ("ぜ", "ze"), ("ぞ", "zo"),
+            ("だ", "da"), ("ぢ", "ji"), ("づ", "zu"), ("で", "de"), ("ど", "do"),
+            ("ば", "ba"), ("び", "bi"), ("ぶ", "bu"), ("べ", "be"), ("ぼ", "bo"),
+            ("ぱ", "pa"), ("ぴ", "pi"), ("ぷ", "pu"), ("ぺ", "pe"), ("ぽ", "po"),
+            ("ゔ", "vu"),
+        ]
+
+        result_parts = []
+        i = 0
+        while i < len(text):
+            ch = text[i]
+            # 促音（っ）: 次の文字の子音を重ねる
+            if ch == "っ":
+                # 次の文字を先読みして変換し、最初の文字を重ねる
+                if i + 1 < len(text):
+                    next_roman = None
+                    # 2文字組を先に試みる
+                    if i + 2 < len(text):
+                        two = text[i + 1: i + 3]
+                        for kana, roman in TABLE:
+                            if kana == two:
+                                next_roman = roman
+                                break
+                    if next_roman is None:
+                        one = text[i + 1]
+                        for kana, roman in TABLE:
+                            if kana == one:
+                                next_roman = roman
+                                break
+                    if next_roman:
+                        result_parts.append(next_roman[0])  # 子音を重ねる
+                i += 1
+                continue
+            # 2文字組を優先してマッチ
+            matched = False
+            if i + 1 < len(text):
+                two = text[i: i + 2]
+                for kana, roman in TABLE:
+                    if kana == two:
+                        result_parts.append(roman)
+                        i += 2
+                        matched = True
+                        break
+            if not matched:
+                # 1文字マッチ
+                for kana, roman in TABLE:
+                    if kana == ch:
+                        result_parts.append(roman)
+                        matched = True
+                        break
+                if not matched:
+                    # 変換テーブルにない文字は除外
+                    pass
+                i += 1
+        text = "".join(result_parts)
+
+        # 同じ半角小文字の母音が2つ以上連続している部分を1つに縮める
+        text = re.sub(r"([aeiou])\1+", r"\1", text)
+        # 「ou」の組み合わせを「o」に置換する
+        text = re.sub(r"ou", "o", text)
+        # nの後に b, m, p のいずれかが続く場合、そのnをmに置き換え
+        text = re.sub(r"n(?=[bmp])", "m", text)
+
+        return text
 
     def _on_radio_toggled(self):
         """ラジオボタンの選択に合わせて表示を切り替える"""
@@ -1734,7 +1856,7 @@ class LineStationEditorDialog(QDialog):
         if not self.current_selected_line_id:
             return
 
-        dialog = AddStationDialog(self, self.project, self.current_selected_line_id)
+        dialog = AddStationDialog(self, self.project)
         if dialog.exec() == QDialog.Accepted:
             if dialog.new_station_radio.isChecked():
                 # 新規駅の作成

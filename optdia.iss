@@ -1,5 +1,5 @@
 #define MyAppName "OptDia"
-#define MyAppVersion "26.09-1"
+#define MyAppVersion "26.09-2"
 #define MyAppPublisher "Midari Create"
 #define MyAppURL "https://create.2pd.jp/apps/optdia/"
 #define MyAppExeName "optdia.exe"

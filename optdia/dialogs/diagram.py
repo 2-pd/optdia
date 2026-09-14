@@ -631,6 +631,16 @@ class CalendarPeriodAccordion(AccordionWidget):
                 self.dialog.parent().set_modified(True)
 
     def _on_delete_clicked(self):
+        reply = QMessageBox.question(
+            self,
+            "運行区分の削除",
+            "この運行区分を削除しますか？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
         if self.period in self.dialog.project.calendar_periods:
             self.dialog.project.calendar_periods.remove(self.period)
         self.dialog._remove_period_accordion(self)
