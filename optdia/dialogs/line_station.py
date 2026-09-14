@@ -878,14 +878,14 @@ class LineStationEditorDialog(QDialog):
         # 現在の駅データ（辞書のリスト）を取得
         old_station_list = self.current_selected_line_data.get("station_list", [])
         # IDをキーにした辞書に変換して、既存の属性（駅ナンバリング等）を保持できるようにする
-        station_map = {s["station_id"]: s for s in old_station_list}
+        station_map = {s["station_entry_id"]: s for s in old_station_list if "station_entry_id" in s}
         
         new_station_list = []
         for i in range(self.station_list_widget.count()):
             item = self.station_list_widget.item(i)
-            sid = item.data(Qt.UserRole)
-            if sid in station_map:
-                new_station_list.append(station_map[sid])
+            eid = item.data(Qt.UserRole)
+            if eid in station_map:
+                new_station_list.append(station_map[eid])
         
         self.current_selected_line_data["station_list"] = new_station_list
         if hasattr(self.parent(), "set_modified"):
@@ -1024,13 +1024,13 @@ class LineStationEditorDialog(QDialog):
         self.station_list_widget.clear()
         station_list = line_data.get("station_list", [])
         for station_item in station_list:
-            station_id = station_item.get("station_id")
+            station_entry_id = station_item.get("station_entry_id")
             # QListWidgetItemの作成とIDの紐付け
             item = QListWidgetItem()
-            item.setData(Qt.UserRole, station_id)
+            item.setData(Qt.UserRole, station_entry_id)
             self.station_list_widget.addItem(item)
             # 表示文字列とスタイルの更新
-            self._update_station_list_item_display(item, station_id)
+            self._update_station_list_item_display(item, station_entry_id)
 
         # 駅の有無に応じて右側の表示を切り替え、あれば最初の駅を選択
         if self.station_list_widget.count() > 0:
@@ -1056,12 +1056,17 @@ class LineStationEditorDialog(QDialog):
             self._set_station_editing_enabled(False)
             return
 
-        station_id = selected_items[0].data(Qt.UserRole)
-        station_data = self.project.stations.get(station_id)
+        station_entry_id = selected_items[0].data(Qt.UserRole)
         line_station_item = next((s for s in self.current_selected_line_data.get("station_list", []) 
-                                  if s.get("station_id") == station_id), None)
+                                  if s.get("station_entry_id") == station_entry_id), None)
+        if not line_station_item:
+            self._set_station_editing_enabled(False)
+            return
+
+        station_id = line_station_item.get("station_id")
+        station_data = self.project.stations.get(station_id)
         
-        if not station_data or not line_station_item:
+        if not station_data:
             self._set_station_editing_enabled(False)
             return
 
@@ -1088,7 +1093,7 @@ class LineStationEditorDialog(QDialog):
 
         # 発着番線コンボボックスの更新
         self.inbound_track_combo.blockSignals(True)
-        self.outbound_track_combo.blockSignals(True)
+        self.outbound_track_combo.clear()
         self.inbound_track_combo.clear()
         self.outbound_track_combo.clear()
         self.inbound_track_combo.addItem("未設定", None)
@@ -1159,19 +1164,21 @@ class LineStationEditorDialog(QDialog):
         
         # リストの表示更新は、該当する項目が選択されている場合のみ行う
         selected_items = self.station_list_widget.selectedItems()
-        if selected_items and selected_items[0].data(Qt.UserRole) == station_id:
-            self._update_station_list_item_display(selected_items[0], station_id)
+        if selected_items:
+            station_entry_id = selected_items[0].data(Qt.UserRole)
+            self._update_station_list_item_display(selected_items[0], station_entry_id)
 
         if hasattr(self.parent(), "set_modified"):
             self.parent().set_modified(True)
 
     def _on_line_station_info_changed(self):
         """特定の路線に関連する駅情報が変更されたとき、プロジェクトデータを更新する"""
-        station_id = self.station_id_edit.text()
-        if not station_id or not self.current_selected_line_data: return
+        selected_items = self.station_list_widget.selectedItems()
+        if not selected_items or not self.current_selected_line_data: return
+        station_entry_id = selected_items[0].data(Qt.UserRole)
 
         line_station_item = next((s for s in self.current_selected_line_data.get("station_list", []) 
-                                  if s.get("station_id") == station_id), None)
+                                  if s.get("station_entry_id") == station_entry_id), None)
         if not line_station_item: return
         
         num = self.station_number_edit.text().strip()
@@ -1183,9 +1190,7 @@ class LineStationEditorDialog(QDialog):
         line_station_item["inbound_main_track"] = self.inbound_track_combo.currentData()
         line_station_item["outbound_main_track"] = self.outbound_track_combo.currentData()
         
-        selected_items = self.station_list_widget.selectedItems()
-        if selected_items and selected_items[0].data(Qt.UserRole) == station_id:
-            self._update_station_list_item_display(selected_items[0], station_id)
+        self._update_station_list_item_display(selected_items[0], station_entry_id)
 
         if hasattr(self.parent(), "set_modified"):
             self.parent().set_modified(True)
@@ -1525,7 +1530,12 @@ class LineStationEditorDialog(QDialog):
         if not selected_items:
             return
 
-        station_id = selected_items[0].data(Qt.UserRole)
+        station_entry_id = selected_items[0].data(Qt.UserRole)
+        line_station_item = next((s for s in self.current_selected_line_data.get("station_list", [])
+                                  if s.get("station_entry_id") == station_entry_id), None)
+        if not line_station_item:
+            return
+        station_id = line_station_item.get("station_id")
         station_data = self.project.stations.get(station_id)
         if not station_data:
             return
@@ -1534,17 +1544,12 @@ class LineStationEditorDialog(QDialog):
 
         # 1. 運行系統の制約チェック
         # 全ての運行系統を走査し、編集中の路線の部分区間の始点・終点になっていないか確認
-        row = self.station_list_widget.currentRow()
-        station_list = self.current_selected_line_data.get("station_list", [])
-        station_entry_id = station_list[row].get("station_entry_id") if 0 <= row < len(station_list) else None
-
         for route in self.project.routes.values():
             for seg in route.get("line_segments", []):
                 if seg.get("line_id") == self.current_selected_line_id:
-                    start_val = seg.get("start_station_entry")
-                    end_val = seg.get("end_station_entry") or seg.get("end_station")
-                    if (station_entry_id and (start_val == station_entry_id or end_val == station_entry_id)) or \
-                       (start_val == station_id or end_val == station_id):
+                    start_val = seg.get("start_station_entry", seg.get("start_station"))
+                    end_val = seg.get("end_station_entry", seg.get("end_station"))
+                    if start_val == station_entry_id or end_val == station_entry_id:
                         QMessageBox.warning(
                             self,
                             "エラー",
@@ -1564,16 +1569,17 @@ class LineStationEditorDialog(QDialog):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        # 3. 孤立駅（他路線での利用有無）のチェック
-        other_lines_using = False
+        # 3. 孤立駅（他路線・他エントリでの利用有無）のチェック
+        other_using = False
         for lid, line in self.project.lines.items():
-            if lid == self.current_selected_line_id:
-                continue
-            if any(s.get("station_id") == station_id for s in line.get("station_list", [])):
-                other_lines_using = True
+            for s in line.get("station_list", []):
+                if s.get("station_entry_id") != station_entry_id and s.get("station_id") == station_id:
+                    other_using = True
+                    break
+            if other_using:
                 break
 
-        if not other_lines_using:
+        if not other_using:
             reply = QMessageBox.question(
                 self,
                 "確認",
@@ -1589,23 +1595,24 @@ class LineStationEditorDialog(QDialog):
         # A. 路線情報の駅リストから削除
         self.current_selected_line_data["station_list"] = [
             s for s in self.current_selected_line_data.get("station_list", [])
-            if s.get("station_id") != station_id
+            if s.get("station_entry_id") != station_entry_id
         ]
+        if hasattr(self.project, "station_entry_to_station_id") and station_entry_id in self.project.station_entry_to_station_id:
+            del self.project.station_entry_to_station_id[station_entry_id]
 
-        # B. 全ての列車の発着情報を検査し、削除対象の駅・路線ペアの経由駅データを削除
+        # B. 全ての列車の発着情報を検査し、削除対象の駅エントリーの経由駅データを削除
         for route in self.project.routes.values():
-            seg_map = {seg["segment_id"]: seg for seg in route.get("line_segments", []) if "segment_id" in seg}
             for train_key in ["inbound_trains", "outbound_trains"]:
                 trains_dict = route.get(train_key, {})
                 for train in trains_dict.values():
                     if "stops" in train:
                         train["stops"] = [
                             stop for stop in train["stops"]
-                            if not (stop.get("station_id") == station_id and seg_map.get(stop.get("segment_id"), {}).get("line_id") == self.current_selected_line_id)
+                            if stop.get("station_entry_id") != station_entry_id
                         ]
 
         # C. 他の路線で使用されていない場合は、プロジェクト全体の駅情報からも削除
-        if not other_lines_using:
+        if not other_using:
             if station_id in self.project.stations:
                 del self.project.stations[station_id]
 
@@ -1644,12 +1651,20 @@ class LineStationEditorDialog(QDialog):
                 station_data["tracks_order"].remove(track_id)
 
             # 2. 全ての列車の発着情報を検査し、削除した番線設定を解除
+            entry_ids_for_station = {
+                entry.get("station_entry_id")
+                for line in self.project.lines.values()
+                for entry in line.get("station_list", [])
+                if entry.get("station_id") == station_id
+            }
             for route in self.project.routes.values():
                 for train_key in ["inbound_trains", "outbound_trains"]:
                     trains_dict = route.get(train_key, {})
                     for train in trains_dict.values():
                         for stop in train.get("stops", []):
-                            if stop.get("station_id") == station_id and stop.get("track_id") == track_id:
+                            eid = stop.get("station_entry_id")
+                            sid = stop.get("station_id")
+                            if (eid in entry_ids_for_station or sid == station_id) and stop.get("track_id") == track_id:
                                 stop["track_id"] = None
 
             # UIの更新
@@ -1681,12 +1696,15 @@ class LineStationEditorDialog(QDialog):
             self.parent().set_modified(True)
 
 
-    def _update_station_list_item_display(self, item, station_id):
+    def _update_station_list_item_display(self, item, station_entry_id):
         """駅リストの表示文字列とスタイルを最新の状態に更新する"""
-        station_data = self.project.stations.get(station_id)
+        if not self.current_selected_line_data: return
         line_station_item = next((s for s in self.current_selected_line_data.get("station_list", []) 
-                                  if s.get("station_id") == station_id), None)
-        if not station_data or not line_station_item: return
+                                  if s.get("station_entry_id") == station_entry_id), None)
+        if not line_station_item: return
+        station_id = line_station_item.get("station_id")
+        station_data = self.project.stations.get(station_id)
+        if not station_data: return
 
         name = station_data.get("station_name", station_id)
         number = line_station_item.get("station_number")
@@ -1787,7 +1805,7 @@ class LineStationEditorDialog(QDialog):
 
             # 新しく追加された駅を選択状態にする
             for i in range(self.station_list_widget.count()):
-                if self.station_list_widget.item(i).data(Qt.UserRole) == new_station_id:
+                if self.station_list_widget.item(i).data(Qt.UserRole) == station_entry_id:
                     self.station_list_widget.setCurrentRow(i)
                     break
 
