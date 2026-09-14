@@ -67,6 +67,7 @@ class ExportCsvSettingsDialog(QDialog):
         # ボタン (OK / キャンセル)
         btn_layout = QHBoxLayout()
         self.btn_ok = QPushButton("OK", self)
+        self.btn_ok.setProperty("class", "ok_button")
         self.btn_cancel = QPushButton("キャンセル", self)
         
         self.btn_ok.clicked.connect(self.accept)
@@ -143,9 +144,10 @@ def _get_terminal_station_name_for_export(m_train, project):
     if not timed_stops:
         return ""
     last_stop = timed_stops[-1]
-    sid = last_stop.get("station_id")
+    eid = last_stop.get("station_entry_id")
+    sid = getattr(project, "station_entry_to_station_id", {}).get(eid) or last_stop.get("station_id")
     station_data = project.stations.get(sid, {})
-    return station_data.get("station_name", sid)
+    return station_data.get("station_name", sid or "")
 
 
 def _resolve_destination_for_export(d_train, m_train, project, diagram_id, depth=0, force_single=False):

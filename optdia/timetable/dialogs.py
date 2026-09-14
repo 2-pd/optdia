@@ -22,7 +22,7 @@ class TrainPicker(QDialog):
         # 子要素が背景色を引き継がないよう明示的に白を指定
         self.setStyleSheet("""
             QDialog { background-color: #f7f7f7; }
-            QLineEdit, QListWidget { background-color: white; }
+            QLineEdit, QListWidget { background-color: #ffffff; }
         """)
 
         layout = QVBoxLayout(self)
@@ -71,7 +71,9 @@ class TrainPicker(QDialog):
             tt_display = f"<font color='{tt_color}'>{tt_short}</font>"
             
             if first_stop:
-                s_name = project.stations.get(first_stop["station_id"], {}).get("station_name", first_stop["station_id"])
+                seid = first_stop.get("station_entry_id")
+                sid = getattr(project, "station_entry_to_station_id", {}).get(seid, first_stop.get("station_id"))
+                s_name = project.stations.get(sid, {}).get("station_name", sid or "")
                 display_text = f"{num} {tt_display} <font color='#666666'>({s_name} {first_stop['departure_time'][:5]}発)</font>"
                 search_text = f"{num} {tt_short} {s_name}"
             else:
@@ -94,7 +96,7 @@ class TrainPicker(QDialog):
         # フィルタリングに関する説明ラベルを追加
         if min_departure_time:
             info_label = QLabel("始発時刻がもとの列車の終着時刻より早い列車は表示されません")
-            info_label.setStyleSheet("color: gray; font-size: 12px;")
+            info_label.setProperty("class", "informational_text")
             info_label.setWordWrap(True)
             layout.addWidget(info_label)
         
@@ -169,9 +171,10 @@ class DiagramPicker(QDialog):
         layout.addWidget(scroll)
         
         buttons = QHBoxLayout()
-        select_all_btn = QPushButton("すべて選択")
+        select_all_btn = QPushButton("全て選択")
         buttons.addWidget(select_all_btn)
         ok_btn = QPushButton("OK")
+        ok_btn.setProperty("class", "ok_button")
         cancel_btn = QPushButton("キャンセル")
         buttons.addStretch()
         buttons.addWidget(ok_btn)
@@ -271,7 +274,6 @@ class TrainTypePicker(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self.list_widget = QListWidget(self)
-        self.list_widget.setStyleSheet("border: 1px solid #dddddd;")
         self.list_widget.setItemDelegate(HtmlDelegate(self))
 
         # 「設定しない」アイテムの追加
@@ -334,7 +336,7 @@ class OperationItemWidget(QWidget):
         layout.setContentsMargins(0, 2, 0, 2)
 
         self.group_box = QGroupBox(f"{index_1based}つ目の運用")
-        self.group_box.setStyleSheet("QGroupBox { border: 1px solid #aaa; border-radius: 4px; margin-top: 8px; background-color: #ffffff; padding-top: 2px; } QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 5px; background-color: #f7f7f7; }")
+        self.group_box.setStyleSheet("QGroupBox { border: 1px solid #aaa; border-radius: 4px; margin-top: 8px; background-color: #f7f7f7; padding-top: 2px; } QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 5px; background-color: #f7f7f7; }")
         group_layout = QVBoxLayout(self.group_box)
         group_layout.setContentsMargins(5, 10, 5, 0)
 
@@ -366,7 +368,7 @@ class OperationItemWidget(QWidget):
         row3_layout.addStretch()
 
         self.del_btn = QPushButton("削除")
-        self.del_btn.setStyleSheet("QPushButton { border: none; text-decoration: underline; background: transparent; color: #cc3333; }")
+        self.del_btn.setProperty("class", "delete_button")
         self.del_btn.setCursor(Qt.PointingHandCursor)
         row3_layout.addWidget(self.del_btn)
 
@@ -510,7 +512,7 @@ class OperationPickerDialog(QDialog):
 
         # 「運用の追加・編集」ボタン (枠線なし、下線)
         self.edit_btn = QPushButton("運用の追加・編集")
-        self.edit_btn.setStyleSheet("QPushButton { border: none; text-decoration: underline; background: transparent; }")
+        self.edit_btn.setProperty("class", "borderless_button")
         self.edit_btn.clicked.connect(self._on_edit_clicked)
         layout.addWidget(self.edit_btn)
 
@@ -797,7 +799,7 @@ class SubsequentTrainDialog(QDialog):
 
         # 削除ボタン（枠線なし、右端に配置）
         del_btn = QPushButton("この連続設定を削除")
-        del_btn.setStyleSheet("QPushButton { border: none; text-decoration: underline; background: transparent; }")
+        del_btn.setProperty("class", "borderless_button")
         del_btn.setCursor(Qt.PointingHandCursor)
         del_btn.clicked.connect(lambda _, ix=idx: self._on_delete_subsequent(ix))
         layout.addWidget(del_btn, alignment=Qt.AlignRight)
@@ -914,7 +916,9 @@ class SubsequentTrainDialog(QDialog):
         # 始発駅と時刻
         first_stop = next((s for s in m_train.get("stops", []) if s.get("departure_time")), None)
         if first_stop:
-            s_name = self.project.stations.get(first_stop["station_id"], {}).get("station_name", first_stop["station_id"])
+            seid = first_stop.get("station_entry_id")
+            sid = getattr(self.project, "station_entry_to_station_id", {}).get(seid, first_stop.get("station_id"))
+            s_name = self.project.stations.get(sid, {}).get("station_name", sid or "")
             return f"{num} {tt_display} <font color='#666666'>({s_name} {first_stop['departure_time'][:5]}発)</font>"
         return f"{num} {tt_display}"
 
@@ -924,46 +928,10 @@ class NotePopup(QDialog):
     def __init__(self, parent, initial_text):
         super().__init__(parent, Qt.Popup)
         self.setFixedSize(200, 200)
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #fcfcfc;
-                border: 1px solid #cccccc;
-                border-radius: 4px;
-            }
-            QLabel {
-                font-weight: bold;
-                font-size: 12px;
-                color: #333333;
-            }
-            QPlainTextEdit {
-                background-color: #ffffff;
-                border: 1px solid #cccccc;
-                border-radius: 2px;
-                padding: 4px;
-                font-size: 14px;
-            }
-            QPushButton {
-                background-color: #f0f0f0;
-                border: 1px solid #cccccc;
-                border-radius: 2px;
-                padding: 4px 8px;
-                min-width: 60px;
-            }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-            }
-            QPushButton#saveBtn {
-                background-color: #0078d4;
-                color: white;
-                border: 1px solid #006cc1;
-            }
-            QPushButton#saveBtn:hover {
-                background-color: #006cc1;
-            }
-        """)
+        self.setStyleSheet("QDialog { background-color: #ffffff; border: 1px solid #dddddd; }")
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setContentsMargins(5, 10, 5, 10)
         layout.setSpacing(8)
 
         label = QLabel("備考", self)
@@ -976,15 +944,16 @@ class NotePopup(QDialog):
         # OK / Cancel ボタン
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
-        
-        self.cancel_btn = QPushButton("キャンセル", self)
-        self.cancel_btn.clicked.connect(self.reject)
-        btn_layout.addWidget(self.cancel_btn)
 
         self.save_btn = QPushButton("OK", self)
-        self.save_btn.setObjectName("saveBtn")
+        self.save_btn.setProperty("class", "ok_button")
         self.save_btn.clicked.connect(self.accept)
+
+        self.cancel_btn = QPushButton("キャンセル", self)
+        self.cancel_btn.clicked.connect(self.reject)
+
         btn_layout.addWidget(self.save_btn)
+        btn_layout.addWidget(self.cancel_btn)
 
         layout.addLayout(btn_layout)
 
@@ -1009,7 +978,8 @@ def split_train_at_cell(parent, model, index):
     row_def = model.station_rows[row_idx]
     stop_idx = row_def["stop_idx"]
     cfg = model.full_stop_configs[stop_idx]
-    station_id = cfg["station_id"]
+    station_entry_id = cfg.get("station_entry_id")
+    station_id = cfg.get("station_id") or getattr(model.project, "station_entry_to_station_id", {}).get(station_entry_id)
 
     route_id = model.route_id
     diagram_id = model.diagram_id
@@ -1049,10 +1019,10 @@ def split_train_at_cell(parent, model, index):
         QMessageBox.warning(parent, "エラー", "列車は途中の停車駅でのみ分割可能です")
         return
 
-    first_station_id = timed_stops[0]["station_id"]
-    last_station_id = timed_stops[-1]["station_id"]
+    first_station_entry_id = timed_stops[0].get("station_entry_id")
+    last_station_entry_id = timed_stops[-1].get("station_entry_id")
 
-    if station_id == first_station_id or station_id == last_station_id:
+    if station_entry_id == first_station_entry_id or station_entry_id == last_station_entry_id:
         QMessageBox.warning(parent, "エラー", "列車は途中の停車駅でのみ分割可能です")
         return
 
@@ -1098,7 +1068,8 @@ def split_train_at_cell(parent, model, index):
     orig_stops = []
     for s in m_train.get("stops", []):
         s_copy = s.copy()
-        if s_copy["stop_idx"] == stop_idx and model.project.stations.get(s_copy["station_id"], {}).get("show_arrival_time", False):
+        s_sid = getattr(model.project, "station_entry_to_station_id", {}).get(s_copy.get("station_entry_id"), s_copy.get("station_id"))
+        if s_copy["stop_idx"] == stop_idx and model.project.stations.get(s_sid, {}).get("show_arrival_time", False):
             s_copy["departure_time"] = None
         elif s_copy["stop_idx"] > stop_idx:
             s_copy["arrival_time"] = None
@@ -1295,6 +1266,7 @@ class DuplicateTrainWithConditionsDialog(QDialog):
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
         self.ok_btn = QPushButton("OK")
+        self.ok_btn.setProperty("class", "ok_button")
         self.cancel_btn = QPushButton("キャンセル")
         btn_layout.addWidget(self.ok_btn)
         btn_layout.addWidget(self.cancel_btn)

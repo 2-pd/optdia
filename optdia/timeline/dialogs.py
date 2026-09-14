@@ -92,6 +92,7 @@ class TemporaryStablingDialog(QDialog):
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
         self.btn_ok = QPushButton("OK")
+        self.btn_ok.setProperty("class", "ok_button")
         self.btn_cancel = QPushButton("キャンセル")
         btn_layout.addWidget(self.btn_ok)
         btn_layout.addWidget(self.btn_cancel)
@@ -305,6 +306,7 @@ class AddDeadheadDialog(QDialog):
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
         self.btn_ok = QPushButton("OK")
+        self.btn_ok.setProperty("class", "ok_button")
         self.btn_cancel = QPushButton("キャンセル")
         btn_layout.addWidget(self.btn_ok)
         btn_layout.addWidget(self.btn_cancel)
@@ -419,11 +421,17 @@ class AddDeadheadDialog(QDialog):
                 work_segments.append({
                     "segment_id": seg["segment_id"],
                     "line_id": seg["line_id"],
-                    "start_station": seg["end_station"],
-                    "end_station": seg["start_station"]
+                    "start_station_entry": seg.get("end_station_entry", seg.get("end_station")),
+                    "end_station_entry": seg.get("start_station_entry", seg.get("start_station"))
                 })
         else:
-            work_segments = segments
+            for seg in segments:
+                work_segments.append({
+                    "segment_id": seg["segment_id"],
+                    "line_id": seg["line_id"],
+                    "start_station_entry": seg.get("start_station_entry", seg.get("start_station")),
+                    "end_station_entry": seg.get("end_station_entry", seg.get("end_station"))
+                })
 
         stations_seq = []
         seq_idx = 0
@@ -433,28 +441,36 @@ class AddDeadheadDialog(QDialog):
             line_data = self.project.lines.get(line_id, {})
             line_name = line_data.get("line_name", line_id)
             station_list = line_data.get("station_list", [])
-            line_station_ids = [s["station_id"] for s in station_list]
+            line_entry_ids = [s.get("station_entry_id") for s in station_list]
+            start_entry = seg.get("start_station_entry")
+            end_entry = seg.get("end_station_entry")
             try:
-                idx_start = line_station_ids.index(seg["start_station"])
-                idx_end = line_station_ids.index(seg["end_station"])
+                idx_start = line_entry_ids.index(start_entry)
+                idx_end = line_entry_ids.index(end_entry)
             except ValueError:
-                continue
+                line_station_ids = [s.get("station_id") for s in station_list]
+                try:
+                    idx_start = line_station_ids.index(start_entry)
+                    idx_end = line_station_ids.index(end_entry)
+                except ValueError:
+                    continue
 
             seg_line_direction = "outbound" if idx_start <= idx_end else "inbound"
 
             if idx_start <= idx_end:
-                s_ids = line_station_ids[idx_start:idx_end + 1]
+                s_entries = station_list[idx_start:idx_end + 1]
             else:
-                s_ids = [line_station_ids[i] for i in range(idx_start, idx_end - 1, -1)]
+                s_entries = [station_list[i] for i in range(idx_start, idx_end - 1, -1)]
 
-
-            for sid in s_ids:
+            for ls_item in s_entries:
+                sid = ls_item.get("station_id")
+                eid = ls_item.get("station_entry_id")
                 s_data = self.project.stations.get(sid, {})
                 st_name = s_data.get("station_name", sid)
-                ls_item = next((s for s in station_list if s["station_id"] == sid), {})
                 track_id = ls_item.get("inbound_main_track" if seg_line_direction == "inbound" else "outbound_main_track")
                 display_name = f"{st_name}({line_name})"
                 stations_seq.append({
+                    "station_entry_id": eid,
                     "station_id": sid,
                     "station_name": st_name,
                     "line_name": line_name,
@@ -517,7 +533,7 @@ class AddDeadheadDialog(QDialog):
         # 停車駅情報の構築
         start_stop = {
             "segment_id": start_item["segment_id"],
-            "station_id": start_item["station_id"],
+            "station_entry_id": start_item["station_entry_id"],
             "track_id": start_item.get("track_id"),
             "arrival_time": None,
             "departure_time": start_time_str,
@@ -528,7 +544,7 @@ class AddDeadheadDialog(QDialog):
         show_arr = end_st_data.get("show_arrival_time", False)
         end_stop = {
             "segment_id": end_item["segment_id"],
-            "station_id": end_item["station_id"],
+            "station_entry_id": end_item["station_entry_id"],
             "track_id": end_item.get("track_id"),
             "arrival_time": end_time_str,
             "departure_time": None if show_arr else end_time_str,
@@ -716,6 +732,7 @@ class AddTrainToOperationDialog(QDialog):
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
         self.btn_ok = QPushButton("OK")
+        self.btn_ok.setProperty("class", "ok_button")
         self.btn_cancel = QPushButton("キャンセル")
         btn_layout.addWidget(self.btn_ok)
         btn_layout.addWidget(self.btn_cancel)
@@ -830,8 +847,10 @@ class AddTrainToOperationDialog(QDialog):
                     first_stop = stops[0]
                     last_stop = stops[-1]
 
-                    first_station_id = first_stop.get("station_id")
-                    last_station_id = last_stop.get("station_id")
+                    first_entry_id = first_stop.get("station_entry_id")
+                    last_entry_id = last_stop.get("station_entry_id")
+                    first_station_id = getattr(self.project, "station_entry_to_station_id", {}).get(first_entry_id) or first_stop.get("station_id")
+                    last_station_id = getattr(self.project, "station_entry_to_station_id", {}).get(last_entry_id) or last_stop.get("station_id")
 
                     first_time_str = first_stop.get("departure_time") or first_stop.get("arrival_time") or ""
                     last_time_str = last_stop.get("arrival_time") or last_stop.get("departure_time") or ""

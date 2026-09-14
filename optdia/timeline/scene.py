@@ -474,7 +474,8 @@ class BlankSpaceItem(QGraphicsRectItem):
                         first_dep = min(valid_times)
                         last_arr = max(valid_times)
                         if last_arr <= self.start_m:
-                            last_station_id = stops[-1].get("station_id") if stops else None
+                            last_entry_id = stops[-1].get("station_entry_id") if stops else None
+                            last_station_id = getattr(self.timeline_scene.project, "station_entry_to_station_id", {}).get(last_entry_id) or (stops[-1].get("station_id") if stops else None)
                             prev_trains.append((last_arr, last_station_id))
 
         if prev_trains:
@@ -1262,8 +1263,10 @@ class TimelineScene(QGraphicsScene):
                         first_dep = min(valid_times)
                         last_arr = max(valid_times)
 
-                        first_station_id = stops[0].get("station_id") if stops else None
-                        last_station_id = stops[-1].get("station_id") if stops else None
+                        first_entry_id = stops[0].get("station_entry_id") if stops else None
+                        last_entry_id = stops[-1].get("station_entry_id") if stops else None
+                        first_station_id = getattr(self.project, "station_entry_to_station_id", {}).get(first_entry_id) or (stops[0].get("station_id") if stops else None)
+                        last_station_id = getattr(self.project, "station_entry_to_station_id", {}).get(last_entry_id) or (stops[-1].get("station_id") if stops else None)
 
                         # 始発駅発車時刻文字列 (stops[0]のdeparture_time、なければarrival_time)
                         first_stop = stops[0] if stops else {}

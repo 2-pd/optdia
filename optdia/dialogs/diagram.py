@@ -181,6 +181,7 @@ class AddDiagramDialog(QDialog):
         # ボタンエリア (追加 / キャンセル)
         button_layout = QHBoxLayout()
         self.add_button = QPushButton("追加")
+        self.add_button.setProperty("class", "ok_button")
         self.cancel_button = QPushButton("キャンセル")
 
         button_layout.addStretch()
@@ -288,6 +289,7 @@ class DuplicateDiagramDialog(QDialog):
         # ボタンエリア (OK / キャンセル)
         button_layout = QHBoxLayout()
         self.ok_button = QPushButton("OK")
+        self.ok_button.setProperty("class", "ok_button")
         self.cancel_button = QPushButton("キャンセル")
 
         button_layout.addStretch()
@@ -511,7 +513,8 @@ class CalendarPeriodAccordion(AccordionWidget):
 
         # 開始日クリアボタン
         self.clear_start_button = QPushButton("クリア")
-        self.clear_start_button.setStyleSheet("border: none; font-size: 12px; text-decoration: underline; background-color: transparent;")
+        self.clear_start_button.setProperty("class", "borderless_button")
+        self.clear_start_button.setStyleSheet("font-size: 12px;")
         self.clear_start_button.clicked.connect(self._on_clear_start_date)
         period_row.addWidget(self.clear_start_button)
 
@@ -529,7 +532,8 @@ class CalendarPeriodAccordion(AccordionWidget):
 
         # 終了日クリアボタン
         self.clear_end_button = QPushButton("クリア")
-        self.clear_end_button.setStyleSheet("border: none; font-size: 12px; text-decoration: underline; background-color: transparent;")
+        self.clear_end_button.setProperty("class", "borderless_button")
+        self.clear_end_button.setStyleSheet("font-size: 12px;")
         self.clear_end_button.clicked.connect(self._on_clear_end_date)
         period_row.addWidget(self.clear_end_button)
 
@@ -538,7 +542,7 @@ class CalendarPeriodAccordion(AccordionWidget):
 
         # 重複警告ラベル
         self.warning_label = QLabel("")
-        self.warning_label.setStyleSheet("color: red; font-size: 12px;")
+        self.warning_label.setStyleSheet("color: #cc3333; font-size: 12px;")
         layout.addWidget(self.warning_label)
 
         # 日曜〜土曜の各曜日ダイヤ選択コンボボックス
@@ -557,9 +561,8 @@ class CalendarPeriodAccordion(AccordionWidget):
         delete_row = QHBoxLayout()
         delete_row.addStretch()
         self.delete_button = QPushButton("この運行区分を削除")
-        self.delete_button.setStyleSheet(
-            "QPushButton { color: #cc3333; border: none; text-decoration: underline; background-color: transparent; font-size: 12px; }"
-        )
+        self.delete_button.setProperty("class", "delete_button")
+        self.delete_button.setStyleSheet("font-size: 12px;")
         self.delete_button.setCursor(Qt.PointingHandCursor)
         self.delete_button.clicked.connect(self._on_delete_clicked)
         delete_row.addWidget(self.delete_button)
@@ -628,6 +631,16 @@ class CalendarPeriodAccordion(AccordionWidget):
                 self.dialog.parent().set_modified(True)
 
     def _on_delete_clicked(self):
+        reply = QMessageBox.question(
+            self,
+            "運行区分の削除",
+            "この運行区分を削除しますか？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
         if self.period in self.dialog.project.calendar_periods:
             self.dialog.project.calendar_periods.remove(self.period)
         self.dialog._remove_period_accordion(self)
@@ -666,9 +679,8 @@ class DiagramEditorDialog(QDialog):
 
         # 左側のサイドバー (幅220px固定)
         sidebar = QWidget()
-        sidebar.setObjectName("diagram_editor_sidebar")
         sidebar.setFixedWidth(220)
-        sidebar.setStyleSheet("#diagram_editor_sidebar { background-color: #f7f7f7; border-right: 1px solid #dddddd; }")
+        sidebar.setProperty("class", "dialog_sidebar")
         sidebar_layout = QVBoxLayout(sidebar)
         sidebar_layout.setContentsMargins(10, 10, 10, 10)
         sidebar_layout.setSpacing(5)
@@ -698,7 +710,7 @@ class DiagramEditorDialog(QDialog):
         placeholder_layout = QVBoxLayout(self.placeholder_page)
         placeholder_label = QLabel("ダイヤを追加してください")
         placeholder_label.setAlignment(Qt.AlignCenter)
-        placeholder_label.setStyleSheet("color: #888888; font-size: 18px;")
+        placeholder_label.setProperty("class", "placeholder_label")
         placeholder_layout.addWidget(placeholder_label)
         self.right_stack.addWidget(self.placeholder_page)
 
@@ -743,7 +755,7 @@ class DiagramEditorDialog(QDialog):
         diagram_action_row.addStretch()
 
         self.duplicate_diagram_button = QPushButton("このダイヤを複製")
-        self.duplicate_diagram_button.setStyleSheet("QPushButton { border: none; text-decoration: underline; background-color: transparent; }")
+        self.duplicate_diagram_button.setProperty("class", "text_button")
         self.duplicate_diagram_button.setCursor(Qt.PointingHandCursor)
         self.duplicate_diagram_button.clicked.connect(self._on_duplicate_diagram)
         diagram_action_row.addWidget(self.duplicate_diagram_button)
@@ -751,7 +763,7 @@ class DiagramEditorDialog(QDialog):
         self.delete_diagram_button = QPushButton("このダイヤを削除")
         self.delete_diagram_button.setFixedSize(120, 30)
         self.delete_diagram_button.clicked.connect(self._on_delete_diagram)
-        self.delete_diagram_button.setStyleSheet("QPushButton { color: #cc3333; border: none; text-decoration: underline; background-color: transparent; }")
+        self.delete_diagram_button.setProperty("class", "delete_button")
         diagram_action_row.addWidget(self.delete_diagram_button)
 
         edit_form_layout.addLayout(diagram_action_row)
@@ -776,6 +788,7 @@ class DiagramEditorDialog(QDialog):
         self.calendar_scroll_area.setFrameShape(QFrame.NoFrame)
 
         self.calendar_scroll_content = QWidget()
+        self.calendar_scroll_content.setProperty("class", "scroll_content")
         self.calendar_vlayout = QVBoxLayout(self.calendar_scroll_content)
         self.calendar_vlayout.setContentsMargins(15, 15, 15, 15)
         self.calendar_vlayout.setSpacing(15)
@@ -845,10 +858,7 @@ class DiagramEditorDialog(QDialog):
 
         # 2-4. 運行区分を時系列順にソートボタン
         self.sort_periods_button = QPushButton("運行区分を時系列順にソート")
-        self.sort_periods_button.setStyleSheet(
-            "QPushButton { border: none; text-decoration: underline; background-color: transparent; } "
-            "QPushButton:disabled { color: #aaaaaa; }"
-        )
+        self.sort_periods_button.setProperty("class", "text_button")
         self.sort_periods_button.setCursor(Qt.PointingHandCursor)
         self.sort_periods_button.clicked.connect(self._sort_periods)
         self.calendar_vlayout.addWidget(self.sort_periods_button)

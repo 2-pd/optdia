@@ -110,6 +110,7 @@ class DiagramScene(QGraphicsScene):
         self.selected_target = "route"  # "route" or line_id
         self.route_id = None
         self.diagram_id = None
+        self.filter_train_type_id = None
         self.scale_x = scale_x
         self.scale_y = scale_y
 
@@ -118,17 +119,20 @@ class DiagramScene(QGraphicsScene):
             self.scale_x = scale_x
             self.scale_y = scale_y
 
-    def update_diagram(self, project, selected_target: str, route_id: str, diagram_id: str):
+    def update_diagram(self, project, selected_target: str, route_id: str, diagram_id: str,
+                       filter_train_type_id: str = None):
         """
         運行ダイヤグラムを更新描画する。
         selected_target: "route" または line_id (str)
         route_id: 運行系統リストで選択中のroute_id
         diagram_id: 運転ダイヤリストで選択中のdiagram_id
+        filter_train_type_id: 表示する列車種別のID。Noneの場合は全種別を表示
         """
         self.project = project
         self.selected_target = selected_target
         self.route_id = route_id
         self.diagram_id = diagram_id
+        self.filter_train_type_id = filter_train_type_id
 
         self.clear()
 
@@ -173,14 +177,34 @@ class DiagramScene(QGraphicsScene):
         return stations_data
 
     def _render_error_message(self, text: str):
-        self.setSceneRect(0, 0, 600, 300)
-        error_item = QGraphicsSimpleTextItem(text)
+        active_views = self.views()
+
+        if active_views:
+            view = active_views[0]
+            view_rect = view.rect()
+
+            view_width = view_rect.width()
+            view_height = view_rect.height()
+        else:
+            view_width = 300
+            view_height = 200
+
+        self.setSceneRect(0, 0, view_width, view_height)
+
+        text_item = QGraphicsSimpleTextItem(text)
         font = QFont()
-        font.setPixelSize(14)
-        error_item.setFont(font)
-        error_item.setBrush(QBrush(QColor("#cc3333")))
-        error_item.setPos(50, 100)
-        self.addItem(error_item)
+        font.setPixelSize(18)
+        text_item.setFont(font)
+        text_item.setBrush(QBrush(QColor("#888888")))
+        self.addItem(text_item)
+
+        text_rect = text_item.boundingRect()
+        text_width = text_rect.width() * text_item.scale()
+        text_height = text_rect.height() * text_item.scale()
+
+        pos_x = (view_width - text_width) / 2
+        pos_y = (view_height - text_height) / 2
+        text_item.setPos(pos_x, pos_y)
 
     def _collect_station_positions(self):
         """
@@ -189,6 +213,7 @@ class DiagramScene(QGraphicsScene):
         戻り値:
         [
             {
+                "station_entry_id": str,
                 "station_id": str,
                 "station_name": str,
                 "y": float,
@@ -210,8 +235,8 @@ class DiagramScene(QGraphicsScene):
 
             for seg_idx, seg in enumerate(segments):
                 line_id = seg.get("line_id")
-                start_sid = seg.get("start_station")
-                end_sid = seg.get("end_station")
+                start_eid = seg.get("start_station_entry", seg.get("start_station"))
+                end_eid = seg.get("end_station_entry", seg.get("end_station"))
                 seg_id = seg.get("segment_id")
 
                 line = self.project.lines.get(line_id)
@@ -219,32 +244,32 @@ class DiagramScene(QGraphicsScene):
                     continue
 
                 line_station_list = line.get("station_list", [])
-                line_sids = [s.get("station_id") for s in line_station_list]
-                station_map = {s.get("station_id"): s for s in line_station_list}
+                line_eids = [s.get("station_entry_id") for s in line_station_list]
+                station_map = {s.get("station_entry_id"): s for s in line_station_list}
 
-                if start_sid not in line_sids or end_sid not in line_sids:
+                if start_eid not in line_eids or end_eid not in line_eids:
                     continue
 
-                idx_start = line_sids.index(start_sid)
-                idx_end = line_sids.index(end_sid)
+                idx_start = line_eids.index(start_eid)
+                idx_end = line_eids.index(end_eid)
 
                 if idx_start <= idx_end:
-                    seg_sids = line_sids[idx_start:idx_end + 1]
+                    seg_eids = line_eids[idx_start:idx_end + 1]
                 else:
-                    seg_sids = line_sids[idx_start:idx_end - 1:-1] if idx_end > 0 else line_sids[idx_start::-1]
+                    seg_eids = line_eids[idx_start:idx_end - 1:-1] if idx_end > 0 else line_eids[idx_start::-1]
 
-                start_st_info = station_map.get(start_sid)
+                start_st_info = station_map.get(start_eid)
                 if not start_st_info or start_st_info.get("absolute_standard_running_time") is None:
                     return None
                 start_abs_time = start_st_info.get("absolute_standard_running_time")
 
-                end_st_info = station_map.get(end_sid)
+                end_st_info = station_map.get(end_eid)
                 if not end_st_info or end_st_info.get("absolute_standard_running_time") is None:
                     return None
                 end_abs_time = end_st_info.get("absolute_standard_running_time")
 
-                for sid in seg_sids:
-                    st_info = station_map.get(sid)
+                for eid in seg_eids:
+                    st_info = station_map.get(eid)
                     if not st_info or st_info.get("absolute_standard_running_time") is None:
                         return None
                     abs_time = st_info.get("absolute_standard_running_time")
@@ -256,10 +281,12 @@ class DiagramScene(QGraphicsScene):
                     # 基準運転時分(秒)に対しscale_y (上部余白40px)
                     y = 40.0 + (rel_time * self.scale_y)
 
+                    sid = st_info.get("station_id")
                     st_obj = self.project.stations.get(sid, {})
                     st_name = st_obj.get("station_name", sid)
 
                     stations_data.append({
+                        "station_entry_id": eid,
                         "station_id": sid,
                         "station_name": st_name,
                         "y": y,
@@ -286,6 +313,7 @@ class DiagramScene(QGraphicsScene):
 
             stations_data = []
             for s_entry in station_list:
+                eid = s_entry.get("station_entry_id")
                 sid = s_entry.get("station_id")
                 abs_time = s_entry.get("absolute_standard_running_time")
                 if abs_time is None:
@@ -297,6 +325,7 @@ class DiagramScene(QGraphicsScene):
                 st_name = st_obj.get("station_name", sid)
 
                 stations_data.append({
+                    "station_entry_id": eid,
                     "station_id": sid,
                     "station_name": st_name,
                     "y": y,
@@ -380,6 +409,10 @@ class DiagramScene(QGraphicsScene):
                 m_train = m_dict.get(tid)
                 if not m_train:
                     continue
+                # 列車種別フィルタ
+                if self.filter_train_type_id is not None:
+                    if m_train.get("train_type_id") != self.filter_train_type_id:
+                        continue
                 self._draw_single_train_for_route(m_train, stations_data, route)
 
     def _draw_single_train_for_route(self, train, stations_data, route):
@@ -401,7 +434,7 @@ class DiagramScene(QGraphicsScene):
 
         for stop in stops:
             seg_id = stop.get("segment_id")
-            sid = stop.get("station_id")
+            eid = stop.get("station_entry_id")
             arr_time_str = stop.get("arrival_time")
             dep_time_str = stop.get("departure_time")
 
@@ -429,7 +462,7 @@ class DiagramScene(QGraphicsScene):
             target_entry = None
             for idx in range(len(stations_data)):
                 st = stations_data[idx]
-                if st.get("segment_id") == seg_id and st.get("station_id") == sid:
+                if st.get("segment_id") == seg_id and st.get("station_entry_id") == eid:
                     target_entry = st
                     break
 
@@ -471,7 +504,7 @@ class DiagramScene(QGraphicsScene):
         # プロジェクトデータに存在する全運行系統を走査して、
         # 選択されている路線に属する部分区間を経由する列車を抽出し、
         # 各列車について選択されている路線に属する部分区間の発着時刻のみをプロット
-        station_y_map = {st["station_id"]: st["y"] for st in stations_data}
+        station_y_map = {st["station_entry_id"]: st["y"] for st in stations_data if st.get("station_entry_id")}
 
         for rid in self.project.routes_order:
             route = self.project.routes.get(rid)
@@ -497,6 +530,11 @@ class DiagramScene(QGraphicsScene):
                     if not m_train:
                         continue
 
+                    # 列車種別フィルタ
+                    if self.filter_train_type_id is not None:
+                        if m_train.get("train_type_id") != self.filter_train_type_id:
+                            continue
+
                     stops = m_train.get("stops", [])
                     subpaths = []
                     current_subpath = []
@@ -515,14 +553,14 @@ class DiagramScene(QGraphicsScene):
                             current_subpath = []
                             continue
 
-                        sid = stop.get("station_id")
-                        if sid not in station_y_map:
+                        eid = stop.get("station_entry_id")
+                        if eid not in station_y_map:
                             if len(current_subpath) >= 2:
                                 subpaths.append(current_subpath)
                             current_subpath = []
                             continue
 
-                        y = station_y_map[sid]
+                        y = station_y_map[eid]
 
                         if arr_sec is not None and dep_sec is not None:
                             x_arr = (arr_sec / 60.0) * self.scale_x

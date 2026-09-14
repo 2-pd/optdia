@@ -7,7 +7,7 @@ import gzip
 from PySide6.QtWidgets import QMessageBox
 
 # プロジェクトファイルの仕様バージョン (optdia_project.ts の定義に準拠)
-PROJECT_SCHEMA_VERSION = "2026.09.001"
+PROJECT_SCHEMA_VERSION = "2026.09.002"
 
 
 class SchemaVersionError(Exception):
@@ -16,7 +16,7 @@ class SchemaVersionError(Exception):
 
 
 # ランダムな英数字からなるIDを生成する関数
-def generate_random_id(id_length:int = 16) -> str:
+def generate_random_id(id_length: int = 16) -> str:
     chars = string.ascii_letters + string.digits
     return "".join(random.choices(chars, k=id_length))
 
@@ -34,6 +34,97 @@ def is_newer_schema_version(file_version: str, current_version: str) -> bool:
         return False
 
 
+def is_older_schema_version(file_version: str, target_version: str) -> bool:
+    """
+    バージョン番号文字列をピリオドで分割し、整数キャストして大小比較を行う。
+    file_version が target_version より小さい場合に True を返す。
+    """
+    try:
+        file_parts = [int(x) for x in str(file_version).split(".")]
+        target_parts = [int(x) for x in str(target_version).split(".")]
+        return file_parts < target_parts
+    except (ValueError, TypeError, AttributeError):
+        return True
+
+
+def migrate_to_2026_09_002(data: dict) -> dict:
+    """
+    2026.09.002 未満の仕様で作成されたプロジェクトデータ辞書を 2026.09.002 の仕様へ移行する。
+    - optdia_line_station_entry に station_entry_id (英数字12文字) を追加
+    - optdia_train_stop の station_id を station_entry_id に置換
+    - optdia_line_segment の start_station と end_station を start_station_entry と end_station_entry に置換
+    - metadata.project_schema_version を 2026.09.002 に更新
+    """
+    entities = data.get("entities", {})
+    lines = entities.get("lines", [])
+
+    # line_id -> {station_id: station_entry_id} のマッピングおよび駅ID全体のフォールバック用辞書
+    line_station_to_entry_id = {}
+    station_to_entry_ids = {}
+
+    for line in lines:
+        line_id = line.get("line_id")
+        line_station_to_entry_id[line_id] = {}
+        for entry in line.get("station_list", []):
+            if not entry.get("station_entry_id"):
+                entry["station_entry_id"] = generate_random_id(12)
+            sid = entry.get("station_id")
+            eid = entry["station_entry_id"]
+            if sid:
+                line_station_to_entry_id[line_id][sid] = eid
+                station_to_entry_ids.setdefault(sid, []).append(eid)
+
+    routes = entities.get("routes", [])
+    for route in routes:
+        # segment_id -> line_id マッピングおよび line_segments の移行
+        segment_to_line = {}
+        for seg in route.get("line_segments", []):
+            seg_id = seg.get("segment_id")
+            lid = seg.get("line_id")
+            if seg_id and lid:
+                segment_to_line[seg_id] = lid
+
+            if "start_station" in seg and "start_station_entry" not in seg:
+                start_sid = seg.get("start_station")
+                start_eid = line_station_to_entry_id.get(lid, {}).get(start_sid) or (station_to_entry_ids.get(start_sid, [None])[0])
+                seg["start_station_entry"] = start_eid
+            if "end_station" in seg and "end_station_entry" not in seg:
+                end_sid = seg.get("end_station")
+                end_eid = line_station_to_entry_id.get(lid, {}).get(end_sid) or (station_to_entry_ids.get(end_sid, [None])[0])
+                seg["end_station_entry"] = end_eid
+            if "start_station" in seg:
+                del seg["start_station"]
+            if "end_station" in seg:
+                del seg["end_station"]
+
+        # inbound_trains と outbound_trains 内の stops を更新
+        for train_key in ["inbound_trains", "outbound_trains"]:
+            trains = route.get(train_key, {})
+            train_items = trains.values() if isinstance(trains, dict) else trains
+            for train in train_items:
+                for stop in train.get("stops", []):
+                    sid = stop.get("station_id")
+                    if not stop.get("station_entry_id"):
+                        seg_id = stop.get("segment_id")
+                        lid = segment_to_line.get(seg_id)
+                        entry_id = None
+                        if lid and lid in line_station_to_entry_id and sid in line_station_to_entry_id[lid]:
+                            entry_id = line_station_to_entry_id[lid][sid]
+                        elif sid and sid in station_to_entry_ids and station_to_entry_ids[sid]:
+                            entry_id = station_to_entry_ids[sid][0]
+                        else:
+                            entry_id = generate_random_id(12)
+                        stop["station_entry_id"] = entry_id
+
+                    if "station_id" in stop:
+                        del stop["station_id"]
+
+    if "metadata" in data:
+        data["metadata"]["project_schema_version"] = PROJECT_SCHEMA_VERSION
+
+    return data
+
+
 class OptDiaProject:
     """
     optdia_project.ts の定義に基づくプロジェクトデータ管理クラス。
@@ -41,8 +132,14 @@ class OptDiaProject:
     """
 
     def __init__(self, data: dict = None):
+        # 引数 data はプロジェクトファイル(JSON)をパースした辞書
         if data is None:
             data = {}
+
+        # 2026.09.002 未満のスキーマバージョンの場合は移行処理を実行
+        file_version = data.get("metadata", {}).get("project_schema_version", "")
+        if is_older_schema_version(file_version, "2026.09.002"):
+            data = migrate_to_2026_09_002(data)
 
         # メタデータの読み込みと最小限の初期値設定
         self.metadata = data.get("metadata", {})
@@ -59,6 +156,15 @@ class OptDiaProject:
 
         # 路線 (lines: optdia_line[])
         self.lines, self.lines_order = self._split_collection(entities.get("lines", []), "line_id")
+
+        # station_entry_id から station_id を検索するための連想配列を構築
+        self.station_entry_to_station_id = {}
+        for line in self.lines.values():
+            for entry in line.get("station_list", []):
+                eid = entry.get("station_entry_id")
+                sid = entry.get("station_id")
+                if eid and sid:
+                    self.station_entry_to_station_id[eid] = sid
 
         # 駅 (stations): 連想配列だが、内部の tracks (optdia_station_track[]) を分割
         self.stations = entities.get("stations", {})
@@ -128,7 +234,8 @@ class OptDiaProject:
                     if stops:
                         last_stop = stops[-1]
                         if last_stop.get("departure_time") is None:
-                            station_id = last_stop.get("station_id")
+                            station_entry_id = last_stop.get("station_entry_id")
+                            station_id = self.station_entry_to_station_id.get(station_entry_id)
                             station = self.stations.get(station_id, {})
                             if not station.get("show_arrival_time", False):
                                 last_stop["departure_time"] = last_stop.get("arrival_time")
@@ -151,8 +258,8 @@ class OptDiaProject:
             # 最後の要素でなく、かつ「s1が着のみ」「s2が発のみ」かつ「同一駅・同一区間」なら統合
             if i + 1 < len(stops):
                 s2 = stops[i+1]
-                if (s1["station_id"] == s2["station_id"] and 
-                    s1["segment_id"] == s2["segment_id"] and 
+                if (s1.get("station_entry_id") == s2.get("station_entry_id") and 
+                    s1.get("segment_id") == s2.get("segment_id") and 
                     s1.get("arrival_time") and not s1.get("departure_time") and
                     not s2.get("arrival_time") and s2.get("departure_time")):
                     

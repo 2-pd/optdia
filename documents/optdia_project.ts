@@ -6,7 +6,7 @@
  */
 
 
-// 仕様バージョン 2026.09.001
+// 仕様バージョン 2026.09.002
 
 // OptDiaでは、鉄道ダイヤグラムデータを以下のオブジェクト「optdia_project」に適合するJSON文字列として、拡張子「.optdia」のファイルに保存する。
 // 「optdia_project」オブジェクトに適合するJSON文字列をgzip圧縮して保存したファイルも利用可能であり、その場合の拡張子は「.optd」となる。
@@ -47,7 +47,7 @@ interface optdia_line {
     line_color: string; // 路線の色(デフォルト値は #333333)
     line_symbol: string | null; // 路線記号等(1〜2文字の英数字または1文字のマルチバイト文字)
     inbound_direction_is_forward_direction: boolean; // 編成の前位向きと列車の上り向きが一致するか否か
-    station_list: optdia_line_station[]; // 路線に駅を紐付ける情報(下記)を起点側の駅のものから順に配列で
+    station_list: optdia_line_station_entry[]; // 路線に駅を紐付ける情報(下記)を起点側の駅のものから順に配列で
 }
 
 
@@ -79,7 +79,8 @@ interface optdia_station_track {
 
 
 // 路線に駅情報を紐付けるためのオブジェクト
-interface optdia_line_station {
+interface optdia_line_station_entry {
+    station_entry_id: string; // 路線-駅対応ID(ランダムな英数字12文字)
     station_id: string; // 駅ID
     station_number: string | null; // 駅番号
     inbound_main_track: string | null; // 上り本線の発着番線ID
@@ -103,8 +104,8 @@ interface optdia_route {
 interface optdia_line_segment {
     segment_id: string; // 部分区間ID(ランダムな英数字12文字)
     line_id: string; // 路線ID
-    start_station: string; // 区間の始点となる駅のID
-    end_station: string; // 区間の終点となる駅のID(始点と終点の位置関係が路線情報での駅の順序と逆の場合は、路線が逆向きで経路に配置されていることを意味する)
+    start_station_entry: string; // 区間の始点となる駅の路線-駅対応ID
+    end_station_entry: string; // 区間の終点となる駅の路線-駅対応ID(始点と終点の位置関係が路線情報での駅の順序と逆の場合は、路線が逆向きで経路に配置されていることを意味する)
 }
 
 
@@ -183,7 +184,7 @@ interface optdia_subsequent_train_identifier {
 // 列車の経由駅情報
 interface optdia_train_stop {
     segment_id: string; // 部分区間ID
-    station_id: string; // 駅ID
+    station_entry_id: string; // 路線-駅対応ID
     track_id: string | null; // 発着番線ID
     arrival_time: string | null; // 到着時刻(hh:mm:ss形式)
     departure_time: string | null; // 発車時刻(hh:mm:ss形式)

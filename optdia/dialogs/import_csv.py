@@ -53,6 +53,7 @@ class ImportCsvSettingsDialog(QDialog):
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
         self.btn_ok = QPushButton("OK", self)
+        self.btn_ok.setProperty("class", "ok_button")
         self.btn_cancel = QPushButton("キャンセル", self)
         
         self.btn_ok.clicked.connect(self.accept)
@@ -664,7 +665,7 @@ def import_timetable_from_csv(parent_window):
                     # デフォルト stop_dict
                     stop_dict = {
                         "segment_id": cfg["segment_id"],
-                        "station_id": sid,
+                        "station_entry_id": cfg["station_entry_id"],
                         "arrival_time": None,
                         "departure_time": None,
                         "track_id": cfg.get("track_id"),
@@ -777,7 +778,8 @@ def import_timetable_from_csv(parent_window):
             # 4. 各列車の経由駅情報の検査と補填処理
             num_stops = len(stops_raw)
             for s_idx, stop_item in enumerate(stops_raw):
-                sid = stop_item["station_id"]
+                eid = stop_item.get("station_entry_id")
+                sid = getattr(project, "station_entry_to_station_id", {}).get(eid) or stop_item.get("station_id")
                 s_data = project.stations.get(sid, {})
                 show_arr = s_data.get("show_arrival_time", False)
 
@@ -801,21 +803,21 @@ def import_timetable_from_csv(parent_window):
                 seg_id = stop_item["segment_id"]
 
                 # optdia_line_segment での始点駅・終点駅を特定
-                seg_start_station = None
-                seg_end_station = None
+                seg_start_entry = None
+                seg_end_entry = None
                 for seg in route.get("line_segments", []):
                     if seg.get("segment_id") == seg_id:
                         if direction == "outbound":
-                            seg_start_station = seg.get("start_station")
-                            seg_end_station = seg.get("end_station")
+                            seg_start_entry = seg.get("start_station_entry", seg.get("start_station"))
+                            seg_end_entry = seg.get("end_station_entry", seg.get("end_station"))
                         else: # inbound
-                            seg_start_station = seg.get("end_station")
-                            seg_end_station = seg.get("start_station")
+                            seg_start_entry = seg.get("end_station_entry", seg.get("end_station"))
+                            seg_end_entry = seg.get("start_station_entry", seg.get("start_station"))
                         break
 
-                if sid == seg_start_station:
+                if eid == seg_start_entry:
                     stop_item["arrival_time"] = None
-                if sid == seg_end_station:
+                if eid == seg_end_entry:
                     stop_item["departure_time"] = None
 
             # 空の経由駅情報を除去

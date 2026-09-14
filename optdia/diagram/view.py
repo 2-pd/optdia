@@ -10,7 +10,6 @@ class DiagramHeaderView(QGraphicsView):
         self.scene = DiagramHeaderScene(self)
         self.setScene(self.scene)
         self.setRenderHint(QPainter.Antialiasing)
-        self.setStyleSheet("border: none; background-color: #ffffff;")
         self.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.setFixedHeight(20)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -27,7 +26,6 @@ class DiagramStationView(QGraphicsView):
         self.scene = DiagramStationScene(self)
         self.setScene(self.scene)
         self.setRenderHint(QPainter.Antialiasing)
-        self.setStyleSheet("border: none; background-color: #ffffff;")
         self.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.setFixedWidth(120)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -44,16 +42,12 @@ class DiagramView(QGraphicsView):
         self.scene = DiagramScene(self)
         self.setScene(self.scene)
         self.setRenderHint(QPainter.Antialiasing)
-        self.setStyleSheet("""
-        QGraphicsView {
-            border: none;
-            background-color: #ffffff;
-        }
-        """)
         self.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
-    def update_diagram(self, project, selected_target: str, route_id: str, diagram_id: str):
-        return self.scene.update_diagram(project, selected_target, route_id, diagram_id)
+    def update_diagram(self, project, selected_target: str, route_id: str, diagram_id: str,
+                       filter_train_type_id: str = None):
+        return self.scene.update_diagram(project, selected_target, route_id, diagram_id,
+                                         filter_train_type_id=filter_train_type_id)
 

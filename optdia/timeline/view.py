@@ -10,12 +10,6 @@ class TimelineView(QGraphicsView):
         self.scene = TimelineScene(self)
         self.setScene(self.scene)
         self.setRenderHint(QPainter.Antialiasing)
-        self.setStyleSheet("""
-        QGraphicsView {
-            border: none;
-            background-color: #ffffff;
-        }
-        """)
         self.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         self.setDragMode(QGraphicsView.RubberBandDrag)
@@ -70,7 +64,6 @@ class TimelineHeaderView(QGraphicsView):
         self.scene = TimelineHeaderScene(self)
         self.setScene(self.scene)
         self.setRenderHint(QPainter.Antialiasing)
-        self.setStyleSheet("border: none; background-color: #f7f7f7;")
         self.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
