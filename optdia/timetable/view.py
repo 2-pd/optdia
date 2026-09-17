@@ -18,6 +18,34 @@ class TimetableVerticalHeader(QHeaderView):
         # padding: top right bottom left (左8px = 縦線6px + 余白2px、右4px)
         self.setStyleSheet("QHeaderView::section { padding: 0px 4px 0px 8px; margin: 0px; }")
         self.setDefaultAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.setSectionsClickable(True)
+        self.sectionClicked.connect(self._on_section_clicked)
+
+    def _on_section_clicked(self, logicalIndex):
+        model = self.model()
+        if not model or not hasattr(model, 'row_headers') or not hasattr(model, 'station_rows'):
+            return
+        is_station_row = logicalIndex >= len(model.row_headers)
+        if is_station_row:
+            row_idx = logicalIndex - len(model.row_headers)
+            if 0 <= row_idx < len(model.station_rows):
+                station_row_data = model.station_rows[row_idx]
+                stop_idx = station_row_data.get("stop_idx")
+                if stop_idx is not None and stop_idx < len(model.full_stop_configs):
+                    config = model.full_stop_configs[stop_idx]
+                    station_id = config.get("station_id") or getattr(model.project, "station_entry_to_station_id", {}).get(config.get("station_entry_id"))
+                    if station_id:
+                        from previews.station_timetable import StationTimetablePreviewDialog
+                        dialog = StationTimetablePreviewDialog(
+                            parent=self.window(),
+                            project=model.project,
+                            station_id=station_id,
+                            diagram_id=model.diagram_id,
+                            initial_route_id=model.route_id,
+                            initial_direction=model.direction
+                        )
+                        dialog.exec()
+
 
     def paintSection(self, painter, rect, logicalIndex):
         model = self.model()
