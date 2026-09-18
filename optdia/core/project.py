@@ -214,16 +214,35 @@ class OptDiaProject:
             for train_key in ["inbound_trains", "outbound_trains"]:
                 for train_id, m_train in route.get(train_key, {}).items():
                     m_train["_diagram_ids"] = [] # 一時キーを初期化
+                    m_train["_preceding_trains"] = [] # 連続する列車としてこの列車を指定している列車の逆引き情報
 
             # 各ダイヤを走査し、マスタ列車にダイヤIDを紐付ける
+            # あわせて、ダイヤ別列車に連続する列車の逆引き情報を紐付ける
             for diagram_id in self.diagrams_order:
                 tbd_for_diagram = route.get("trains_by_diagram", {}).get(diagram_id, {})
                 for train_key in ["inbound_trains", "outbound_trains"]:
+                    direction = "inbound" if train_key == "inbound_trains" else "outbound"
                     d_trains_for_diagram = tbd_for_diagram.get(train_key, {})
-                    for d_train_id in d_trains_for_diagram:
+                    for d_train_id, d_train in d_trains_for_diagram.items():
                         m_train = route.get(train_key, {}).get(d_train_id)
                         if m_train is not None and diagram_id not in m_train["_diagram_ids"]:
                             m_train["_diagram_ids"].append(diagram_id)
+                        
+                        # 連続する列車の逆引き情報を設定
+                        for sub in d_train.get("subsequent_trains", []):
+                            sub_rid = sub.get("route_id")
+                            sub_dir = sub.get("direction")
+                            sub_tid = sub.get("train_id")
+                            if sub_rid and sub_dir and sub_tid:
+                                sub_route = self.routes.get(sub_rid)
+                                if sub_route:
+                                    sub_key = "inbound_trains" if sub_dir == "inbound" else "outbound_trains"
+                                    target_m_train = sub_route.get(sub_key, {}).get(sub_tid)
+                                    if target_m_train is not None:
+                                        target_preceding = target_m_train.setdefault("_preceding_trains", [])
+                                        entry = {"route_id": route_id, "direction": direction, "train_id": d_train_id}
+                                        if entry not in target_preceding:
+                                            target_preceding.append(entry)
 
         # プロジェクトファイルを開くときに全ての列車データ(optdia_train)を検査
         # stopsの最後の駅について、発時刻がNoneであり、かつ、その駅のshow_arrival_timeがTrueでないならば、着時刻の値を発時刻に代入
@@ -289,9 +308,134 @@ class OptDiaProject:
         
         return item_dict, item_order
 
+    def add_subsequent_link(self, from_route_id: str, from_direction: str, from_train_id: str, to_sub: dict):
+        """1つの連続列車参照 (from -> to) の逆引き情報を追加する"""
+        if not to_sub:
+            return
+        sub_rid = to_sub.get("route_id")
+        sub_dir = to_sub.get("direction")
+        sub_tid = to_sub.get("train_id")
+        if sub_rid and sub_dir and sub_tid:
+            sub_route = self.routes.get(sub_rid)
+            if sub_route:
+                sub_key = "inbound_trains" if sub_dir == "inbound" else "outbound_trains"
+                target_m_train = sub_route.get(sub_key, {}).get(sub_tid)
+                if target_m_train is not None:
+                    target_preceding = target_m_train.setdefault("_preceding_trains", [])
+                    entry = {"route_id": from_route_id, "direction": from_direction, "train_id": from_train_id}
+                    if entry not in target_preceding:
+                        target_preceding.append(entry)
+
+    def remove_subsequent_link(self, from_route_id: str, from_direction: str, from_train_id: str, to_sub: dict):
+        """1つの連続列車参照 (from -> to) の逆引き情報を削除する（他ダイヤで同一参照が残っていない場合のみ）"""
+        if not to_sub:
+            return
+        sub_rid = to_sub.get("route_id")
+        sub_dir = to_sub.get("direction")
+        sub_tid = to_sub.get("train_id")
+        if not (sub_rid and sub_dir and sub_tid):
+            return
+
+        # 他のダイヤで from_train_id が同一の sub を参照しているか確認
+        route = self.routes.get(from_route_id, {})
+        train_key = "inbound_trains" if from_direction == "inbound" else "outbound_trains"
+        still_exists = False
+        for diag_id in self.diagrams_order:
+            tbd = route.get("trains_by_diagram", {}).get(diag_id, {})
+            d_tr = tbd.get(train_key, {}).get(from_train_id)
+            if d_tr:
+                for s in d_tr.get("subsequent_trains", []):
+                    if (s.get("route_id") == sub_rid and
+                        s.get("direction") == sub_dir and
+                        s.get("train_id") == sub_tid):
+                        still_exists = True
+                        break
+            if still_exists:
+                break
+
+        if not still_exists:
+            sub_route = self.routes.get(sub_rid)
+            if sub_route:
+                sub_key = "inbound_trains" if sub_dir == "inbound" else "outbound_trains"
+                target_m_train = sub_route.get(sub_key, {}).get(sub_tid)
+                if target_m_train and "_preceding_trains" in target_m_train:
+                    entry = {"route_id": from_route_id, "direction": from_direction, "train_id": from_train_id}
+                    target_m_train["_preceding_trains"] = [
+                        p for p in target_m_train["_preceding_trains"] if p != entry
+                    ]
+
+    def update_train_subsequent_links(self, from_route_id: str, from_direction: str, from_train_id: str, old_subs: list, new_subs: list):
+        """特定の列車について、連続列車リストの変更（old_subs -> new_subs）に伴う逆引き情報のみを更新する"""
+        old_set = {(s.get("route_id"), s.get("direction"), s.get("train_id")) for s in (old_subs or []) if s.get("train_id")}
+        new_set = {(s.get("route_id"), s.get("direction"), s.get("train_id")) for s in (new_subs or []) if s.get("train_id")}
+
+        # 削除された参照
+        removed = old_set - new_set
+        for r_id, d_dir, t_id in removed:
+            self.remove_subsequent_link(from_route_id, from_direction, from_train_id, {
+                "route_id": r_id, "direction": d_dir, "train_id": t_id
+            })
+
+        # 追加された参照
+        added = new_set - old_set
+        for r_id, d_dir, t_id in added:
+            self.add_subsequent_link(from_route_id, from_direction, from_train_id, {
+                "route_id": r_id, "direction": d_dir, "train_id": t_id
+            })
+
+    def remove_all_train_links(self, route_id: str, direction: str, train_id: str):
+        """列車が全削除される際に、その列車自身が参照していた先と、その列車を参照していた元の両方の逆引き関係を更新する"""
+        entry = {"route_id": route_id, "direction": direction, "train_id": train_id}
+
+        # 1. この列車を参照していた先行列車（_preceding_trains）からのリンクをクリア
+        #    （先行列車の d_train 側は削除されないが、この列車自体のマスタが消えるため）
+        #    マスタ列車の _preceding_trains を参照
+        train_key = "inbound_trains" if direction == "inbound" else "outbound_trains"
+        m_train = self.routes.get(route_id, {}).get(train_key, {}).get(train_id)
+        if m_train and "_preceding_trains" in m_train:
+            m_train["_preceding_trains"] = []
+
+        # 2. この列車が指していた後続列車の _preceding_trains から entry を削除
+        route = self.routes.get(route_id, {})
+        for diag_id in self.diagrams_order:
+            tbd = route.get("trains_by_diagram", {}).get(diag_id, {})
+            d_train = tbd.get(train_key, {}).get(train_id)
+            if d_train:
+                for sub in d_train.get("subsequent_trains", []):
+                    sub_rid = sub.get("route_id")
+                    sub_dir = sub.get("direction")
+                    sub_tid = sub.get("train_id")
+                    if sub_rid and sub_dir and sub_tid:
+                        sub_route = self.routes.get(sub_rid)
+                        if sub_route:
+                            sub_key = "inbound_trains" if sub_dir == "inbound" else "outbound_trains"
+                            target_m_train = sub_route.get(sub_key, {}).get(sub_tid)
+                            if target_m_train and "_preceding_trains" in target_m_train:
+                                target_m_train["_preceding_trains"] = [
+                                    p for p in target_m_train["_preceding_trains"] if p != entry
+                                ]
+
+    def update_subsequent_reverse_lookup(self):
+        """プロジェクト内のすべての列車の連続列車逆引き情報(_preceding_trains)を再構築する（ファイル読込時等の初期構築用）"""
+        for route_id in self.routes_order:
+            route = self.routes.get(route_id, {})
+            for train_key in ["inbound_trains", "outbound_trains"]:
+                for m_train in route.get(train_key, {}).values():
+                    m_train["_preceding_trains"] = []
+
+        for route_id in self.routes_order:
+            route = self.routes.get(route_id, {})
+            for diagram_id in self.diagrams_order:
+                tbd = route.get("trains_by_diagram", {}).get(diagram_id, {})
+                for train_key in ["inbound_trains", "outbound_trains"]:
+                    direction = "inbound" if train_key == "inbound_trains" else "outbound"
+                    for d_train_id, d_train in tbd.get(train_key, {}).items():
+                        for sub in d_train.get("subsequent_trains", []):
+                            self.add_subsequent_link(route_id, direction, d_train_id, sub)
+
     def _clean_train_for_export(self, train_data: dict):
         """保存用に列車データから一時的な管理用フラグやインデックスを削除する"""
-        clean_train = {k: v for k, v in train_data.items() if k not in ["to_be_saved", "_diagram_ids", "_stop_map"]}
+        clean_train = {k: v for k, v in train_data.items() if k not in ["to_be_saved", "_diagram_ids", "_stop_map", "_preceding_trains"]}
         if "stops" in clean_train:
             # 保存直前に、不要なデータの削除と、同一駅・路線の連続するデータの統合を行う
             stops = self._normalize_train_stops_for_save(clean_train["stops"])

@@ -808,11 +808,13 @@ class SubsequentTrainDialog(QDialog):
 
     def _record_subs_change(self, old_subs, new_subs):
         from core.events import ChangeSubsequentTrainEvent
+        train_id = self.d_train.get("train_id")
+        if hasattr(self.project, "update_train_subsequent_links"):
+            self.project.update_train_subsequent_links(self.route_id, self.direction, train_id, old_subs, new_subs)
         view = self.parent()
         if view and hasattr(view, "model"):
             model = view.model()
             if hasattr(model, "history_manager") and model.history_manager:
-                train_id = self.d_train.get("train_id")
                 ev = ChangeSubsequentTrainEvent(self.route_id, self.direction, train_id, self.diagram_id, old_subs, new_subs)
                 model.history_manager.push_events([ev])
 
@@ -1116,6 +1118,13 @@ def split_train_at_cell(parent, model, index):
                 
             d_trains_for_did[new_train_id] = new_d_train
             events_to_push.append(AddTrainEvent(route_id, direction, new_train_id, did, insert_idx, new_d_train, new_m_train))
+
+            # 逆引き情報の更新（orig_d_train の連続列車変更、および new_d_train の連続列車追加）
+            if hasattr(model.project, "update_train_subsequent_links"):
+                model.project.update_train_subsequent_links(route_id, direction, train_id, old_orig_subs, orig_d_train["subsequent_trains"])
+            if hasattr(model.project, "add_subsequent_link"):
+                for sub in new_d_train.get("subsequent_trains", []):
+                    model.project.add_subsequent_link(route_id, direction, new_train_id, sub)
 
     # オリジナル列車の stop 変更イベント
     for old_s in old_m_stops:
@@ -1584,11 +1593,14 @@ def duplicate_trains(
                 if sub_rid and sub_dir and sub_tid:
                     cloned_sub_tid = _duplicate_chain(sub_rid, sub_dir, sub_tid, shift_min, t_inc, n_inc, visited, is_root=False, after_tid=prev_new_tid)
                     if cloned_sub_tid:
-                        new_subs.append({
+                        sub_entry = {
                             "route_id": sub_rid,
                             "direction": sub_dir,
                             "train_id": cloned_sub_tid
-                        })
+                        }
+                        new_subs.append(sub_entry)
+                        if hasattr(model.project, "add_subsequent_link"):
+                            model.project.add_subsequent_link(s_rid, s_dir, new_tid, sub_entry)
                         prev_new_tid = cloned_sub_tid  # 次の連続列車コピーは前の連続列車コピーの直後に挿入
             new_d["subsequent_trains"] = new_subs
 
@@ -1759,6 +1771,8 @@ def delete_trains(parent_view, model, cols: List[int]):
 
         if delete_from_all_diagrams:
             # 全運転ダイヤおよび運行系統マスタから削除 -> RemoveTrainEvent
+            if hasattr(model.project, "remove_all_train_links"):
+                model.project.remove_all_train_links(model.route_id, model.direction, train_id)
             d_trains_by_diagram = {}
             for did in actual_diagram_ids:
                 tbd_for_did = route.get("trains_by_diagram", {}).get(did, {})
@@ -1781,6 +1795,8 @@ def delete_trains(parent_view, model, cols: List[int]):
             # 現在の運転ダイヤからのみ削除
             # 登録が1つだけの場合は RemoveTrainEvent を使用
             if len(actual_diagram_ids) <= 1:
+                if hasattr(model.project, "remove_all_train_links"):
+                    model.project.remove_all_train_links(model.route_id, model.direction, train_id)
                 old_idx = order.index(train_id) if train_id in order else 0
                 d_trains_by_diagram = {model.diagram_id: (old_idx, copy.deepcopy(d_train))}
                 if train_id in order:
@@ -1801,6 +1817,9 @@ def delete_trains(parent_view, model, cols: List[int]):
                     del d_trains[train_id]
                 if "_diagram_ids" in m_train and model.diagram_id in m_train["_diagram_ids"]:
                     m_train["_diagram_ids"].remove(model.diagram_id)
+                if hasattr(model.project, "remove_subsequent_link"):
+                    for sub in old_d_train.get("subsequent_trains", []):
+                        model.project.remove_subsequent_link(model.route_id, model.direction, train_id, sub)
                 ev = RemoveTrainDiagramEvent(model.route_id, model.direction, train_id, model.diagram_id, old_idx, old_d_train)
                 events_to_push.append(ev)
 
