@@ -259,6 +259,12 @@ class OptDiaProject:
                             if not station.get("show_arrival_time", False):
                                 last_stop["departure_time"] = last_stop.get("arrival_time")
 
+        # 運用 (optdia_operation) からその運用に属する列車 (optdia_diagram_train) を逆引きするデータ
+        # 構造: {diagram_id: {operation_id: [{route_id, direction, train_id}, ...]}}
+        # このデータは保存時には除去される (一時的な管理用データ)
+        self.operation_train_lookup: dict = {}
+        self._build_operation_train_lookup()
+
     def _normalize_train_stops_for_save(self, stops):
         """保存用に、不要なデータの削除と、同一駅・同一区間の連続するデータの統合を行う"""
         if not stops:
@@ -291,6 +297,61 @@ class OptDiaProject:
             merged_stops.append(s1)
             i += 1
         return merged_stops
+
+    def _build_operation_train_lookup(self):
+        """operation_train_lookup をゼロから再構築する（ファイル読み込み時などの初期構築用）"""
+        self.operation_train_lookup = {}
+        for diagram_id in self.diagrams_order:
+            op_dict = {}
+            for route_id in self.routes_order:
+                route = self.routes[route_id]
+                tbd = route.get("trains_by_diagram", {}).get(diagram_id, {})
+                for train_key in ["inbound_trains", "outbound_trains"]:
+                    direction = "inbound" if train_key == "inbound_trains" else "outbound"
+                    for train_id, d_train in tbd.get(train_key, {}).items():
+                        for op_entry in d_train.get("operations", []):
+                            op_id = op_entry.get("operation_id") if isinstance(op_entry, dict) else op_entry
+                            if op_id:
+                                entry = {"route_id": route_id, "direction": direction, "train_id": train_id}
+                                op_dict.setdefault(op_id, [])
+                                if entry not in op_dict[op_id]:
+                                    op_dict[op_id].append(entry)
+            self.operation_train_lookup[diagram_id] = op_dict
+
+    def update_operation_train_lookup(self, diagram_id: str, route_id: str, direction: str, train_id: str, old_ops: list, new_ops: list):
+        """
+        特定の列車について、担当運用リストの変更（old_ops → new_ops）に伴う operation_train_lookup の部分更新を行う。
+        - diagram_id: 対象の運転ダイヤID
+        - route_id: 対象の運行系統ID
+        - direction: "inbound" or "outbound"
+        - train_id: 対象の列車ID
+        - old_ops: 変更前の担当運用リスト (optdia_train_operation[])
+        - new_ops: 変更後の担当運用リスト (optdia_train_operation[])
+        """
+        op_dict = self.operation_train_lookup.setdefault(diagram_id, {})
+        entry = {"route_id": route_id, "direction": direction, "train_id": train_id}
+
+        old_op_ids = {(op.get("operation_id") if isinstance(op, dict) else op) for op in (old_ops or [])}
+        new_op_ids = {(op.get("operation_id") if isinstance(op, dict) else op) for op in (new_ops or [])}
+        old_op_ids.discard(None)
+        new_op_ids.discard(None)
+
+        # 削除された運用IDについてエントリを除去
+        for op_id in old_op_ids - new_op_ids:
+            trains = op_dict.get(op_id)
+            if trains is not None:
+                try:
+                    trains.remove(entry)
+                except ValueError:
+                    pass
+                if not trains:
+                    del op_dict[op_id]
+
+        # 追加された運用IDについてエントリを登録
+        for op_id in new_op_ids - old_op_ids:
+            op_dict.setdefault(op_id, [])
+            if entry not in op_dict[op_id]:
+                op_dict[op_id].append(entry)
 
     def _split_collection(self, items: list, id_key: str):
         """

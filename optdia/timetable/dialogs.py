@@ -601,6 +601,11 @@ class OperationPickerDialog(QDialog):
                 if hasattr(model, "history_manager") and model.history_manager:
                     ev = ChangeTrainOperationEvent(self.route_id, self.direction, self.train_id, self.diagram_id, old_ops, ops)
                     model.history_manager.push_events([ev])
+            if hasattr(self.project, "update_operation_train_lookup"):
+                self.project.update_operation_train_lookup(
+                    self.diagram_id, self.route_id, self.direction, self.train_id,
+                    old_ops, ops
+                )
 
         # メインウィンドウに変更を通知
         view = self.parent()

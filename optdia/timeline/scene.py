@@ -179,6 +179,15 @@ class TrainTimelineItem(TimelineRectItem):
                         )
                         self.timeline_scene.history_manager.push_events([ev])
 
+                    project = self.timeline_scene.project
+                    if hasattr(project, "update_operation_train_lookup"):
+                        direction_str = self.direction_key.replace("_trains", "")
+                        project.update_operation_train_lookup(
+                            self.timeline_scene.diagram_id,
+                            self.route_id, direction_str, self.train_id,
+                            old_ops, d_train["operations"]
+                        )
+
                     self.timeline_scene.refresh()
                     if parent_widget:
                         if hasattr(parent_widget, "timetable_model") and parent_widget.timetable_model:
@@ -951,6 +960,12 @@ class TimelineScene(QGraphicsScene):
                         new_operations=new_ops
                     )
                     events_to_push.append(ev)
+                    if hasattr(self.project, "update_operation_train_lookup"):
+                        self.project.update_operation_train_lookup(
+                            self.diagram_id,
+                            it.route_id, it.direction_key.replace("_trains", ""), it.train_id,
+                            old_ops, new_ops
+                        )
 
             elif isinstance(it, TemporaryStablingItem):
                 src_events = src_op.get("temporary_stabling_events", [])
@@ -1010,6 +1025,12 @@ class TimelineScene(QGraphicsScene):
                         new_operations=new_ops
                     )
                     events_to_push.append(ev)
+                    if hasattr(self.project, "update_operation_train_lookup"):
+                        self.project.update_operation_train_lookup(
+                            self.diagram_id,
+                            it.route_id, it.direction_key.replace("_trains", ""), it.train_id,
+                            old_ops, new_ops
+                        )
 
             elif isinstance(it, TemporaryStablingItem):
                 tgt_events = target_op.get("temporary_stabling_events", [])

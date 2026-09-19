@@ -956,6 +956,7 @@ class AddTrainToOperationDialog(QDialog):
             if dialog.exec() == QDialog.Accepted:
                 insert_idx = dialog.get_selected_index()
                 if insert_idx is not None:
+                    old_ops = list(ops)
                     ops.insert(insert_idx, op_entry)
                     d_train["to_be_saved"] = True
                     if self.history_manager:
@@ -969,8 +970,14 @@ class AddTrainToOperationDialog(QDialog):
                             operation=op_entry
                         )
                         self.history_manager.push_events([ev])
+                    if hasattr(self.project, "update_operation_train_lookup"):
+                        self.project.update_operation_train_lookup(
+                            self.diagram_id, route_id, direction_key, train_id,
+                            old_ops, ops
+                        )
                     self.accept()
         else:
+            old_ops = list(ops)
             ops.append(op_entry)
             d_train["to_be_saved"] = True
             if self.history_manager:
@@ -984,5 +991,10 @@ class AddTrainToOperationDialog(QDialog):
                     operation=op_entry
                 )
                 self.history_manager.push_events([ev])
+            if hasattr(self.project, "update_operation_train_lookup"):
+                self.project.update_operation_train_lookup(
+                    self.diagram_id, route_id, direction_key, train_id,
+                    old_ops, ops
+                )
             self.accept()
 

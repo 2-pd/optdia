@@ -25,6 +25,7 @@ from dialogs.diagram import AddDiagramDialog, DiagramEditorDialog
 from dialogs.line_station import LineStationEditorDialog
 from dialogs.train_type import AddTrainTypeDialog, TrainTypeEditorDialog
 from dialogs.operation import VehicleOperationEditorDialog
+from previews.operation_detail import OperationDetailPreviewDialog
 from dialogs.project_meta import ProjectPropertiesDialog
 from dialogs.about import AboutDialog
 from timetable.model import TimetableModel
@@ -1155,13 +1156,14 @@ class MainWindow(QMainWindow):
                     left_label.setFixedWidth(100)
                     left_label.setCursor(Qt.PointingHandCursor)
 
-                    def make_click_handler(d_id, g_id, o_id):
+                    def make_click_handler(d_id, g_id, o_id, o_data):
                         def mouse_press(event):
                             if event.button() == Qt.LeftButton:
-                                self._open_operation_editor(d_id, g_id, o_id)
+                                dialog = OperationDetailPreviewDialog(self, self.project, d_id, o_data, o_id, g_id)
+                                dialog.exec()
                         return mouse_press
 
-                    left_label.mousePressEvent = make_click_handler(diagram_id, og_id, op_id)
+                    left_label.mousePressEvent = make_click_handler(diagram_id, og_id, op_id, op)
 
                     # 右側ラベル: 1行目 出庫場所等, 2行目 入庫場所等, 3行目 出入庫時間
                     right_label = QLabel(f"○{start_text}<br/>△{end_text}<br/>{time_text}")

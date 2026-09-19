@@ -392,17 +392,29 @@ class AddTrainOperationEvent(BaseEvent):
         d_train = route.get("trains_by_diagram", {}).get(self.diagram_id, {}).get(self.train_key, {}).get(self.train_id)
         if d_train and "operations" in d_train:
             if 0 <= self.index < len(d_train["operations"]):
+                old_ops = list(d_train["operations"])
                 d_train["operations"].pop(self.index)
+                if hasattr(project, "update_operation_train_lookup"):
+                    project.update_operation_train_lookup(
+                        self.diagram_id, self.route_id, self.direction, self.train_id,
+                        old_ops, d_train["operations"]
+                    )
 
     def redo(self, project) -> None:
         route = project.routes.get(self.route_id, {})
         d_train = route.get("trains_by_diagram", {}).get(self.diagram_id, {}).get(self.train_key, {}).get(self.train_id)
         if d_train:
             ops = d_train.setdefault("operations", [])
+            old_ops = list(ops)
             if self.index >= len(ops):
                 ops.append(copy.deepcopy(self.operation))
             else:
                 ops.insert(self.index, copy.deepcopy(self.operation))
+            if hasattr(project, "update_operation_train_lookup"):
+                project.update_operation_train_lookup(
+                    self.diagram_id, self.route_id, self.direction, self.train_id,
+                    old_ops, ops
+                )
 
 
 # 列車からの担当運用の除外
@@ -428,17 +440,29 @@ class RemoveTrainOperationEvent(BaseEvent):
         d_train = route.get("trains_by_diagram", {}).get(self.diagram_id, {}).get(self.train_key, {}).get(self.train_id)
         if d_train:
             ops = d_train.setdefault("operations", [])
+            old_ops = list(ops)
             if self.index >= len(ops):
                 ops.append(copy.deepcopy(self.operation))
             else:
                 ops.insert(self.index, copy.deepcopy(self.operation))
+            if hasattr(project, "update_operation_train_lookup"):
+                project.update_operation_train_lookup(
+                    self.diagram_id, self.route_id, self.direction, self.train_id,
+                    old_ops, ops
+                )
 
     def redo(self, project) -> None:
         route = project.routes.get(self.route_id, {})
         d_train = route.get("trains_by_diagram", {}).get(self.diagram_id, {}).get(self.train_key, {}).get(self.train_id)
         if d_train and "operations" in d_train:
             if 0 <= self.index < len(d_train["operations"]):
+                old_ops = list(d_train["operations"])
                 d_train["operations"].pop(self.index)
+                if hasattr(project, "update_operation_train_lookup"):
+                    project.update_operation_train_lookup(
+                        self.diagram_id, self.route_id, self.direction, self.train_id,
+                        old_ops, d_train["operations"]
+                    )
 
 
 # 列車の担当運用の変更
@@ -464,12 +488,22 @@ class ChangeTrainOperationEvent(BaseEvent):
         d_train = route.get("trains_by_diagram", {}).get(self.diagram_id, {}).get(self.train_key, {}).get(self.train_id)
         if d_train:
             d_train["operations"] = copy.deepcopy(self.old_operations)
+            if hasattr(project, "update_operation_train_lookup"):
+                project.update_operation_train_lookup(
+                    self.diagram_id, self.route_id, self.direction, self.train_id,
+                    self.new_operations, self.old_operations
+                )
 
     def redo(self, project) -> None:
         route = project.routes.get(self.route_id, {})
         d_train = route.get("trains_by_diagram", {}).get(self.diagram_id, {}).get(self.train_key, {}).get(self.train_id)
         if d_train:
             d_train["operations"] = copy.deepcopy(self.new_operations)
+            if hasattr(project, "update_operation_train_lookup"):
+                project.update_operation_train_lookup(
+                    self.diagram_id, self.route_id, self.direction, self.train_id,
+                    self.old_operations, self.new_operations
+                )
 
 
 # 列車の両数の変更
