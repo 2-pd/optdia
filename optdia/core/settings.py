@@ -109,3 +109,20 @@ class AppSettings:
     def load_diagram_height_scale(self) -> str:
         """ダイヤグラムの表示高さ設定を読み込む（デフォルト: 'standard'）"""
         return self.settings.value("diagram/height_scale", "standard")
+
+    def save_autobackup_interval(self, interval: int | None):
+        """自動バックアップ間隔（分、無効時はNone）を保存する"""
+        if interval is None:
+            self.settings.setValue("backup/autobackup_interval", "disabled")
+        else:
+            self.settings.setValue("backup/autobackup_interval", int(interval))
+
+    def load_autobackup_interval(self) -> int | None:
+        """自動バックアップ間隔（分、無効時はNone）を読み込む"""
+        val = self.settings.value("backup/autobackup_interval", None)
+        if val is None or str(val).lower() in ("disabled", "none", ""):
+            return None
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            return None

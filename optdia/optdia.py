@@ -4,7 +4,7 @@
 import sys
 import os
 import subprocess
-from PySide6.QtCore import Qt, QFile, QTextStream, QSize
+from PySide6.QtCore import Qt, QFile, QTextStream, QSize, QTimer
 from PySide6.QtGui import QIcon, QAction, QPixmap, QTransform
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QStyleFactory,
@@ -27,6 +27,7 @@ from dialogs.train_type import AddTrainTypeDialog, TrainTypeEditorDialog
 from dialogs.operation import VehicleOperationEditorDialog
 from previews.operation_detail import OperationDetailPreviewDialog
 from dialogs.project_meta import ProjectPropertiesDialog
+from dialogs.preferences import PreferencesDialog
 from dialogs.about import AboutDialog
 from timetable.model import TimetableModel
 from timetable.view import TimetableView, TimetableVerticalHeader
@@ -47,6 +48,12 @@ class MainWindow(QMainWindow):
 
         # 設定管理クラスの初期化
         self.app_settings = AppSettings()
+
+        # 自動バックアップ管理用
+        self.has_modified_since_last_autobackup = False
+        self.autobackup_timer = QTimer(self)
+        self.autobackup_timer.timeout.connect(self._on_autobackup_timer)
+        self._update_autobackup_timer()
 
         # 初期タイトルと初期サイズ
         self._update_window_title()
@@ -552,9 +559,50 @@ class MainWindow(QMainWindow):
             item.setData(Qt.UserRole, did)
             self.diagram_list_widget.addItem(item)
 
+    def _get_autobackup_path(self, filepath: str = None) -> str | None:
+        """指定されたファイルパス（省略時はself.filepath）に対する自動バックアップファイルパスを返す"""
+        path = filepath or self.filepath
+        if not path:
+            return None
+        dir_name = os.path.dirname(path)
+        base_name = os.path.basename(path)
+        return os.path.join(dir_name, f".autobackup__{base_name}")
+
+    def _delete_autobackup_file(self, filepath: str = None):
+        """自動バックアップファイルが存在していれば削除する"""
+        autobackup_path = self._get_autobackup_path(filepath)
+        if autobackup_path and os.path.exists(autobackup_path):
+            try:
+                os.remove(autobackup_path)
+            except OSError:
+                pass
+
+    def _update_autobackup_timer(self):
+        """設定値に基づいて自動バックアップタイマーを更新・再起動する"""
+        interval = self.app_settings.load_autobackup_interval()
+        if interval is not None and interval > 0:
+            self.autobackup_timer.start(interval * 60 * 1000)
+        else:
+            self.autobackup_timer.stop()
+
+    def _on_autobackup_timer(self):
+        """タイマー実行時: 更新がありファイル名が設定されていれば自動バックアップファイルを保存する"""
+        interval = self.app_settings.load_autobackup_interval()
+        if interval is None:
+            return
+        if self.filepath and self.has_modified_since_last_autobackup:
+            autobackup_path = self._get_autobackup_path()
+            if autobackup_path:
+                try:
+                    self.project.save_project(autobackup_path)
+                    self.has_modified_since_last_autobackup = False
+                except Exception:
+                    pass
+
     def closeEvent(self, event):
         """閉じるイベントを捕捉し、未保存の変更がある場合に確認する"""
         if not self.is_modified:
+            self._delete_autobackup_file()
             self.app_settings.save_window_settings(self)
             event.accept()
             return
@@ -570,11 +618,13 @@ class MainWindow(QMainWindow):
         if reply == QMessageBox.StandardButton.Save:
             self._on_save_project()
             if not self.is_modified:  # 保存が完了（フラグがクリア）したなら閉じる
+                self._delete_autobackup_file()
                 self.app_settings.save_window_settings(self)
                 event.accept()
             else:  # 保存ダイアログでキャンセルされた場合は閉じない
                 event.ignore()
         elif reply == QMessageBox.StandardButton.Discard:
+            self._delete_autobackup_file()
             self.app_settings.save_window_settings(self)
             event.accept()
         else:
@@ -582,6 +632,7 @@ class MainWindow(QMainWindow):
 
     def set_modified(self, modified: bool):
         """変更フラグを更新し、タイトルバーに反映させる"""
+        self.has_modified_since_last_autobackup = True
         if self.is_modified != modified:
             self.is_modified = modified
             self._update_window_title()
@@ -664,6 +715,11 @@ class MainWindow(QMainWindow):
         self.adjust_later_action.setChecked(self.app_settings.load_adjust_later_enabled())
         self.adjust_later_action.triggered.connect(self._on_adjust_later_triggered)
         edit_menu.addAction(self.adjust_later_action)
+
+        # 設定(S)
+        settings_menu = menu_bar.addMenu("設定(&S)")
+        preferences_action = settings_menu.addAction("環境設定")
+        preferences_action.triggered.connect(self._on_preferences)
 
         # ヘルプ(H)
         help_menu = menu_bar.addMenu("ヘルプ(&H)")
@@ -757,6 +813,7 @@ class MainWindow(QMainWindow):
             if self._save_project_to_path(self.filepath):
                 self.app_settings.add_recent_file(self.filepath)
             self.set_modified(False)
+            self.has_modified_since_last_autobackup = False
         else:
             self._on_save_as_project()
 
@@ -779,6 +836,7 @@ class MainWindow(QMainWindow):
             if self._save_project_to_path(filepath):
                 self.filepath = filepath
                 self.set_modified(False)
+                self.has_modified_since_last_autobackup = False
                 self._update_window_title()
                 self.app_settings.add_recent_file(filepath)
                 self._update_recent_files_menu()
@@ -804,12 +862,32 @@ class MainWindow(QMainWindow):
 
     def _load_project_in_current_window(self, filepath: str):
         """現在のウィンドウでプロジェクトをロードする"""
+        autobackup_path = self._get_autobackup_path(filepath)
+        load_target_path = filepath
+        is_restored_from_backup = False
+
+        if autobackup_path and os.path.exists(autobackup_path):
+            reply = QMessageBox.question(
+                self,
+                "バックアップの復元確認",
+                "このプロジェクトファイルの自動バックアップが見つかりました。\nバックアップされたデータを復元しますか？",
+                QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Ok
+            )
+            if reply == QMessageBox.StandardButton.Ok:
+                load_target_path = autobackup_path
+                is_restored_from_backup = True
+
         try:
-            self.project = load_project(filepath)
+            self.project = load_project(load_target_path)
             self.history_manager.clear()
             self.timetable_model.project = self.project
             self.filepath = filepath
-            self.set_modified(False)
+            self.has_modified_since_last_autobackup = False
+            if is_restored_from_backup:
+                self.set_modified(True)
+            else:
+                self.set_modified(False)
             self._update_window_title()
             self._populate_route_list()
             self._populate_diagram_list()
@@ -832,6 +910,12 @@ class MainWindow(QMainWindow):
         dialog = ProjectPropertiesDialog(self, self.project)
         if dialog.exec() == QDialog.Accepted:
             self.set_modified(True)
+
+    def _on_preferences(self):
+        """環境設定ダイアログを表示する"""
+        dialog = PreferencesDialog(self, self.app_settings)
+        if dialog.exec() == QDialog.Accepted:
+            self._update_autobackup_timer()
 
     def _on_about(self):
         """バージョン情報を表示する"""
@@ -1418,20 +1502,41 @@ def main():
     # コマンドライン引数でファイルパスが指定されている場合はロード、
     # そうでない場合は新規プロジェクトを生成
     filepath = sys.argv[1] if len(sys.argv) > 1 else None
+    is_restored_from_backup = False
     if filepath:
+        load_target_path = filepath
+        dir_name = os.path.dirname(filepath)
+        base_name = os.path.basename(filepath)
+        autobackup_path = os.path.join(dir_name, f".autobackup__{base_name}")
+        if os.path.exists(autobackup_path):
+            reply = QMessageBox.question(
+                None,
+                "バックアップの復元確認",
+                "このプロジェクトファイルの自動バックアップが見つかりました。\nバックアップされたデータを復元しますか？",
+                QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Ok
+            )
+            if reply == QMessageBox.StandardButton.Ok:
+                load_target_path = autobackup_path
+                is_restored_from_backup = True
+
         try:
-            project = load_project(filepath)
+            project = load_project(load_target_path)
         except SchemaVersionError:
             project = OptDiaProject()
             filepath = None
+            is_restored_from_backup = False
         except Exception:
             QMessageBox.critical(None, "エラー", "このファイルは破損しています")
             project = OptDiaProject()
             filepath = None
+            is_restored_from_backup = False
     else:
         project = OptDiaProject()
 
     window = MainWindow(project, filepath)
+    if is_restored_from_backup:
+        window.set_modified(True)
 
     window.show()
     sys.exit(app.exec())

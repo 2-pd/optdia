@@ -29,7 +29,7 @@ QListWidget::item:hover, QPushButton:hover {
     background-color: #eeeeee;
 }
 
-QListWidget:disabled, QLineEdit:disabled, QLineEdit[readOnly="true"] {
+QListWidget:disabled, QLineEdit:disabled, QLineEdit[readOnly="true"], QSpinBox:disabled {
     background-color: #efefef;
     color: #999999;
 }

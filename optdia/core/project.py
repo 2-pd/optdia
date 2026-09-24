@@ -612,6 +612,16 @@ class OptDiaProject:
                 # 非圧縮保存 (.optdia) の場合は、テキストエディタ等での可読性を考慮してインデント付きで保存
                 json.dump(data, f, ensure_ascii=False, indent=4)
 
+        # 保存成功時に自動バックアップファイルが存在していれば削除する
+        dir_name = os.path.dirname(filepath)
+        base_name = os.path.basename(filepath)
+        autobackup_path = os.path.join(dir_name, f".autobackup__{base_name}")
+        if os.path.exists(autobackup_path):
+            try:
+                os.remove(autobackup_path)
+            except OSError:
+                pass
+
 
 def load_project(filepath: str) -> OptDiaProject:
     """
