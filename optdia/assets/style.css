@@ -17,7 +17,7 @@ QTabBar::tab:selected {
     background-color: #f7f7f7;
 }
 QTabBar::tab:hover {
-    background-color: #dddddd;
+    background-color: #efefef;
 }
 
 QMenu, QListWidget, QPushButton, QLineEdit, QComboBox, QAbstractSpinBox {

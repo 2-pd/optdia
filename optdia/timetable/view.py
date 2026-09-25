@@ -1,12 +1,15 @@
 import re
-from PySide6.QtCore import Qt, QRect, QModelIndex
-from PySide6.QtGui import QColor, QPainter, QFont, QFontMetrics, QIcon
-from PySide6.QtWidgets import QHeaderView, QStyleOptionHeader, QStyle, QTableView, QSizePolicy, QVBoxLayout, QLabel, QMenu, QDialog
+from PySide6.QtCore import Qt, Signal, QRect, QModelIndex
+from PySide6.QtGui import QColor, QPainter, QFont, QFontMetrics, QIcon, QPen, QPalette
+from PySide6.QtWidgets import QHeaderView, QStyleOptionHeader, QStyle, QTableView, QSizePolicy, QVBoxLayout, QLabel, QMenu, QDialog, QAbstractItemView
 from PySide6.QtGui import QActionGroup
 from .model import StopTypeRole
 
 # 時刻表テーブルの垂直ヘッダーのビュー
 class TimetableVerticalHeader(QHeaderView):
+    # 左右のクリックを通知するためのカスタムシグナル (セクション番号, ボタンの種類)
+    section_mouse_pressed = Signal(int, Qt.MouseButton)
+
     def __init__(self, parent=None):
         super().__init__(Qt.Vertical, parent)
 
@@ -19,13 +22,40 @@ class TimetableVerticalHeader(QHeaderView):
         self.setStyleSheet("QHeaderView::section { padding: 0px 4px 0px 8px; margin: 0px; }")
         self.setDefaultAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.setSectionsClickable(True)
-        self.sectionClicked.connect(self._on_section_clicked)
+        self.section_mouse_pressed.connect(self._on_section_clicked)
 
-    def _on_section_clicked(self, logicalIndex):
+    def mousePressEvent(self, event):
+        # クリックされた位置のセクション（列または行）のインデックスを取得
+        index = self.logicalIndexAt(event.position().toPoint())
+
+        if index != -1:
+            # 左右のボタンを判定
+            if event.button() == Qt.LeftButton:
+                self.section_mouse_pressed.emit(index, Qt.LeftButton)
+            elif event.button() == Qt.RightButton:
+                self.section_mouse_pressed.emit(index, Qt.RightButton)
+
+        # シングルクリックで行全体が自動選択されないようQHeaderViewのデフォルト処理をバイパス
+        logicalIndex = self.logicalIndexAt(event.pos())
+        if logicalIndex >= 0:
+            self.sectionClicked.emit(logicalIndex)
+        event.accept()
+
+    def select_table_row(self, logicalIndex):
+        view = self.parent()
+        if not view:
+            return
+        model = self.model()
+        if not model:
+            return
+
+        view.selectRow(logicalIndex)
+
+    def _on_section_clicked(self, logicalIndex, button):
         model = self.model()
         if not model or not hasattr(model, 'row_headers') or not hasattr(model, 'station_rows'):
             return
-        is_station_row = logicalIndex >= len(model.row_headers)
+        is_station_row = logicalIndex >= len(model.row_headers) and logicalIndex <= model.rowCount() - 3
         if is_station_row:
             row_idx = logicalIndex - len(model.row_headers)
             if 0 <= row_idx < len(model.station_rows):
@@ -34,7 +64,53 @@ class TimetableVerticalHeader(QHeaderView):
                 if stop_idx is not None and stop_idx < len(model.full_stop_configs):
                     config = model.full_stop_configs[stop_idx]
                     station_id = config.get("station_id") or getattr(model.project, "station_entry_to_station_id", {}).get(config.get("station_entry_id"))
-                    if station_id:
+                    if button == Qt.RightButton:
+                        line_id = config.get("line_id")
+                        station_entry_id = config.get("station_entry_id")
+
+                        # コンテキストメニューの表示
+                        from PySide6.QtGui import QCursor
+                        menu = QMenu(self)
+                        edit_station_action = menu.addAction("駅情報を編集")
+                        show_timetable_action = menu.addAction("この駅の時刻表を表示")
+                        select_row_action = menu.addAction("この行を選択")
+
+                        action = menu.exec(QCursor.pos())
+                        if not action:
+                            return
+
+                        if action == edit_station_action:
+                            from dialogs.line_station import LineStationEditorDialog
+                            dialog = LineStationEditorDialog(self.window(), model.project)
+                            # 該当する路線を選択
+                            if line_id and line_id in model.project.lines:
+                                for r in range(dialog.line_list_widget.count()):
+                                    if dialog.line_list_widget.item(r).data(Qt.UserRole) == line_id:
+                                        dialog.line_list_widget.setCurrentRow(r)
+                                        break
+                            # 該当する駅を選択
+                            if station_entry_id or station_id:
+                                for r in range(dialog.station_list_widget.count()):
+                                    item_seid = dialog.station_list_widget.item(r).data(Qt.UserRole)
+                                    if (station_entry_id and item_seid == station_entry_id) or (station_id and item_seid == station_id):
+                                        dialog.station_list_widget.setCurrentRow(r)
+                                        break
+                            dialog.exec()
+                        elif action == show_timetable_action:
+                            if station_id:
+                                from previews.station_timetable import StationTimetablePreviewDialog
+                                dialog = StationTimetablePreviewDialog(
+                                    parent=self.window(),
+                                    project=model.project,
+                                    station_id=station_id,
+                                    diagram_id=model.diagram_id,
+                                    initial_route_id=model.route_id,
+                                    initial_direction=model.direction
+                                )
+                                dialog.exec()
+                        else:
+                            self.select_table_row(logicalIndex)
+                    elif station_id:
                         from previews.station_timetable import StationTimetablePreviewDialog
                         dialog = StationTimetablePreviewDialog(
                             parent=self.window(),
@@ -45,6 +121,8 @@ class TimetableVerticalHeader(QHeaderView):
                             initial_direction=model.direction
                         )
                         dialog.exec()
+        else:
+            self.select_table_row(logicalIndex)
 
 
     def paintSection(self, painter, rect, logicalIndex):
@@ -178,6 +256,26 @@ class TimetableHorizontalHeader(QHeaderView):
 
 # メインウィンドウの時刻表テーブルのビュー
 class TimetableView(QTableView):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        # スクロールをセル単位からピクセル単位に変更
+        self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+
+        # パレットの設定を行う
+        self.init_palette()
+
+    def init_palette(self):
+        # パレットを取得して選択色を書き換える
+        palette = self.palette()
+
+        # 選択中の背景色と文字色を設定
+        palette.setColor(QPalette.ColorRole.Highlight, QColor("#99ccff"))
+
+        # 自身（テーブルビュー）にパレットを適用
+        self.setPalette(palette)
+
     def setModel(self, model):
         old_model = self.model()
         if old_model:

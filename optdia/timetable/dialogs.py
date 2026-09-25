@@ -119,10 +119,15 @@ class TrainPicker(QDialog):
 
 # 運転ダイヤの選択ダイアログ
 class DiagramPicker(QDialog):
-    def __init__(self, parent, project: OptDiaProject, train_id: str, current_diagram_id: str, route_id: str, direction: str):
+    def __init__(self, parent, project: OptDiaProject, train_id, current_diagram_id: str, route_id: str, direction: str):
         super().__init__(parent)
         self.project = project
-        self.train_id = train_id
+        if isinstance(train_id, list):
+            self.train_ids = train_id
+            self.train_id = train_id[0] if train_id else ""
+        else:
+            self.train_ids = [train_id]
+            self.train_id = train_id
         self.current_diagram_id = current_diagram_id
         self.route_id = route_id
         self.direction = direction
@@ -146,7 +151,7 @@ class DiagramPicker(QDialog):
         # 現在の方面のマスタ列車情報を取得して、既に割り当てられているダイヤを特定
         route = project.routes.get(route_id)
         train_key = "inbound_trains" if direction == "inbound" else "outbound_trains"
-        m_train = route.get(train_key, {}).get(train_id, {})
+        m_train = route.get(train_key, {}).get(self.train_id, {})
         active_diagram_ids = m_train.get("_diagram_ids", [])
         
         # プロジェクトのダイヤ定義順にチェックボックスを並べる
@@ -194,59 +199,74 @@ class DiagramPicker(QDialog):
     def _on_ok(self):
         has_changed = False
         route = self.project.routes.get(self.route_id)
+        if not route:
+            self.accept()
+            return
         train_key = "inbound_trains" if self.direction == "inbound" else "outbound_trains"
         order_key = train_key + "_order"
-        m_train = route.get(train_key, {}).get(self.train_id)
-        
-        events_to_push = []
-
-        # 現在のダイヤでダミー列車（未保存）だった場合、他のダイヤへの割り当て等により保存対象へ昇格させる
-        current_tbd = route.get("trains_by_diagram", {}).get(self.current_diagram_id, {})
-        current_d_train = current_tbd.get(train_key, {}).get(self.train_id)
-        if current_d_train and not current_d_train.get("to_be_saved"):
-            current_d_train["to_be_saved"] = True
-            has_changed = True
-        elif current_d_train and current_d_train.get("to_be_saved") and not self._initial_checkbox_states.get(self.current_diagram_id, False):
-            has_changed = True # 現在のダイヤが元々to_be_saved=Falseだったが、今回to_be_saved=Trueになった場合
-
         from core.events import AddTrainDiagramEvent, RemoveTrainDiagramEvent
 
-        for did, cb in self.checkboxes.items():
-            if did == self.current_diagram_id: continue # 現在のダイヤはスキップ
-                
-            tbd = route.get("trains_by_diagram", {}).get(did, {})
-            d_trains, order = tbd.get(train_key), tbd.get(order_key)
-            
-            # チェック状態が変更されたか、または初期状態と異なるかを確認
-            if cb.isChecked() and self.train_id not in d_trains:
-                # ダイヤへの追加: 列車ID以外のキーはNoneまたは空配列で初期化
-                new_d_train = {
-                    "train_id": self.train_id, "operations": [], "car_count": None,
-                    "destination": None, "subsequent_trains": [], "to_be_saved": True
-                }
-                d_trains[self.train_id] = new_d_train
-                # 挿入位置の決定: 末尾のダミー列車(to_be_saved=False)より前に挿入
-                insert_idx = len(order)
-                for i, tid in enumerate(order):
-                    if not d_trains.get(tid, {}).get("to_be_saved", True):
-                        insert_idx = i
-                        break
-                order.insert(insert_idx, self.train_id)
-                if did not in m_train["_diagram_ids"]: m_train["_diagram_ids"].append(did)
-                events_to_push.append(AddTrainDiagramEvent(self.route_id, self.direction, self.train_id, did, insert_idx, new_d_train))
-                has_changed = True
-            elif not cb.isChecked() and self.train_id in d_trains:
-                # ダイヤからの削除
-                old_d_train = copy.deepcopy(d_trains[self.train_id])
-                old_idx = order.index(self.train_id) if self.train_id in order else 0
-                if self.train_id in order: order.remove(self.train_id)
-                del d_trains[self.train_id]
-                if did in m_train["_diagram_ids"]: m_train["_diagram_ids"].remove(did)
-                events_to_push.append(RemoveTrainDiagramEvent(self.route_id, self.direction, self.train_id, did, old_idx, old_d_train))
-                has_changed = True
+        events_to_push = []
+        current_tbd = route.get("trains_by_diagram", {}).get(self.current_diagram_id, {})
 
-        # 逆引き用ダイヤIDリストをプロジェクト順でソート
-        m_train["_diagram_ids"].sort(key=lambda x: self.project.diagrams_order.index(x) if x in self.project.diagrams_order else 999)
+        for tid in self.train_ids:
+            m_train = route.get(train_key, {}).get(tid)
+            if not m_train:
+                continue
+
+            # 現在のダイヤでダミー列車（未保存）だった場合、他のダイヤへの割り当て等により保存対象へ昇格させる
+            current_d_train = current_tbd.get(train_key, {}).get(tid)
+            if current_d_train and not current_d_train.get("to_be_saved"):
+                current_d_train["to_be_saved"] = True
+                has_changed = True
+            elif current_d_train and current_d_train.get("to_be_saved") and not self._initial_checkbox_states.get(self.current_diagram_id, False):
+                has_changed = True # 現在のダイヤが元々to_be_saved=Falseだったが、今回to_be_saved=Trueになった場合
+
+            for did, cb in self.checkboxes.items():
+                if did == self.current_diagram_id:
+                    continue # 現在のダイヤはスキップ
+                    
+                tbd = route.get("trains_by_diagram", {}).get(did, {})
+                d_trains, order = tbd.get(train_key), tbd.get(order_key)
+                if d_trains is None or order is None:
+                    continue
+                
+                # チェック状態が変更されたか、または初期状態と異なるかを確認
+                if cb.isChecked() and tid not in d_trains:
+                    # ダイヤへの追加: 列車ID以外のキーはNoneまたは空配列で初期化
+                    new_d_train = {
+                        "train_id": tid, "operations": [], "car_count": None,
+                        "destination": None, "subsequent_trains": [], "to_be_saved": True
+                    }
+                    d_trains[tid] = new_d_train
+                    # 挿入位置の決定: 末尾のダミー列車(to_be_saved=False)より前に挿入
+                    insert_idx = len(order)
+                    for i, otid in enumerate(order):
+                        if not d_trains.get(otid, {}).get("to_be_saved", True):
+                            insert_idx = i
+                            break
+                    order.insert(insert_idx, tid)
+                    if "_diagram_ids" not in m_train:
+                        m_train["_diagram_ids"] = []
+                    if did not in m_train["_diagram_ids"]:
+                        m_train["_diagram_ids"].append(did)
+                    events_to_push.append(AddTrainDiagramEvent(self.route_id, self.direction, tid, did, insert_idx, new_d_train))
+                    has_changed = True
+                elif not cb.isChecked() and tid in d_trains:
+                    # ダイヤからの削除
+                    old_d_train = copy.deepcopy(d_trains[tid])
+                    old_idx = order.index(tid) if tid in order else 0
+                    if tid in order:
+                        order.remove(tid)
+                    del d_trains[tid]
+                    if "_diagram_ids" in m_train and did in m_train["_diagram_ids"]:
+                        m_train["_diagram_ids"].remove(did)
+                    events_to_push.append(RemoveTrainDiagramEvent(self.route_id, self.direction, tid, did, old_idx, old_d_train))
+                    has_changed = True
+
+            # 逆引き用ダイヤIDリストをプロジェクト順でソート
+            if "_diagram_ids" in m_train:
+                m_train["_diagram_ids"].sort(key=lambda x: self.project.diagrams_order.index(x) if x in self.project.diagrams_order else 999)
         
         view = self.parent()
         if view and hasattr(view, "model"):
