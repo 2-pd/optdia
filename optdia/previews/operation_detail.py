@@ -120,7 +120,7 @@ class OperationDetailPreviewDialog(QDialog):
         start_track = self.operation.get("start_track")
         start_track_str = f"({start_track})" if start_track else ""
         start_time_str = _format_time_hhmm(self.operation.get("start_time"))
-        start_label_text = f"<b>{start_loc}{start_track_str}出庫</b> {start_time_str}"
+        start_label_text = f"○ <b>{start_loc}{start_track_str}出庫</b> {start_time_str}"
         start_label = QLabel(start_label_text)
         start_label.setFixedHeight(24)
         start_label.setAlignment(Qt.AlignCenter)
@@ -139,18 +139,20 @@ class OperationDetailPreviewDialog(QDialog):
             row_label.setAlignment(Qt.AlignCenter)
             row_label.setTextFormat(Qt.RichText)
             row_label.setFixedHeight(24)
-            row_label.setCursor(Qt.PointingHandCursor)
 
-            def make_train_click_handler(r_id, d_dir, t_id):
-                def mouse_press(event):
-                    if event.button() == Qt.LeftButton:
-                        dialog = TrainDetailPreviewDialog(self, self.project, r_id, d_dir, t_id)
-                        dialog.exec()
-                return mouse_press
+            if not train_data.get("is_stabling"):
+                row_label.setCursor(Qt.PointingHandCursor)
 
-            row_label.mousePressEvent = make_train_click_handler(
-                train_data["route_id"], train_data["direction"], train_data["train_id"]
-            )
+                def make_train_click_handler(r_id, d_dir, t_id):
+                    def mouse_press(event):
+                        if event.button() == Qt.LeftButton:
+                            dialog = TrainDetailPreviewDialog(self, self.project, r_id, d_dir, t_id)
+                            dialog.exec()
+                    return mouse_press
+
+                row_label.mousePressEvent = make_train_click_handler(
+                    train_data["route_id"], train_data["direction"], train_data["train_id"]
+                )
             container_layout.addWidget(row_label)
 
             train_down_arrow_label = QLabel("▼")
@@ -164,7 +166,7 @@ class OperationDetailPreviewDialog(QDialog):
         end_track = self.operation.get("end_track")
         end_track_str = f"({end_track})" if end_track else ""
         end_time_str = _format_time_hhmm(self.operation.get("end_time"))
-        end_label_text = f"<b>{end_loc}{end_track_str}入庫</b> {end_time_str}"
+        end_label_text = f"△ <b>{end_loc}{end_track_str}入庫</b> {end_time_str}"
         end_label = QLabel(end_label_text)
         end_label.setFixedHeight(24)
         end_label.setAlignment(Qt.AlignCenter)
@@ -209,6 +211,7 @@ class OperationDetailPreviewDialog(QDialog):
         始発駅発車時刻の早い順にソートする。
         ソート後の並び順で連続している列車が、種別IDと列車番号が同一で、
         かつ、連続する列車(subsequent_trains)として紐づけられている場合、それらの列車を統合して1行に表示する。
+        一時入庫(temporary_stabling_events)も列車と区別なく1つのリストにまとめて返す。
         """
         train_entries = []
 
@@ -294,15 +297,43 @@ class OperationDetailPreviewDialog(QDialog):
                 "last_st_initial": last_st_initial,
                 "dep_hhmm": dep_hhmm,
                 "arr_hhmm": arr_hhmm,
+                "is_stabling": False,
+            })
+
+        # 一時入庫イベントを追加
+        temporary_stabling_events = self.operation.get("temporary_stabling_events", []) or []
+        for event in temporary_stabling_events:
+            stabled_location = event.get("stabled_location", "")
+            start_time_str = event.get("start_time", "")
+            end_time_str = event.get("end_time", "")
+            start_sec = _time_to_seconds(start_time_str)
+            sort_key_time = start_sec if start_sec is not None else 24 * 3600 + 1
+            start_hhmm = _format_time_hhmm(start_time_str)
+            end_hhmm = _format_time_hhmm(end_time_str)
+            location_color = "#cc3333" if event.get("formations_can_changed") else "#666666"
+            escaped_location = html.escape(str(stabled_location))
+            train_html = f'<b>{escaped_location}</b><span style="color: {location_color};">待機</span>&nbsp;&nbsp;{start_hhmm} 〜 {end_hhmm}'
+            train_entries.append({
+                "sort_key_time": sort_key_time,
+                "train_number": "",
+                "train_type_id": None,
+                "is_stabling": True,
+                "html_text": train_html,
+                "route_id": None,
+                "direction": None,
+                "train_id": None,
             })
 
         # 始発駅発車時刻の早い順にソート
         train_entries.sort(key=lambda x: (x["sort_key_time"], x["train_number"]))
 
-        # 連続している列車の統合処理
+        # 連続している列車の統合処理（is_stabling=Trueのものは統合対象外とする）
         merged_groups = []
         for train in train_entries:
-            if not merged_groups:
+            if train.get("is_stabling"):
+                merged_groups.append([train])
+                continue
+            if not merged_groups or merged_groups[-1][0].get("is_stabling"):
                 merged_groups.append([train])
             else:
                 current_group = merged_groups[-1]
@@ -317,6 +348,18 @@ class OperationDetailPreviewDialog(QDialog):
         result_trains = []
         for group in merged_groups:
             first_train = group[0]
+
+            if first_train.get("is_stabling"):
+                # 一時入庫はhtml_textがすでに設定されている
+                result_trains.append({
+                    "route_id": None,
+                    "direction": None,
+                    "train_id": None,
+                    "html_text": first_train["html_text"],
+                    "is_stabling": True,
+                })
+                continue
+
             last_train = group[-1]
 
             train_type_color = first_train["train_type_color"]
@@ -335,7 +378,8 @@ class OperationDetailPreviewDialog(QDialog):
                 "route_id": first_train["route_id"],
                 "direction": first_train["direction"],
                 "train_id": first_train["train_id"],
-                "html_text": train_html
+                "html_text": train_html,
+                "is_stabling": False,
             })
 
         return result_trains

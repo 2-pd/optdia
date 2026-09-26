@@ -180,14 +180,23 @@ class TrainDetailPreviewDialog(QDialog):
                 return f"{int(parts[0]):02d}:{int(parts[1]):02d}"
             return time_str
 
-    def _get_segment_line_color(self, route_id: str, segment_id: str) -> str:
+    def _get_segment_station_info(self, route_id: str, segment_id: str, station_entry_id: str) -> str:
+        """segment_id に対応する路線のIDと色とその路線での駅エントリ(optdia_line_station_entry)の駅番号を取得する"""
+        if not station_entry_id:
+            return None, "#333333", ""
         route = self.project.routes.get(route_id, {})
+        line_id = None
         for seg in route.get("line_segments", []):
             if seg.get("segment_id") == segment_id:
                 line_id = seg.get("line_id")
-                line_data = self.project.lines.get(line_id, {})
-                return line_data.get("line_color", "#333333")
-        return "#333333"
+                break
+        if not line_id:
+            return None, "#333333", ""
+        line_data = self.project.lines.get(line_id, {})
+        for entry in line_data.get("station_list", []):
+            if entry.get("station_entry_id") == station_entry_id:
+                return line_id, line_data.get("line_color", "#333333"), str(entry.get("station_number") or "")
+        return line_id, line_data.get("line_color", "#333333"), ""
 
     def _update_content(self):
         show_seconds = self.chk_show_seconds.isChecked()
@@ -298,47 +307,58 @@ class TrainDetailPreviewDialog(QDialog):
 
             # フィルタリング & 行HTML生成
             station_rows_html = []
-            for i, g in enumerate(grouped_stations):
+            i = 0
+            for g in grouped_stations:
                 st_id = g["station_id"]
                 st_data = self.project.stations.get(st_id, {})
                 st_name = st_data.get("station_name", st_id or "")
 
+                stop1 = g["stop1"]
+                stop2 = g["stop2"] if g["is_double"] else g["stop1"] # 統合されていないstopではstop2にstop1と同一のデータを使用
+
+                # 通過駅チェック: 「通過時刻も表示」がチェックされていない時、stop_typeが1でない駅は除外
+                # double の場合はいずれかが stop_type == 1 であれば停車扱いとするか、stop_type を判定
+                # 通常 stop2(発車側) または stop1(到着側) の stop_type を確認
+                effective_stop_type = stop2.get("stop_type", stop1.get("stop_type", 1))
+                if not show_pass and effective_stop_type != 1:
+                    continue
+
                 bg_color = "#ffffff" if i % 2 == 0 else "#f7f7f7"
+                i += 1
 
-                if g["is_double"]:
-                    stop1 = g["stop1"]
-                    stop2 = g["stop2"]
-                    # 通過駅チェック: 「通過時刻も表示」がチェックされていない時、stop_typeが1でない駅は除外
-                    # double の場合はいずれかが stop_type == 1 であれば停車扱いとするか、stop_type を判定
-                    # 通常 stop2(発車側) または stop1(到着側) の stop_type を確認
-                    effective_stop_type = stop2.get("stop_type", stop1.get("stop_type", 1))
-                    if not show_pass and effective_stop_type != 1:
-                        continue
+                arr_raw = stop1.get("arrival_time")
+                dep_raw = stop2.get("departure_time")
 
-                    arr_raw = stop1.get("arrival_time")
-                    dep_raw = stop2.get("departure_time")
+                arr_formatted = self._format_time(arr_raw, show_seconds)
+                dep_formatted = self._format_time(dep_raw, show_seconds)
 
-                    arr_formatted = self._format_time(arr_raw, show_seconds)
-                    dep_formatted = self._format_time(dep_raw, show_seconds)
+                seg1_id = stop1.get("segment_id")
+                seg2_id = stop2.get("segment_id")
 
-                    seg1_color = self._get_segment_line_color(r_id, stop1.get("segment_id"))
-                    seg2_color = self._get_segment_line_color(r_id, stop2.get("segment_id"))
+                row_color = " color: #888888;" if effective_stop_type != 1 else ""
+                row_style = f'background-color: {bg_color};{row_color}'
 
-                    row_color = " color: #888888;" if effective_stop_type != 1 else ""
-                    row_style = f'background-color: {bg_color};{row_color}'
+                st_entry_id1 = stop1.get("station_entry_id")
+                line1_id, seg1_color, st_num1 = self._get_segment_station_info(r_id, seg1_id, st_entry_id1)
+                if seg1_id != seg2_id:
+                    st_entry_id2 = stop2.get("station_entry_id")
+                    line2_id, seg2_color, st_num2 = self._get_segment_station_info(r_id, seg2_id, st_entry_id2)
+                else:
+                    line2_id = line1_id
 
+                if line1_id != line2_id:
                     if effective_stop_type == 0:
                         # stop_typeが0の駅では到着時刻を表示せずに発車時刻は半角丸括弧で囲んで表示
                         dep_display = f"({dep_formatted})" if dep_formatted else ""
                         station_rows_html.append(f"""
                             <tr style="{row_style}">
                                 <td width="30" rowspan="2"></td>
-                                <td width="20" style="background-color: {seg1_color};" padding: 0;></td>
+                                <td width="40" style="background-color: {seg1_color}; padding: 0;" class="station_number_cell">{html.escape(st_num1)}</td>
                                 <td width="70" rowspan="2" align="center">{html.escape(dep_display)}</td>
-                                <td width="350" rowspan="2">{html.escape(st_name)}</td>
+                                <td width="330" rowspan="2">{html.escape(st_name)}</td>
                             </tr>
                             <tr style="{row_style}">
-                                <td width="20" style="background-color: {seg2_color}; padding: 0;"></td>
+                                <td width="40" style="background-color: {seg2_color}; padding: 0;" class="station_number_cell">{html.escape(st_num2)}</td>
                             </tr>
                         """)
                     else:
@@ -349,51 +369,38 @@ class TrainDetailPreviewDialog(QDialog):
                             station_rows_html.append(f"""
                                 <tr style="{row_style}">
                                     <td width="30" rowspan="2"></td>
-                                    <td width="30" style="background-color: {seg1_color}; padding: 0;"></td>
+                                    <td width="40" style="background-color: {seg1_color}; padding: 0;" class="station_number_cell">{html.escape(st_num1)}</td>
                                     <td width="70" rowspan="2" align="center">{html.escape(single_time)}</td>
-                                    <td width="350" rowspan="2">{html.escape(st_name)}</td>
+                                    <td width="330" rowspan="2">{html.escape(st_name)}</td>
                                 </tr>
                                 <tr style="{row_style}">
-                                    <td width="20" style="background-color: {seg2_color}; padding: 0;"></td>
+                                    <td width="40" style="background-color: {seg2_color}; padding: 0;" class="station_number_cell">{html.escape(st_num2)}</td>
                                 </tr>
                             """)
                         else:
                             station_rows_html.append(f"""
                                 <tr style="{row_style}">
                                     <td width="30" rowspan="2"></td>
-                                    <td width="20" style="background-color: {seg1_color}; padding: 0;"></td>
+                                    <td width="40" style="background-color: {seg1_color}; padding: 0;" class="station_number_cell">{html.escape(st_num1)}</td>
                                     <td width="70" align="center" style="padding: 0 5px;">{html.escape(arr_formatted)}</td>
-                                    <td width="350" rowspan="2">{html.escape(st_name)}</td>
+                                    <td width="330" rowspan="2">{html.escape(st_name)}</td>
                                 </tr>
                                 <tr style="{row_style}">
-                                    <td width="20" style="background-color: {seg2_color}; padding: 0;"></td>
+                                    <td width="40" style="background-color: {seg2_color}; padding: 0;" class="station_number_cell">{html.escape(st_num2)}</td>
                                     <td width="70" align="center" style="padding: 0 5px;">{html.escape(dep_formatted)}</td>
                                 </tr>
                             """)
                 else:
-                    stop1 = g["stop1"]
-                    stop_type = stop1.get("stop_type", 1)
-                    if not show_pass and stop_type != 1:
-                        continue
+                    st_entry_id = stop1.get("station_entry_id")
 
-                    arr_raw = stop1.get("arrival_time")
-                    dep_raw = stop1.get("departure_time")
-
-                    arr_formatted = self._format_time(arr_raw, show_seconds)
-                    dep_formatted = self._format_time(dep_raw, show_seconds)
-
-                    seg_color = self._get_segment_line_color(r_id, stop1.get("segment_id"))
-                    row_color = " color: #888888;" if stop_type != 1 else ""
-                    row_style = f'background-color: {bg_color};{row_color}'
-
-                    if stop_type == 0:
+                    if effective_stop_type == 0:
                         dep_display = f"({dep_formatted})" if dep_formatted else ""
                         station_rows_html.append(f"""
                             <tr style="{row_style}">
                                 <td width="30"></td>
-                                <td width="20" style="background-color: {seg_color};"></td>
+                                <td width="40" style="background-color: {seg1_color};" class="station_number_cell">{html.escape(st_num1)}</td>
                                 <td width="70" align="center">{html.escape(dep_display)}</td>
-                                <td width="350">{html.escape(st_name)}</td>
+                                <td width="330">{html.escape(st_name)}</td>
                             </tr>
                         """)
                     else:
@@ -402,18 +409,18 @@ class TrainDetailPreviewDialog(QDialog):
                             station_rows_html.append(f"""
                                 <tr style="{row_style}">
                                     <td width="30"></td>
-                                    <td width="20" style="background-color: {seg_color};"></td>
+                                    <td width="40" style="background-color: {seg1_color};" class="station_number_cell">{html.escape(st_num1)}</td>
                                     <td width="70" align="center">{html.escape(single_time)}</td>
-                                    <td width="350">{html.escape(st_name)}</td>
+                                    <td width="330">{html.escape(st_name)}</td>
                                 </tr>
                             """)
                         else:
                             station_rows_html.append(f"""
                                 <tr style="{row_style}">
                                     <td width="30" rowspan="2"></td>
-                                    <td width="20" rowspan="2" style="background-color: {seg_color};"></td>
+                                    <td width="40" rowspan="2" style="background-color: {seg1_color};" class="station_number_cell">{html.escape(st_num1)}</td>
                                     <td width="70" align="center" style="padding: 0 5px;">{html.escape(arr_formatted)}</td>
-                                    <td width="350" rowspan="2">{html.escape(st_name)}</td>
+                                    <td width="330" rowspan="2">{html.escape(st_name)}</td>
                                 </tr>
                                 <tr style="{row_style}">
                                     <td width="70" align="center" style="padding: 0 5px;">{html.escape(dep_formatted)}</td>
@@ -503,6 +510,12 @@ th {{
 td {{
     border: none;
     padding: 10px 5px;
+}}
+.station_number_cell {{
+    color: #ffffff;
+    font-size: 10px;
+    text-align: center;
+    padding: 10px 0;
 }}
 .subsequent_links_row td {{
     padding-left: 20px;
