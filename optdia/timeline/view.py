@@ -46,6 +46,22 @@ class TimelineView(QGraphicsView):
                 items_in_rect = self.scene.items(scene_rect)
                 self.scene.handle_rubber_band_selection(items_in_rect)
 
+    def wheelEvent(self, event: QWheelEvent):
+        # Shiftキーが押されているときは横スクロール
+        if event.modifiers() == Qt.KeyboardModifier.ShiftModifier:
+            # ホイールの回転量を取得
+            angle_delta = event.angleDelta().y()
+            # 水平スクロールバーを取得
+            hbar = self.horizontalScrollBar()
+            if hbar:
+                # 現在の値から、回転量に応じて値を増減させる
+                hbar.setValue(hbar.value() - angle_delta)
+            # イベントを処理したことをシステムに伝える
+            event.accept()
+        else:
+            # Shiftが押されていないときは通常の上下スクロール
+            super().wheelEvent(event)
+
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Delete:
             self.scene.delete_selected_items()

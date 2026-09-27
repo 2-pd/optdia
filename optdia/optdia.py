@@ -120,7 +120,7 @@ class MainWindow(QMainWindow):
         self.route_list_widget.setIconSize(QSize(24, 24))
         self.route_list_widget.setDragDropMode(QListWidget.InternalMove)
         self.route_list_widget.model().rowsMoved.connect(self._on_routes_reordered)
-        self.route_list_widget.itemSelectionChanged.connect(self._on_timetable_settings_changed)
+        self.route_list_widget.itemSelectionChanged.connect(lambda: self._on_timetable_settings_changed(reset_scroll_pos=False))
         route_layout.addWidget(self.route_list_widget)
 
         # サイドバーの残りスペースを2等分するため、stretch=1 を指定
@@ -968,7 +968,7 @@ class MainWindow(QMainWindow):
         """メインウィンドウのダイヤリストで選択が変更されたときに表示を更新する"""
         self._on_timetable_settings_changed()
 
-    def _on_timetable_settings_changed(self):
+    def _on_timetable_settings_changed(self, reset_scroll_pos: bool = True):
         """サイドバーの選択やタブの切り替え時に、時刻表テーブルの表示内容を更新する"""
         if not self.project.routes or not self.project.diagrams:
             self.right_stack.setCurrentIndex(1)
@@ -1006,7 +1006,7 @@ class MainWindow(QMainWindow):
         self.timetable_model.update_data(route_id, diagram_id, direction)
 
         if tab_index == 2:
-            self._update_diagram_view()
+            self._update_diagram_view(reset_scroll_pos=reset_scroll_pos)
         elif tab_index == 3:
             self._update_op_group_combo()
             self.timeline_header_view.horizontalScrollBar().setValue(
@@ -1444,7 +1444,7 @@ class MainWindow(QMainWindow):
         key = self.diagram_width_combo.currentData()
         if key:
             self.app_settings.save_diagram_width_scale(key)
-        self._update_diagram_view()
+        self._update_diagram_view(reset_scroll_pos=True)
 
     def _on_diagram_height_changed(self, index: int):
         """ダイヤグラムの表示高さコンボボックス変更時"""
@@ -1453,7 +1453,7 @@ class MainWindow(QMainWindow):
             self.app_settings.save_diagram_height_scale(key)
         self._update_diagram_view()
 
-    def _update_diagram_view(self):
+    def _update_diagram_view(self, reset_scroll_pos: bool = False):
         """ダイヤグラムビューの描画内容を更新する"""
         selected_target = self.diagram_line_combo.currentData() or "route"
 
@@ -1479,10 +1479,11 @@ class MainWindow(QMainWindow):
         self.diagram_header_view.update_header()
         self.diagram_station_view.update_stations(self.project, stations_data)
 
-        # 4時0分の縦線（4 * 60 * scale_x px）が表示領域の左端になる位置にスクロール
-        scroll_pos = int(4 * 60 * scale_x)
-        self.diagram_view.horizontalScrollBar().setValue(scroll_pos)
-        self.diagram_header_view.horizontalScrollBar().setValue(scroll_pos)
+        if reset_scroll_pos:
+            # 4時0分の縦線（4 * 60 * scale_x px）が表示領域の左端になる位置にスクロール
+            scroll_pos = int(4 * 60 * scale_x)
+            self.diagram_view.horizontalScrollBar().setValue(scroll_pos)
+            self.diagram_header_view.horizontalScrollBar().setValue(scroll_pos)
 
 
 # アプリ起動処理
