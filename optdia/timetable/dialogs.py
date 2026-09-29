@@ -1144,6 +1144,14 @@ def split_train_at_cell(parent, model, index):
             d_trains_for_did[new_train_id] = new_d_train
             events_to_push.append(AddTrainEvent(route_id, direction, new_train_id, did, insert_idx, new_d_train, new_m_train))
 
+            # 分割元の担当運用情報が新しい列車に引き継がれるため、operation_train_lookup を更新する
+            new_ops = new_d_train.get("operations", [])
+            if new_ops and hasattr(model.project, "update_operation_train_lookup"):
+                model.project.update_operation_train_lookup(
+                    did, route_id, direction, new_train_id,
+                    [], new_ops
+                )
+
             # 逆引き情報の更新（orig_d_train の連続列車変更、および new_d_train の連続列車追加）
             if hasattr(model.project, "update_train_subsequent_links"):
                 model.project.update_train_subsequent_links(route_id, direction, train_id, old_orig_subs, orig_d_train["subsequent_trains"])
@@ -1810,6 +1818,14 @@ def delete_trains(parent_view, model, cols: List[int]):
                         d_order_list.remove(train_id)
                     del d_train_dict[train_id]
 
+                    # 削除する列車に担当運用が設定されていた場合、operation_train_lookup を更新する
+                    ops = d_trains_by_diagram[did][1].get("operations", [])
+                    if ops and hasattr(model.project, "update_operation_train_lookup"):
+                        model.project.update_operation_train_lookup(
+                            did, model.route_id, model.direction, train_id,
+                            ops, []
+                        )
+
             m_train_snapshot = copy.deepcopy(m_train)
             if train_id in m_trains:
                 del m_trains[train_id]
@@ -1831,6 +1847,15 @@ def delete_trains(parent_view, model, cols: List[int]):
                 m_train_snapshot = copy.deepcopy(m_train)
                 if train_id in m_trains:
                     del m_trains[train_id]
+
+                # 削除する列車に担当運用が設定されていた場合、operation_train_lookup を更新する
+                ops = d_trains_by_diagram[model.diagram_id][1].get("operations", [])
+                if ops and hasattr(model.project, "update_operation_train_lookup"):
+                    model.project.update_operation_train_lookup(
+                        model.diagram_id, model.route_id, model.direction, train_id,
+                        ops, []
+                    )
+
                 ev = RemoveTrainEvent(model.route_id, model.direction, train_id, d_trains_by_diagram, m_train_snapshot)
                 events_to_push.append(ev)
             else:

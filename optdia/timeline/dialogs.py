@@ -605,6 +605,13 @@ class AddDeadheadDialog(QDialog):
             )
             self.history_manager.push_events([ev])
 
+        # 担当運用が設定されている場合、operation_train_lookup を更新する
+        if self.operation_id and hasattr(self.project, "update_operation_train_lookup"):
+            self.project.update_operation_train_lookup(
+                self.diagram_id, route_id, direction_key, new_train_id,
+                [], d_trains[new_train_id]["operations"]
+            )
+
         self.accept()
 
 

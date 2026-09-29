@@ -1128,6 +1128,9 @@ class DiagramEditorDialog(QDialog):
                     if m_train is not None and new_diagram_id not in m_train["_diagram_ids"]:
                         m_train["_diagram_ids"].append(new_diagram_id)
 
+        # 車両運用から列車を逆引きするためのデータを再構築
+        self.project._build_operation_train_lookup()
+
         # リスト表示を更新し、複製されたダイヤを選択状態にする
         self._populate_diagram_list()
         for i in range(self.diagram_list_widget.count()):

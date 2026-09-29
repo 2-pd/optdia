@@ -111,6 +111,14 @@ class AddTrainEvent(BaseEvent):
         if self.train_id in m_trains:
             del m_trains[self.train_id]
 
+        # 追加された列車に担当運用が設定されていた場合、operation_train_lookup を更新する
+        ops = self.d_train.get("operations", [])
+        if ops and hasattr(project, "update_operation_train_lookup"):
+            project.update_operation_train_lookup(
+                self.diagram_id, self.route_id, self.direction, self.train_id,
+                ops, []
+            )
+
     def redo(self, project) -> None:
         route = project.routes.get(self.route_id, {})
         tbd = route.get("trains_by_diagram", {}).get(self.diagram_id, {})
@@ -127,6 +135,14 @@ class AddTrainEvent(BaseEvent):
         if hasattr(project, "add_subsequent_link"):
             for sub in self.d_train.get("subsequent_trains", []):
                 project.add_subsequent_link(self.route_id, self.direction, self.train_id, sub)
+
+        # 追加する列車に担当運用が設定されている場合、operation_train_lookup を更新する
+        ops = self.d_train.get("operations", [])
+        if ops and hasattr(project, "update_operation_train_lookup"):
+            project.update_operation_train_lookup(
+                self.diagram_id, self.route_id, self.direction, self.train_id,
+                [], ops
+            )
 
 
 # 列車の削除
@@ -169,11 +185,19 @@ class RemoveTrainEvent(BaseEvent):
                 for sub in d_train.get("subsequent_trains", []):
                     project.add_subsequent_link(self.route_id, self.direction, self.train_id, sub)
 
+            # 復元する列車に担当運用が設定されている場合、operation_train_lookup を更新する
+            ops = d_train.get("operations", [])
+            if ops and hasattr(project, "update_operation_train_lookup"):
+                project.update_operation_train_lookup(
+                    diagram_id, self.route_id, self.direction, self.train_id,
+                    [], ops
+                )
+
     def redo(self, project) -> None:
         if hasattr(project, "remove_all_train_links"):
             project.remove_all_train_links(self.route_id, self.direction, self.train_id)
         route = project.routes.get(self.route_id, {})
-        for diagram_id in self.d_trains_by_diagram.keys():
+        for diagram_id, (index, d_train) in self.d_trains_by_diagram.items():
             tbd = route.get("trains_by_diagram", {}).get(diagram_id, {})
             d_trains = tbd.get(self.train_key, {})
             order = tbd.get(self.order_key, [])
@@ -181,6 +205,14 @@ class RemoveTrainEvent(BaseEvent):
                 order.remove(self.train_id)
             if self.train_id in d_trains:
                 del d_trains[self.train_id]
+
+            # 削除する列車に担当運用が設定されていた場合、operation_train_lookup を更新する
+            ops = d_train.get("operations", [])
+            if ops and hasattr(project, "update_operation_train_lookup"):
+                project.update_operation_train_lookup(
+                    diagram_id, self.route_id, self.direction, self.train_id,
+                    ops, []
+                )
 
         m_trains = route.get(self.train_key, {})
         if self.train_id in m_trains:
