@@ -932,6 +932,9 @@ def import_timetable_from_csv(parent_window):
                     })
             d_train["subsequent_trains"] = resolved_subs
 
+        # 車両運用から列車を逆引きするためのデータを再構築
+        project._build_operation_train_lookup()
+
         # 表示更新と保存フラグ設定
         model.update_data(route_id, diagram_id, direction)
         parent_window.set_modified(True)

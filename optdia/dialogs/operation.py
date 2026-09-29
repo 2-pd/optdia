@@ -1,8 +1,8 @@
 from PySide6.QtCore import Qt, QByteArray, QDataStream, QIODevice
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QDialog, QHBoxLayout, QVBoxLayout, QLabel, QListWidget, QListWidgetItem, QStackedWidget, QTabWidget, QWidget, QPushButton, QLineEdit, QColorDialog,
-    QGroupBox, QSpinBox, QPlainTextEdit, QFormLayout, QScrollArea, QAbstractItemView
+    QGroupBox, QSpinBox, QPlainTextEdit, QFormLayout, QScrollArea, QAbstractItemView, QMessageBox
 )
 from core.project import OptDiaProject, generate_random_id
 from common.gui_utils import create_color_square_pixmap
@@ -214,7 +214,7 @@ class VehicleOperationEditorDialog(QDialog):
         self.op_list.itemSelectionChanged.connect(self._on_operation_selected)
         left_op_layout.addWidget(self.op_list)
 
-        self.add_op_button = QPushButton("運用の追加")
+        self.add_op_button = QPushButton("運用の追加 (Ctrl+I)")
         self.add_op_button.clicked.connect(self._on_add_operation)
         left_op_layout.addWidget(self.add_op_button)
 
@@ -226,6 +226,7 @@ class VehicleOperationEditorDialog(QDialog):
         scroll_area.setFrameShape(QScrollArea.NoFrame)
 
         self.op_detail_container = QWidget()
+        self.op_detail_container.setProperty("class", "scroll_content")
         right_op_layout = QVBoxLayout(self.op_detail_container)
         right_op_layout.setContentsMargins(10, 0, 10, 0)
         right_op_layout.setSpacing(10)
@@ -360,6 +361,15 @@ class VehicleOperationEditorDialog(QDialog):
 
         right_op_layout.addStretch()
 
+        # 「この運用を削除」ボタン (右寄せ)
+        delete_op_btn_layout = QHBoxLayout()
+        delete_op_btn_layout.addStretch()
+        self.delete_op_button = QPushButton("この運用を削除")
+        self.delete_op_button.setProperty("class", "delete_button")
+        self.delete_op_button.clicked.connect(self._on_delete_operation)
+        delete_op_btn_layout.addWidget(self.delete_op_button)
+        right_op_layout.addLayout(delete_op_btn_layout)
+
         scroll_area.setWidget(self.op_detail_container)
         tab_op_layout.addWidget(scroll_area, stretch=1)
 
@@ -383,6 +393,15 @@ class VehicleOperationEditorDialog(QDialog):
 
         tab_group_layout.addStretch()
 
+        # 「この運用グループを削除」ボタン (右寄せ)
+        delete_group_btn_layout = QHBoxLayout()
+        delete_group_btn_layout.addStretch()
+        self.delete_group_button = QPushButton("この運用グループを削除")
+        self.delete_group_button.setProperty("class", "delete_button")
+        self.delete_group_button.clicked.connect(self._on_delete_operation_group)
+        delete_group_btn_layout.addWidget(self.delete_group_button)
+        tab_group_layout.addLayout(delete_group_btn_layout)
+
         # 2. 運用グループが登録されていないときに表示するラベル
         self.placeholder_page = QWidget()
         placeholder_layout = QVBoxLayout(self.placeholder_page)
@@ -405,6 +424,10 @@ class VehicleOperationEditorDialog(QDialog):
                         break
         else:
             self.stacked_widget.setCurrentIndex(1)
+
+        # ショートカットキーの設定
+        self.shortcut = QShortcut(QKeySequence("Ctrl+I"), self)
+        self.shortcut.activated.connect(self._on_add_operation)
 
     def _on_add_operation_group(self):
         diagram = self.project.diagrams.get(self.diagram_id, {})
@@ -1032,3 +1055,128 @@ class VehicleOperationEditorDialog(QDialog):
 
         # 現在の運用リストから該当運用を削除し、必要に応じて選択を更新
         self._on_group_selected()
+
+    def _delete_operation_data(self, op_id: str):
+        """
+        指定されたIDの車両運用をプロジェクトデータから削除する。
+        - 対象ダイヤの operations から該当エントリを削除
+        - 全運行系統の対象ダイヤ列車から、該当運用IDを持つ optdia_train_operation を削除
+        - operation_train_lookup を再構築
+        """
+        diagram = self.project.diagrams.get(self.diagram_id, {})
+        operations = diagram.get("operations", {})
+
+        # operationsから削除
+        if op_id in operations:
+            del operations[op_id]
+
+        # 全運行系統を走査して、対象ダイヤの列車の operations から該当 op_id を持つエントリを削除
+        for route in self.project.routes.values():
+            tbd = route.get("trains_by_diagram", {}).get(self.diagram_id, {})
+            for train_key in ["inbound_trains", "outbound_trains"]:
+                for d_train in tbd.get(train_key, {}).values():
+                    old_ops = d_train.get("operations", [])
+                    new_ops = [
+                        op_entry for op_entry in old_ops
+                        if (op_entry.get("operation_id") if isinstance(op_entry, dict) else op_entry) != op_id
+                    ]
+                    if len(new_ops) != len(old_ops):
+                        d_train["operations"] = new_ops
+
+        # 担当運用逆引きデータを再構築
+        self.project._build_operation_train_lookup()
+
+    def _on_delete_operation(self):
+        """「この運用を削除」ボタンのハンドラ"""
+        selected_items = self.op_list.selectedItems()
+        if not selected_items:
+            return
+
+        op_id = selected_items[0].data(Qt.UserRole)
+        diagram = self.project.diagrams.get(self.diagram_id, {})
+        op = diagram.get("operations", {}).get(op_id)
+        if not op:
+            return
+
+        op_number = op.get("operation_number", "")
+        reply = QMessageBox.question(
+            self,
+            "運用の削除",
+            f"{op_number} 運用を削除しますか？",
+            QMessageBox.Ok | QMessageBox.Cancel,
+            QMessageBox.Cancel
+        )
+        if reply != QMessageBox.Ok:
+            return
+
+        # 運用グループの operations リストからも削除
+        operation_groups = diagram.get("operation_groups", {})
+        for og in operation_groups.values():
+            og_ops = og.get("operations", [])
+            if op_id in og_ops:
+                og_ops.remove(op_id)
+
+        # 運用データの削除
+        self._delete_operation_data(op_id)
+
+        # リストウィジェットから削除
+        row = self.op_list.row(selected_items[0])
+        self.op_list.takeItem(row)
+
+        # 選択を更新（残りの先頭、またはなければクリア）
+        if self.op_list.count() > 0:
+            self.op_list.setCurrentRow(max(0, row - 1))
+        else:
+            self._on_operation_selected()
+
+        self._set_modified()
+
+    def _on_delete_operation_group(self):
+        """「この運用グループを削除」ボタンのハンドラ"""
+        selected_items = self.group_list.selectedItems()
+        if not selected_items:
+            return
+
+        og_id = selected_items[0].data(Qt.UserRole)
+        diagram = self.project.diagrams.get(self.diagram_id, {})
+        operation_groups = diagram.get("operation_groups", {})
+        og = operation_groups.get(og_id)
+        if not og:
+            return
+
+        og_name = og.get("operation_group_name", "")
+        op_ids_in_group = list(og.get("operations", []))
+
+        reply = QMessageBox.question(
+            self,
+            "運用グループの削除",
+            f"運用グループ {og_name} を削除しますか？\nグループを削除すると、そこに含まれる運用も同時に削除されます。",
+            QMessageBox.Ok | QMessageBox.Cancel,
+            QMessageBox.Cancel
+        )
+        if reply != QMessageBox.Ok:
+            return
+
+        # グループ内の全車両運用を削除
+        for op_id in op_ids_in_group:
+            self._delete_operation_data(op_id)
+
+        # operation_groups と operation_groups_order から削除
+        if og_id in operation_groups:
+            del operation_groups[og_id]
+        operation_groups_order = diagram.get("operation_groups_order", [])
+        if og_id in operation_groups_order:
+            operation_groups_order.remove(og_id)
+
+        # group_list ウィジェットから削除
+        row = self.group_list.row(selected_items[0])
+        self.group_list.takeItem(row)
+
+        # 残りのグループがあれば先頭を選択、なければプレースホルダーを表示
+        if self.group_list.count() > 0:
+            self.stacked_widget.setCurrentIndex(0)
+            self.group_list.setCurrentRow(max(0, row - 1))
+        else:
+            self.stacked_widget.setCurrentIndex(1)
+
+        self._set_modified()

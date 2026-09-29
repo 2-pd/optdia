@@ -102,12 +102,22 @@ class AddTrainEvent(BaseEvent):
         order = tbd.get(self.order_key, [])
         m_trains = route.get(self.train_key, {})
 
+        if hasattr(project, "remove_all_train_links"):
+            project.remove_all_train_links(self.route_id, self.direction, self.train_id)
         if self.train_id in order:
             order.remove(self.train_id)
         if self.train_id in d_trains:
             del d_trains[self.train_id]
         if self.train_id in m_trains:
             del m_trains[self.train_id]
+
+        # 追加された列車に担当運用が設定されていた場合、operation_train_lookup を更新する
+        ops = self.d_train.get("operations", [])
+        if ops and hasattr(project, "update_operation_train_lookup"):
+            project.update_operation_train_lookup(
+                self.diagram_id, self.route_id, self.direction, self.train_id,
+                ops, []
+            )
 
     def redo(self, project) -> None:
         route = project.routes.get(self.route_id, {})
@@ -122,6 +132,17 @@ class AddTrainEvent(BaseEvent):
             order.append(self.train_id)
         else:
             order.insert(self.index, self.train_id)
+        if hasattr(project, "add_subsequent_link"):
+            for sub in self.d_train.get("subsequent_trains", []):
+                project.add_subsequent_link(self.route_id, self.direction, self.train_id, sub)
+
+        # 追加する列車に担当運用が設定されている場合、operation_train_lookup を更新する
+        ops = self.d_train.get("operations", [])
+        if ops and hasattr(project, "update_operation_train_lookup"):
+            project.update_operation_train_lookup(
+                self.diagram_id, self.route_id, self.direction, self.train_id,
+                [], ops
+            )
 
 
 # 列車の削除
@@ -160,10 +181,23 @@ class RemoveTrainEvent(BaseEvent):
                     order.append(self.train_id)
                 else:
                     order.insert(index, self.train_id)
+            if hasattr(project, "add_subsequent_link"):
+                for sub in d_train.get("subsequent_trains", []):
+                    project.add_subsequent_link(self.route_id, self.direction, self.train_id, sub)
+
+            # 復元する列車に担当運用が設定されている場合、operation_train_lookup を更新する
+            ops = d_train.get("operations", [])
+            if ops and hasattr(project, "update_operation_train_lookup"):
+                project.update_operation_train_lookup(
+                    diagram_id, self.route_id, self.direction, self.train_id,
+                    [], ops
+                )
 
     def redo(self, project) -> None:
+        if hasattr(project, "remove_all_train_links"):
+            project.remove_all_train_links(self.route_id, self.direction, self.train_id)
         route = project.routes.get(self.route_id, {})
-        for diagram_id in self.d_trains_by_diagram.keys():
+        for diagram_id, (index, d_train) in self.d_trains_by_diagram.items():
             tbd = route.get("trains_by_diagram", {}).get(diagram_id, {})
             d_trains = tbd.get(self.train_key, {})
             order = tbd.get(self.order_key, [])
@@ -171,6 +205,14 @@ class RemoveTrainEvent(BaseEvent):
                 order.remove(self.train_id)
             if self.train_id in d_trains:
                 del d_trains[self.train_id]
+
+            # 削除する列車に担当運用が設定されていた場合、operation_train_lookup を更新する
+            ops = d_train.get("operations", [])
+            if ops and hasattr(project, "update_operation_train_lookup"):
+                project.update_operation_train_lookup(
+                    diagram_id, self.route_id, self.direction, self.train_id,
+                    ops, []
+                )
 
         m_trains = route.get(self.train_key, {})
         if self.train_id in m_trains:
@@ -382,17 +424,29 @@ class AddTrainOperationEvent(BaseEvent):
         d_train = route.get("trains_by_diagram", {}).get(self.diagram_id, {}).get(self.train_key, {}).get(self.train_id)
         if d_train and "operations" in d_train:
             if 0 <= self.index < len(d_train["operations"]):
+                old_ops = list(d_train["operations"])
                 d_train["operations"].pop(self.index)
+                if hasattr(project, "update_operation_train_lookup"):
+                    project.update_operation_train_lookup(
+                        self.diagram_id, self.route_id, self.direction, self.train_id,
+                        old_ops, d_train["operations"]
+                    )
 
     def redo(self, project) -> None:
         route = project.routes.get(self.route_id, {})
         d_train = route.get("trains_by_diagram", {}).get(self.diagram_id, {}).get(self.train_key, {}).get(self.train_id)
         if d_train:
             ops = d_train.setdefault("operations", [])
+            old_ops = list(ops)
             if self.index >= len(ops):
                 ops.append(copy.deepcopy(self.operation))
             else:
                 ops.insert(self.index, copy.deepcopy(self.operation))
+            if hasattr(project, "update_operation_train_lookup"):
+                project.update_operation_train_lookup(
+                    self.diagram_id, self.route_id, self.direction, self.train_id,
+                    old_ops, ops
+                )
 
 
 # 列車からの担当運用の除外
@@ -418,17 +472,29 @@ class RemoveTrainOperationEvent(BaseEvent):
         d_train = route.get("trains_by_diagram", {}).get(self.diagram_id, {}).get(self.train_key, {}).get(self.train_id)
         if d_train:
             ops = d_train.setdefault("operations", [])
+            old_ops = list(ops)
             if self.index >= len(ops):
                 ops.append(copy.deepcopy(self.operation))
             else:
                 ops.insert(self.index, copy.deepcopy(self.operation))
+            if hasattr(project, "update_operation_train_lookup"):
+                project.update_operation_train_lookup(
+                    self.diagram_id, self.route_id, self.direction, self.train_id,
+                    old_ops, ops
+                )
 
     def redo(self, project) -> None:
         route = project.routes.get(self.route_id, {})
         d_train = route.get("trains_by_diagram", {}).get(self.diagram_id, {}).get(self.train_key, {}).get(self.train_id)
         if d_train and "operations" in d_train:
             if 0 <= self.index < len(d_train["operations"]):
+                old_ops = list(d_train["operations"])
                 d_train["operations"].pop(self.index)
+                if hasattr(project, "update_operation_train_lookup"):
+                    project.update_operation_train_lookup(
+                        self.diagram_id, self.route_id, self.direction, self.train_id,
+                        old_ops, d_train["operations"]
+                    )
 
 
 # 列車の担当運用の変更
@@ -454,12 +520,22 @@ class ChangeTrainOperationEvent(BaseEvent):
         d_train = route.get("trains_by_diagram", {}).get(self.diagram_id, {}).get(self.train_key, {}).get(self.train_id)
         if d_train:
             d_train["operations"] = copy.deepcopy(self.old_operations)
+            if hasattr(project, "update_operation_train_lookup"):
+                project.update_operation_train_lookup(
+                    self.diagram_id, self.route_id, self.direction, self.train_id,
+                    self.new_operations, self.old_operations
+                )
 
     def redo(self, project) -> None:
         route = project.routes.get(self.route_id, {})
         d_train = route.get("trains_by_diagram", {}).get(self.diagram_id, {}).get(self.train_key, {}).get(self.train_id)
         if d_train:
             d_train["operations"] = copy.deepcopy(self.new_operations)
+            if hasattr(project, "update_operation_train_lookup"):
+                project.update_operation_train_lookup(
+                    self.diagram_id, self.route_id, self.direction, self.train_id,
+                    self.old_operations, self.new_operations
+                )
 
 
 # 列車の両数の変更
@@ -740,6 +816,8 @@ class AddSubsequentTrainEvent(BaseEvent):
         if d_train and "subsequent_trains" in d_train:
             if 0 <= self.index < len(d_train["subsequent_trains"]):
                 d_train["subsequent_trains"].pop(self.index)
+        if hasattr(project, "remove_subsequent_link"):
+            project.remove_subsequent_link(self.route_id, self.direction, self.train_id, self.subsequent_train)
 
     def redo(self, project) -> None:
         route = project.routes.get(self.route_id, {})
@@ -750,6 +828,8 @@ class AddSubsequentTrainEvent(BaseEvent):
                 subs.append(copy.deepcopy(self.subsequent_train))
             else:
                 subs.insert(self.index, copy.deepcopy(self.subsequent_train))
+        if hasattr(project, "add_subsequent_link"):
+            project.add_subsequent_link(self.route_id, self.direction, self.train_id, self.subsequent_train)
 
 
 # 列車からの連続する列車の削除
@@ -779,6 +859,8 @@ class RemoveSubsequentTrainEvent(BaseEvent):
                 subs.append(copy.deepcopy(self.subsequent_train))
             else:
                 subs.insert(self.index, copy.deepcopy(self.subsequent_train))
+        if hasattr(project, "add_subsequent_link"):
+            project.add_subsequent_link(self.route_id, self.direction, self.train_id, self.subsequent_train)
 
     def redo(self, project) -> None:
         route = project.routes.get(self.route_id, {})
@@ -786,6 +868,8 @@ class RemoveSubsequentTrainEvent(BaseEvent):
         if d_train and "subsequent_trains" in d_train:
             if 0 <= self.index < len(d_train["subsequent_trains"]):
                 d_train["subsequent_trains"].pop(self.index)
+        if hasattr(project, "remove_subsequent_link"):
+            project.remove_subsequent_link(self.route_id, self.direction, self.train_id, self.subsequent_train)
 
 
 # 列車の連続する列車の変更
@@ -811,12 +895,16 @@ class ChangeSubsequentTrainEvent(BaseEvent):
         d_train = route.get("trains_by_diagram", {}).get(self.diagram_id, {}).get(self.train_key, {}).get(self.train_id)
         if d_train:
             d_train["subsequent_trains"] = copy.deepcopy(self.old_subsequent_trains)
+        if hasattr(project, "update_train_subsequent_links"):
+            project.update_train_subsequent_links(self.route_id, self.direction, self.train_id, self.new_subsequent_trains, self.old_subsequent_trains)
 
     def redo(self, project) -> None:
         route = project.routes.get(self.route_id, {})
         d_train = route.get("trains_by_diagram", {}).get(self.diagram_id, {}).get(self.train_key, {}).get(self.train_id)
         if d_train:
             d_train["subsequent_trains"] = copy.deepcopy(self.new_subsequent_trains)
+        if hasattr(project, "update_train_subsequent_links"):
+            project.update_train_subsequent_links(self.route_id, self.direction, self.train_id, self.old_subsequent_trains, self.new_subsequent_trains)
 
 
 # 列車の備考の変更

@@ -1,6 +1,6 @@
 import re
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QDialog, QColorDialog, QVBoxLayout, QHBoxLayout, QPushButton, QMessageBox, QLabel,
     QLineEdit, QListWidget, QListWidgetItem, QCheckBox, QStackedWidget,
@@ -217,6 +217,9 @@ class AddStationDialog(QDialog):
 
         self.add_button.clicked.connect(self._on_add_clicked)
         self.cancel_button.clicked.connect(self.reject)
+
+        # 駅名入力欄に自動フォーカス
+        self.station_name_edit.setFocus()
 
     def _clear_id_error(self):
         """ID入力欄のエラー表示状態をクリアする"""
@@ -660,7 +663,7 @@ class LineStationEditorDialog(QDialog):
         station_left_layout.addWidget(self.station_list_widget)
 
         # 駅追加ボタン
-        self.add_station_button = QPushButton("駅の追加")
+        self.add_station_button = QPushButton("駅の追加 (Ctrl+I)")
         self.add_station_button.clicked.connect(self._on_add_station)
         station_left_layout.addWidget(self.add_station_button)
 
@@ -896,6 +899,10 @@ class LineStationEditorDialog(QDialog):
         # 路線が登録されていれば最初の項目を選択状態にする
         if self.line_list_widget.count() > 0:
             self.line_list_widget.setCurrentRow(0)
+
+        # ショートカットキーの設定
+        self.shortcut = QShortcut(QKeySequence("Ctrl+I"), self)
+        self.shortcut.activated.connect(self._on_add_station)
 
     def _set_line_editing_enabled(self, enabled: bool):
         """路線情報編集フォームのウィジェットの有効/無効を切り替える"""
@@ -1215,7 +1222,7 @@ class LineStationEditorDialog(QDialog):
 
         # 発着番線コンボボックスの更新
         self.inbound_track_combo.blockSignals(True)
-        self.outbound_track_combo.clear()
+        self.outbound_track_combo.blockSignals(True)
         self.inbound_track_combo.clear()
         self.outbound_track_combo.clear()
         self.inbound_track_combo.addItem("未設定", None)
@@ -1470,6 +1477,10 @@ class LineStationEditorDialog(QDialog):
         station_list = line_data.get("station_list", [])
         n = len(station_list)
 
+        if n == 0:
+            QMessageBox.critical(self, "エラー", "基準運転時分を計算すべき駅が登録されていません")
+            return
+
         # 確認ダイアログ
         reply = QMessageBox.question(
             self,
@@ -1479,10 +1490,6 @@ class LineStationEditorDialog(QDialog):
             QMessageBox.StandardButton.Cancel
         )
         if reply != QMessageBox.StandardButton.Ok:
-            return
-
-        if n == 0:
-            QMessageBox.information(self, "情報", "基準運転時分の計算が完了しました。")
             return
 
         station_ids = [s["station_id"] for s in station_list]
@@ -1522,7 +1529,7 @@ class LineStationEditorDialog(QDialog):
                          if s.get("segment_id") in line_segment_ids]
                 last_a_stop = None
                 for stop in stops:
-                    sid = stop.get("station_id")
+                    sid = self.project.station_entry_to_station_id.get(stop.get("station_entry_id"))
                     st = stop.get("stop_type", 0)
                     if sid == a_id and st != 0:
                         last_a_stop = stop

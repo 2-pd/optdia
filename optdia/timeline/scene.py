@@ -4,6 +4,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QColor, QFont, QPen, QBrush
 from PySide6.QtCore import Qt, QRectF
+from previews.train_detail import TrainDetailPreviewDialog
 from .dialogs import TemporaryStablingDialog, AddDeadheadDialog, AddTrainToOperationDialog
 
 
@@ -117,13 +118,25 @@ class TrainTimelineItem(TimelineRectItem):
         route_line = f"{first_station_initial} {first_dep_str} → {last_arr_str} {last_station_initial}"
         return f"{train_line}<br>{op_line}<br>{route_line}"
 
+    def mouseDoubleClickEvent(self, event):
+        super().mouseDoubleClickEvent(event)
+
+        parent_widget = self.timeline_scene.views()[0].window() if self.timeline_scene and self.timeline_scene.views() else None
+        dialog = TrainDetailPreviewDialog(parent_widget, self.timeline_scene.project, self.route_id, self.direction_key[:-7], self.train_id)
+        dialog.exec()
+
     def contextMenuEvent(self, event):
         menu = QMenu()
+        act_detail = menu.addAction("列車の詳細")
         act_remove = menu.addAction("この列車を除外")
         selected_act = menu.exec(event.screenPos())
 
-        if selected_act == act_remove:
-            parent_widget = self.timeline_scene.views()[0].window() if self.timeline_scene and self.timeline_scene.views() else None
+        parent_widget = self.timeline_scene.views()[0].window() if self.timeline_scene and self.timeline_scene.views() else None
+
+        if selected_act == act_detail:
+            dialog = TrainDetailPreviewDialog(parent_widget, self.timeline_scene.project, self.route_id, self.direction_key[:-7], self.train_id)
+            dialog.exec()
+        elif selected_act == act_remove:
             reply = QMessageBox.question(
                 parent_widget,
                 "確認",
@@ -165,6 +178,15 @@ class TrainTimelineItem(TimelineRectItem):
                             operation=target_op
                         )
                         self.timeline_scene.history_manager.push_events([ev])
+
+                    project = self.timeline_scene.project
+                    if hasattr(project, "update_operation_train_lookup"):
+                        direction_str = self.direction_key.replace("_trains", "")
+                        project.update_operation_train_lookup(
+                            self.timeline_scene.diagram_id,
+                            self.route_id, direction_str, self.train_id,
+                            old_ops, d_train["operations"]
+                        )
 
                     self.timeline_scene.refresh()
                     if parent_widget:
@@ -938,6 +960,12 @@ class TimelineScene(QGraphicsScene):
                         new_operations=new_ops
                     )
                     events_to_push.append(ev)
+                    if hasattr(self.project, "update_operation_train_lookup"):
+                        self.project.update_operation_train_lookup(
+                            self.diagram_id,
+                            it.route_id, it.direction_key.replace("_trains", ""), it.train_id,
+                            old_ops, new_ops
+                        )
 
             elif isinstance(it, TemporaryStablingItem):
                 src_events = src_op.get("temporary_stabling_events", [])
@@ -997,6 +1025,12 @@ class TimelineScene(QGraphicsScene):
                         new_operations=new_ops
                     )
                     events_to_push.append(ev)
+                    if hasattr(self.project, "update_operation_train_lookup"):
+                        self.project.update_operation_train_lookup(
+                            self.diagram_id,
+                            it.route_id, it.direction_key.replace("_trains", ""), it.train_id,
+                            old_ops, new_ops
+                        )
 
             elif isinstance(it, TemporaryStablingItem):
                 tgt_events = target_op.get("temporary_stabling_events", [])

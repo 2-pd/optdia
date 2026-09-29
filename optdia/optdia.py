@@ -4,7 +4,7 @@
 import sys
 import os
 import subprocess
-from PySide6.QtCore import Qt, QFile, QTextStream, QSize
+from PySide6.QtCore import Qt, QFile, QTextStream, QSize, QTimer
 from PySide6.QtGui import QIcon, QAction, QPixmap, QTransform
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QStyleFactory,
@@ -25,7 +25,9 @@ from dialogs.diagram import AddDiagramDialog, DiagramEditorDialog
 from dialogs.line_station import LineStationEditorDialog
 from dialogs.train_type import AddTrainTypeDialog, TrainTypeEditorDialog
 from dialogs.operation import VehicleOperationEditorDialog
+from previews.operation_detail import OperationDetailPreviewDialog
 from dialogs.project_meta import ProjectPropertiesDialog
+from dialogs.preferences import PreferencesDialog
 from dialogs.about import AboutDialog
 from timetable.model import TimetableModel
 from timetable.view import TimetableView, TimetableVerticalHeader
@@ -46,6 +48,12 @@ class MainWindow(QMainWindow):
 
         # 設定管理クラスの初期化
         self.app_settings = AppSettings()
+
+        # 自動バックアップ管理用
+        self.has_modified_since_last_autobackup = False
+        self.autobackup_timer = QTimer(self)
+        self.autobackup_timer.timeout.connect(self._on_autobackup_timer)
+        self._update_autobackup_timer()
 
         # 初期タイトルと初期サイズ
         self._update_window_title()
@@ -112,7 +120,7 @@ class MainWindow(QMainWindow):
         self.route_list_widget.setIconSize(QSize(24, 24))
         self.route_list_widget.setDragDropMode(QListWidget.InternalMove)
         self.route_list_widget.model().rowsMoved.connect(self._on_routes_reordered)
-        self.route_list_widget.itemSelectionChanged.connect(self._on_timetable_settings_changed)
+        self.route_list_widget.itemSelectionChanged.connect(lambda: self._on_timetable_settings_changed(reset_scroll_pos=False))
         route_layout.addWidget(self.route_list_widget)
 
         # サイドバーの残りスペースを2等分するため、stretch=1 を指定
@@ -551,9 +559,50 @@ class MainWindow(QMainWindow):
             item.setData(Qt.UserRole, did)
             self.diagram_list_widget.addItem(item)
 
+    def _get_autobackup_path(self, filepath: str = None) -> str | None:
+        """指定されたファイルパス（省略時はself.filepath）に対する自動バックアップファイルパスを返す"""
+        path = filepath or self.filepath
+        if not path:
+            return None
+        dir_name = os.path.dirname(path)
+        base_name = os.path.basename(path)
+        return os.path.join(dir_name, f".autobackup__{base_name}")
+
+    def _delete_autobackup_file(self, filepath: str = None):
+        """自動バックアップファイルが存在していれば削除する"""
+        autobackup_path = self._get_autobackup_path(filepath)
+        if autobackup_path and os.path.exists(autobackup_path):
+            try:
+                os.remove(autobackup_path)
+            except OSError:
+                pass
+
+    def _update_autobackup_timer(self):
+        """設定値に基づいて自動バックアップタイマーを更新・再起動する"""
+        interval = self.app_settings.load_autobackup_interval()
+        if interval is not None and interval > 0:
+            self.autobackup_timer.start(interval * 60 * 1000)
+        else:
+            self.autobackup_timer.stop()
+
+    def _on_autobackup_timer(self):
+        """タイマー実行時: 更新がありファイル名が設定されていれば自動バックアップファイルを保存する"""
+        interval = self.app_settings.load_autobackup_interval()
+        if interval is None:
+            return
+        if self.filepath and self.has_modified_since_last_autobackup:
+            autobackup_path = self._get_autobackup_path()
+            if autobackup_path:
+                try:
+                    self.project.save_project(autobackup_path)
+                    self.has_modified_since_last_autobackup = False
+                except Exception:
+                    pass
+
     def closeEvent(self, event):
         """閉じるイベントを捕捉し、未保存の変更がある場合に確認する"""
         if not self.is_modified:
+            self._delete_autobackup_file()
             self.app_settings.save_window_settings(self)
             event.accept()
             return
@@ -569,11 +618,13 @@ class MainWindow(QMainWindow):
         if reply == QMessageBox.StandardButton.Save:
             self._on_save_project()
             if not self.is_modified:  # 保存が完了（フラグがクリア）したなら閉じる
+                self._delete_autobackup_file()
                 self.app_settings.save_window_settings(self)
                 event.accept()
             else:  # 保存ダイアログでキャンセルされた場合は閉じない
                 event.ignore()
         elif reply == QMessageBox.StandardButton.Discard:
+            self._delete_autobackup_file()
             self.app_settings.save_window_settings(self)
             event.accept()
         else:
@@ -581,6 +632,7 @@ class MainWindow(QMainWindow):
 
     def set_modified(self, modified: bool):
         """変更フラグを更新し、タイトルバーに反映させる"""
+        self.has_modified_since_last_autobackup = True
         if self.is_modified != modified:
             self.is_modified = modified
             self._update_window_title()
@@ -663,6 +715,11 @@ class MainWindow(QMainWindow):
         self.adjust_later_action.setChecked(self.app_settings.load_adjust_later_enabled())
         self.adjust_later_action.triggered.connect(self._on_adjust_later_triggered)
         edit_menu.addAction(self.adjust_later_action)
+
+        # 設定(S)
+        settings_menu = menu_bar.addMenu("設定(&S)")
+        preferences_action = settings_menu.addAction("環境設定")
+        preferences_action.triggered.connect(self._on_preferences)
 
         # ヘルプ(H)
         help_menu = menu_bar.addMenu("ヘルプ(&H)")
@@ -756,6 +813,7 @@ class MainWindow(QMainWindow):
             if self._save_project_to_path(self.filepath):
                 self.app_settings.add_recent_file(self.filepath)
             self.set_modified(False)
+            self.has_modified_since_last_autobackup = False
         else:
             self._on_save_as_project()
 
@@ -778,6 +836,7 @@ class MainWindow(QMainWindow):
             if self._save_project_to_path(filepath):
                 self.filepath = filepath
                 self.set_modified(False)
+                self.has_modified_since_last_autobackup = False
                 self._update_window_title()
                 self.app_settings.add_recent_file(filepath)
                 self._update_recent_files_menu()
@@ -803,12 +862,32 @@ class MainWindow(QMainWindow):
 
     def _load_project_in_current_window(self, filepath: str):
         """現在のウィンドウでプロジェクトをロードする"""
+        autobackup_path = self._get_autobackup_path(filepath)
+        load_target_path = filepath
+        is_restored_from_backup = False
+
+        if autobackup_path and os.path.exists(autobackup_path):
+            reply = QMessageBox.question(
+                self,
+                "バックアップの復元確認",
+                "このプロジェクトファイルの自動バックアップが見つかりました。\nバックアップされたデータを復元しますか？",
+                QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Ok
+            )
+            if reply == QMessageBox.StandardButton.Ok:
+                load_target_path = autobackup_path
+                is_restored_from_backup = True
+
         try:
-            self.project = load_project(filepath)
+            self.project = load_project(load_target_path)
             self.history_manager.clear()
             self.timetable_model.project = self.project
             self.filepath = filepath
-            self.set_modified(False)
+            self.has_modified_since_last_autobackup = False
+            if is_restored_from_backup:
+                self.set_modified(True)
+            else:
+                self.set_modified(False)
             self._update_window_title()
             self._populate_route_list()
             self._populate_diagram_list()
@@ -831,6 +910,12 @@ class MainWindow(QMainWindow):
         dialog = ProjectPropertiesDialog(self, self.project)
         if dialog.exec() == QDialog.Accepted:
             self.set_modified(True)
+
+    def _on_preferences(self):
+        """環境設定ダイアログを表示する"""
+        dialog = PreferencesDialog(self, self.app_settings)
+        if dialog.exec() == QDialog.Accepted:
+            self._update_autobackup_timer()
 
     def _on_about(self):
         """バージョン情報を表示する"""
@@ -883,7 +968,7 @@ class MainWindow(QMainWindow):
         """メインウィンドウのダイヤリストで選択が変更されたときに表示を更新する"""
         self._on_timetable_settings_changed()
 
-    def _on_timetable_settings_changed(self):
+    def _on_timetable_settings_changed(self, reset_scroll_pos: bool = True):
         """サイドバーの選択やタブの切り替え時に、時刻表テーブルの表示内容を更新する"""
         if not self.project.routes or not self.project.diagrams:
             self.right_stack.setCurrentIndex(1)
@@ -921,7 +1006,7 @@ class MainWindow(QMainWindow):
         self.timetable_model.update_data(route_id, diagram_id, direction)
 
         if tab_index == 2:
-            self._update_diagram_view()
+            self._update_diagram_view(reset_scroll_pos=reset_scroll_pos)
         elif tab_index == 3:
             self._update_op_group_combo()
             self.timeline_header_view.horizontalScrollBar().setValue(
@@ -1155,13 +1240,14 @@ class MainWindow(QMainWindow):
                     left_label.setFixedWidth(100)
                     left_label.setCursor(Qt.PointingHandCursor)
 
-                    def make_click_handler(d_id, g_id, o_id):
+                    def make_click_handler(d_id, g_id, o_id, o_data):
                         def mouse_press(event):
                             if event.button() == Qt.LeftButton:
-                                self._open_operation_editor(d_id, g_id, o_id)
+                                dialog = OperationDetailPreviewDialog(self, self.project, d_id, o_data, o_id, g_id)
+                                dialog.exec()
                         return mouse_press
 
-                    left_label.mousePressEvent = make_click_handler(diagram_id, og_id, op_id)
+                    left_label.mousePressEvent = make_click_handler(diagram_id, og_id, op_id, op)
 
                     # 右側ラベル: 1行目 出庫場所等, 2行目 入庫場所等, 3行目 出入庫時間
                     right_label = QLabel(f"○{start_text}<br/>△{end_text}<br/>{time_text}")
@@ -1358,7 +1444,7 @@ class MainWindow(QMainWindow):
         key = self.diagram_width_combo.currentData()
         if key:
             self.app_settings.save_diagram_width_scale(key)
-        self._update_diagram_view()
+        self._update_diagram_view(reset_scroll_pos=True)
 
     def _on_diagram_height_changed(self, index: int):
         """ダイヤグラムの表示高さコンボボックス変更時"""
@@ -1367,7 +1453,7 @@ class MainWindow(QMainWindow):
             self.app_settings.save_diagram_height_scale(key)
         self._update_diagram_view()
 
-    def _update_diagram_view(self):
+    def _update_diagram_view(self, reset_scroll_pos: bool = False):
         """ダイヤグラムビューの描画内容を更新する"""
         selected_target = self.diagram_line_combo.currentData() or "route"
 
@@ -1393,10 +1479,11 @@ class MainWindow(QMainWindow):
         self.diagram_header_view.update_header()
         self.diagram_station_view.update_stations(self.project, stations_data)
 
-        # 4時0分の縦線（4 * 60 * scale_x px）が表示領域の左端になる位置にスクロール
-        scroll_pos = int(4 * 60 * scale_x)
-        self.diagram_view.horizontalScrollBar().setValue(scroll_pos)
-        self.diagram_header_view.horizontalScrollBar().setValue(scroll_pos)
+        if reset_scroll_pos:
+            # 4時0分の縦線（4 * 60 * scale_x px）が表示領域の左端になる位置にスクロール
+            scroll_pos = int(4 * 60 * scale_x)
+            self.diagram_view.horizontalScrollBar().setValue(scroll_pos)
+            self.diagram_header_view.horizontalScrollBar().setValue(scroll_pos)
 
 
 # アプリ起動処理
@@ -1416,20 +1503,41 @@ def main():
     # コマンドライン引数でファイルパスが指定されている場合はロード、
     # そうでない場合は新規プロジェクトを生成
     filepath = sys.argv[1] if len(sys.argv) > 1 else None
+    is_restored_from_backup = False
     if filepath:
+        load_target_path = filepath
+        dir_name = os.path.dirname(filepath)
+        base_name = os.path.basename(filepath)
+        autobackup_path = os.path.join(dir_name, f".autobackup__{base_name}")
+        if os.path.exists(autobackup_path):
+            reply = QMessageBox.question(
+                None,
+                "バックアップの復元確認",
+                "このプロジェクトファイルの自動バックアップが見つかりました。\nバックアップされたデータを復元しますか？",
+                QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Ok
+            )
+            if reply == QMessageBox.StandardButton.Ok:
+                load_target_path = autobackup_path
+                is_restored_from_backup = True
+
         try:
-            project = load_project(filepath)
+            project = load_project(load_target_path)
         except SchemaVersionError:
             project = OptDiaProject()
             filepath = None
+            is_restored_from_backup = False
         except Exception:
             QMessageBox.critical(None, "エラー", "このファイルは破損しています")
             project = OptDiaProject()
             filepath = None
+            is_restored_from_backup = False
     else:
         project = OptDiaProject()
 
     window = MainWindow(project, filepath)
+    if is_restored_from_backup:
+        window.set_modified(True)
 
     window.show()
     sys.exit(app.exec())

@@ -191,6 +191,31 @@ class TimetableDelegate(QStyledItemDelegate):
             painter.drawLine(rect.left(), rect.bottom(), rect.right(), rect.bottom())
         elif row < num_headers:
             painter.drawLine(rect.left(), rect.bottom(), rect.right(), rect.bottom())
+        elif num_headers <= row < footer_row_idx - 1:
+            # 駅行間（最終駅行の前まで）の罫線描画
+            row_idx = row - num_headers
+            if hasattr(model, 'station_rows') and hasattr(model, 'full_stop_configs'):
+                if 0 <= row_idx < len(model.station_rows) - 1:
+                    station_row_data = model.station_rows[row_idx]
+                    next_row_data = model.station_rows[row_idx + 1]
+                    curr_stop_idx = station_row_data.get("stop_idx")
+                    next_stop_idx = next_row_data.get("stop_idx")
+
+                    if curr_stop_idx == next_stop_idx:
+                        # 同一駅の発着行間: 破線
+                        pen = QPen(QColor("#dddddd"))
+                        pen.setStyle(Qt.DashLine)
+                        painter.setPen(pen)
+                        painter.drawLine(rect.left(), rect.bottom(), rect.right(), rect.bottom())
+                    elif curr_stop_idx is not None and next_stop_idx is not None and curr_stop_idx < len(model.full_stop_configs) and next_stop_idx < len(model.full_stop_configs):
+                        curr_cfg = model.full_stop_configs[curr_stop_idx]
+                        next_cfg = model.full_stop_configs[next_stop_idx]
+                        if curr_cfg.get("segment_id") != next_cfg.get("segment_id"):
+                            # 部分区間の境界: 実線
+                            pen = QPen(QColor("#dddddd"))
+                            pen.setStyle(Qt.SolidLine)
+                            painter.setPen(pen)
+                            painter.drawLine(rect.left(), rect.bottom(), rect.right(), rect.bottom())
 
         # セルが選択されていれば濃い枠線を描画
         if option.state & QStyle.State_Selected:
@@ -293,7 +318,14 @@ class TimetableDelegate(QStyledItemDelegate):
         picker = TrainTypePicker(widget, model.project, current_id)
         pos = widget.viewport().mapToGlobal(widget.visualRect(index).bottomLeft())
         picker.move(pos)
-        if picker.exec() == QDialog.Accepted: model.setData(index, picker.selected_id, Qt.EditRole)
+        if picker.exec() == QDialog.Accepted:
+            selected_indexes = widget.selectedIndexes() if hasattr(widget, 'selectedIndexes') else []
+            target_cols = [idx.column() for idx in selected_indexes if idx.row() == index.row()]
+            if index.column() not in target_cols:
+                target_cols = [index.column()]
+            for col in target_cols:
+                if 0 <= col < len(model.train_ids):
+                    model.setData(model.index(index.row(), col), picker.selected_id, Qt.EditRole)
 
     def _show_operation_picker_menu(self, index, model, widget):
         # 担当運用選択ポップアップを表示
@@ -308,12 +340,20 @@ class TimetableDelegate(QStyledItemDelegate):
 
     def _show_diagram_picker_menu(self, index, model, widget):
         from timetable.dialogs import DiagramPicker
-        train_id = model.train_ids[index.column()]
+        selected_indexes = widget.selectedIndexes() if hasattr(widget, 'selectedIndexes') else []
+        target_cols = [idx.column() for idx in selected_indexes if idx.row() == index.row()]
+        if index.column() not in target_cols:
+            target_cols = [index.column()]
+        
+        target_train_ids = [model.train_ids[col] for col in target_cols if 0 <= col < len(model.train_ids)]
+        if not target_train_ids:
+            return
+
         route_id = model.route_id
         diagram_id = model.diagram_id
         direction = model.direction
 
-        picker = DiagramPicker(widget, model.project, train_id, diagram_id, route_id, direction)
+        picker = DiagramPicker(widget, model.project, target_train_ids, diagram_id, route_id, direction)
         # 表示位置をセルの左下に合わせる
         rect = widget.visualRect(index)
         pos = widget.viewport().mapToGlobal(rect.bottomLeft())

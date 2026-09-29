@@ -2,7 +2,7 @@
 APP_NAME = "OptDia"
 
 # バージョン番号
-__version__ = "26.09-2"
+__version__ = "26.09-3"
 
 # 組織名
 ORGANIZATION_NAME = "Midari_Create"

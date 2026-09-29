@@ -605,6 +605,13 @@ class AddDeadheadDialog(QDialog):
             )
             self.history_manager.push_events([ev])
 
+        # 担当運用が設定されている場合、operation_train_lookup を更新する
+        if self.operation_id and hasattr(self.project, "update_operation_train_lookup"):
+            self.project.update_operation_train_lookup(
+                self.diagram_id, route_id, direction_key, new_train_id,
+                [], d_trains[new_train_id]["operations"]
+            )
+
         self.accept()
 
 
@@ -956,6 +963,7 @@ class AddTrainToOperationDialog(QDialog):
             if dialog.exec() == QDialog.Accepted:
                 insert_idx = dialog.get_selected_index()
                 if insert_idx is not None:
+                    old_ops = list(ops)
                     ops.insert(insert_idx, op_entry)
                     d_train["to_be_saved"] = True
                     if self.history_manager:
@@ -969,8 +977,14 @@ class AddTrainToOperationDialog(QDialog):
                             operation=op_entry
                         )
                         self.history_manager.push_events([ev])
+                    if hasattr(self.project, "update_operation_train_lookup"):
+                        self.project.update_operation_train_lookup(
+                            self.diagram_id, route_id, direction_key, train_id,
+                            old_ops, ops
+                        )
                     self.accept()
         else:
+            old_ops = list(ops)
             ops.append(op_entry)
             d_train["to_be_saved"] = True
             if self.history_manager:
@@ -984,5 +998,10 @@ class AddTrainToOperationDialog(QDialog):
                     operation=op_entry
                 )
                 self.history_manager.push_events([ev])
+            if hasattr(self.project, "update_operation_train_lookup"):
+                self.project.update_operation_train_lookup(
+                    self.diagram_id, route_id, direction_key, train_id,
+                    old_ops, ops
+                )
             self.accept()
 
