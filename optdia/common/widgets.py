@@ -142,7 +142,7 @@ class ColorPickerWidget(QWidget):
 class LineSampleWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedSize(120, 30)
+        self.setFixedSize(120, 60)
         self.line_color = QColor("#333333")
         self.line_weight = "normal"
         self.line_style = "solid"
@@ -155,6 +155,8 @@ class LineSampleWidget(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
         # 背景
         painter.fillRect(self.rect(), Qt.white)
         painter.setPen(QColor("#cccccc"))
@@ -162,14 +164,14 @@ class LineSampleWidget(QWidget):
 
         # ペンの設定
         pen = QPen(self.line_color)
-        
+
         # 太さのマッピング
         if self.line_weight == "thin":
-            pen.setWidth(1)
+            pen.setWidthF(0.6)
         elif self.line_weight == "bold":
-            pen.setWidth(3)
+            pen.setWidthF(1.8)
         else: # normal
-            pen.setWidth(2)
+            pen.setWidthF(1.2)
 
         # スタイルのマッピング
         if self.line_style == "dashed":
@@ -180,8 +182,25 @@ class LineSampleWidget(QWidget):
             pen.setStyle(Qt.SolidLine)
 
         painter.setPen(pen)
-        y = self.height() / 2
-        painter.drawLine(10, y, self.width() - 10, y)
+        w = self.width()
+        h = self.height()
+        margin = 15
+        x0 = margin
+        x1 = w * 2 // 5
+        x2 = w * 3 // 5
+        x3 = w - margin
+        y_top = h // 5
+        y_mid = h // 2
+        y_bottom = h - y_top
+        # 右上がり → 水平 → 右上がり
+        path = [
+            (x0, y_bottom),
+            (x1, y_mid),
+            (x2, y_mid),
+            (x3, y_top),
+        ]
+        for i in range(len(path) - 1):
+            painter.drawLine(path[i][0], path[i][1], path[i + 1][0], path[i + 1][1])
 
 
 # アコーディオンウィジェット

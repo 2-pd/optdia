@@ -144,12 +144,12 @@ class TrainTypeEditorDialog(QDialog):
         self.tt_bg_color_picker.colorChanged.connect(self._on_tt_bg_color_changed)
         self.tt_form_layout.addRow("時刻表での背景色:", self.tt_bg_color_picker)
         
-        # ダイアグラム表示設定
+        # 運行ダイヤグラムでの表示の設定
         spacer_tt_3 = QWidget()
         spacer_tt_3.setFixedHeight(10)
         self.tt_form_layout.addRow(spacer_tt_3)
 
-        tt_diagram_label = QLabel("<b>ダイアグラムでの表示</b>")
+        tt_diagram_label = QLabel("<b>ダイヤグラムでの表示</b>")
         tt_diagram_label.setStyleSheet("font-size: 14px;")
         self.tt_form_layout.addRow(tt_diagram_label)
         
@@ -171,7 +171,7 @@ class TrainTypeEditorDialog(QDialog):
         self.tt_form_layout.addRow("線のスタイル:", self.tt_line_style_layout)
 
         self.line_sample_widget = LineSampleWidget()
-        self.tt_form_layout.addRow("プレビュー", self.line_sample_widget)
+        self.tt_form_layout.addRow("プレビュー:", self.line_sample_widget)
         
         self.tt_editor_layout.addWidget(self.tt_form_container)
         self.tt_editor_layout.addStretch()

@@ -391,6 +391,9 @@ class DiagramScene(QGraphicsScene):
         else:
             self._render_trains_for_line(stations_data)
 
+        if self.filter_train_type_id is None:
+            self._render_operations(stations_data)
+
     def _render_trains_for_route(self, stations_data):
         route = self.project.routes.get(self.route_id)
         if not route:
@@ -686,11 +689,11 @@ class DiagramScene(QGraphicsScene):
         pen = QPen(QColor(color_str))
 
         if weight_str == "thin":
-            pen.setWidth(1)
+            pen.setWidthF(0.6)
         elif weight_str == "bold":
-            pen.setWidth(3)
+            pen.setWidthF(1.8)
         else:
-            pen.setWidth(2)
+            pen.setWidthF(1.2)
 
         if style_str == "dashed":
             pen.setStyle(Qt.DashLine)
@@ -714,3 +717,574 @@ class DiagramScene(QGraphicsScene):
         except (ValueError, IndexError):
             pass
         return None
+
+    def _render_operations(self, stations_data):
+        """
+        車両運用の列車間接続線および始発・終着運用番号ラベルを描画する。
+        """
+        if not self.project or not self.diagram_id or not stations_data:
+            return
+
+        lookup_dict = getattr(self.project, "operation_train_lookup", {})
+        diag_lookup = lookup_dict.get(self.diagram_id, {})
+        if not diag_lookup:
+            return
+
+        # 運用番号辞書の構築
+        diag_ops = self.project.diagrams.get(self.diagram_id, {}).get("operations", {})
+
+        # 始発駅・終着駅のラベル用集約辞書
+        # key: (route_id, direction, train_id) -> {
+        #     "symbols": {
+        #         "○": [op_num_str, ...],
+        #         "(○)": [op_num_str, ...],
+        #     },
+        #     "info": info,
+        #     "m_train": m_train
+        # }
+        first_train_ops = {}
+        last_train_ops = {}
+
+        # 接続線描画用：すでに描画した接続パスの重複防止セット
+        drawn_connections = set()
+
+        for op_id, assigned_list in diag_lookup.items():
+            if not assigned_list:
+                continue
+
+            op_info = diag_ops.get(op_id, {})
+            op_num = op_info.get("operation_number")
+            op_num_str = str(op_num) if op_num is not None else str(op_id)
+
+            # 1. 車両運用に属する列車および一時入庫イベントを収集し、時刻順にソート
+            op_entries = []
+            for item in assigned_list:
+                r_id = item.get("route_id")
+                d_dir = item.get("direction")
+                t_id = item.get("train_id")
+
+                route = self.project.routes.get(r_id)
+                if not route:
+                    continue
+
+                train_key = "inbound_trains" if d_dir == "inbound" else "outbound_trains"
+                m_train = route.get(train_key, {}).get(t_id)
+                tbd = route.get("trains_by_diagram", {}).get(self.diagram_id, {})
+                d_train = tbd.get(train_key, {}).get(t_id)
+
+                if not m_train or not d_train:
+                    continue
+
+                # 始発時刻（ソート用）の算出
+                stops = m_train.get("stops", [])
+                if not stops:
+                    continue
+
+                first_stop = stops[0]
+                first_dep_str = first_stop.get("departure_time") or first_stop.get("arrival_time") or ""
+                first_dep_sec = self._time_to_seconds(first_dep_str)
+                sort_key = first_dep_sec if first_dep_sec is not None else 24 * 3600 + 1
+
+                op_entries.append({
+                    "is_stabling": False,
+                    "route_id": r_id,
+                    "direction": d_dir,
+                    "train_id": t_id,
+                    "m_train": m_train,
+                    "d_train": d_train,
+                    "sort_key": sort_key,
+                })
+
+            # 一時入庫イベントの追加
+            temp_stabling_events = op_info.get("temporary_stabling_events", []) or []
+            for event in temp_stabling_events:
+                start_time_str = event.get("start_time", "")
+                start_sec = self._time_to_seconds(start_time_str)
+                sort_key = start_sec if start_sec is not None else 24 * 3600 + 1
+                op_entries.append({
+                    "is_stabling": True,
+                    "sort_key": sort_key,
+                })
+
+            op_entries.sort(key=lambda x: x["sort_key"])
+            if not op_entries:
+                continue
+
+            # 2. 一時入庫イベントで区切られた列車のセグメント（サブ運用）に分割
+            train_segments = []
+            current_seg = []
+            for entry in op_entries:
+                if entry.get("is_stabling"):
+                    if current_seg:
+                        train_segments.append(current_seg)
+                        current_seg = []
+                else:
+                    current_seg.append(entry)
+            if current_seg:
+                train_segments.append(current_seg)
+
+            if not train_segments:
+                continue
+
+            num_segments = len(train_segments)
+
+            # 3. 各セグメント内で表示対象列車を判定し、接続パスおよび運用番号ラベルを登録
+            for seg_idx, seg_train_items in enumerate(train_segments):
+                if not seg_train_items:
+                    continue
+
+                displayed_train_data = []
+                for item in seg_train_items:
+                    info = self._get_train_display_info(item, stations_data)
+                    if info is not None:
+                        displayed_train_data.append((item, info))
+
+                if not displayed_train_data:
+                    continue
+
+                # セグメントの最初の列車がそのセグメント全体の最初の列車であり、かつ始発駅が表示対象の場合
+                if displayed_train_data[0][0] is seg_train_items[0] and displayed_train_data[0][1]["origin_displayed"]:
+                    first_item = displayed_train_data[0][0]
+                    t_key = (first_item["route_id"], first_item["direction"], first_item["train_id"])
+                    if t_key not in first_train_ops:
+                        first_train_ops[t_key] = {"symbols": {}, "info": displayed_train_data[0][1], "m_train": first_item["m_train"]}
+                    # 運用の完全な最初なら "○"、一時入庫直後なら "(○)"
+                    sym = "○" if seg_idx == 0 else "(○)"
+                    if sym not in first_train_ops[t_key]["symbols"]:
+                        first_train_ops[t_key]["symbols"][sym] = []
+                    if op_num_str not in first_train_ops[t_key]["symbols"][sym]:
+                        first_train_ops[t_key]["symbols"][sym].append(op_num_str)
+
+                # セグメントの最後の列車がそのセグメント全体の最後の列車であり、かつ終着駅が表示対象の場合
+                if displayed_train_data[-1][0] is seg_train_items[-1] and displayed_train_data[-1][1]["terminal_displayed"]:
+                    last_item = displayed_train_data[-1][0]
+                    t_key = (last_item["route_id"], last_item["direction"], last_item["train_id"])
+                    if t_key not in last_train_ops:
+                        last_train_ops[t_key] = {"symbols": {}, "info": displayed_train_data[-1][1], "m_train": last_item["m_train"]}
+                    # 運用の完全な最後なら "△"、一時入庫直前なら "(△)"
+                    sym = "△" if seg_idx == num_segments - 1 else "(△)"
+                    if sym not in last_train_ops[t_key]["symbols"]:
+                        last_train_ops[t_key]["symbols"][sym] = []
+                    if op_num_str not in last_train_ops[t_key]["symbols"][sym]:
+                        last_train_ops[t_key]["symbols"][sym].append(op_num_str)
+
+                # セグメント内で連続する列車の接続パスを描画
+                for i in range(len(displayed_train_data) - 1):
+                    item_prev, info_prev = displayed_train_data[i]
+                    item_next, info_next = displayed_train_data[i + 1]
+
+                    # 前の列車の終着駅と後の列車の始発駅がどちらも表示対象でない場合は接続パスを描画しない
+                    if not info_prev["terminal_displayed"] or not info_next["origin_displayed"]:
+                        continue
+
+                    # 接続キー（重複描画防止）
+                    conn_key = (
+                        item_prev["route_id"], item_prev["direction"], item_prev["train_id"],
+                        item_next["route_id"], item_next["direction"], item_next["train_id"],
+                    )
+                    if conn_key in drawn_connections:
+                        continue
+                    drawn_connections.add(conn_key)
+
+                    self._draw_operation_connecting_path(info_prev, info_next, item_next["m_train"])
+
+        # 4. 始発・終着運用番号ラベルの描画
+        self._render_operation_start_end_labels(first_train_ops, last_train_ops)
+
+    def _get_train_display_info(self, item, stations_data):
+        """
+        列車が現在のダイヤグラム表示条件に合致し、表示可能かを判定して発着座標および進行方向を返す。
+        合致しない、または表示対象外の場合は None を返す。
+        また、列車の本来の始発駅・終着駅がダイヤグラム上に表示対象となっているかのフラグを含める。
+        """
+        m_train = item["m_train"]
+        d_train = item["d_train"]
+        r_id = item["route_id"]
+
+        # 有効判定
+        if not d_train.get("to_be_saved", True):
+            return None
+
+        # 列車種別フィルタ判定
+        if self.filter_train_type_id is not None:
+            if m_train.get("train_type_id") != self.filter_train_type_id:
+                return None
+
+        stops = m_train.get("stops", [])
+        if not stops:
+            return None
+
+        first_stop = stops[0]
+        last_stop = stops[-1]
+
+        # 表示対象判定（運行系統または路線）
+        if self.selected_target == "route":
+            if r_id != self.route_id:
+                return None
+            route = self.project.routes.get(r_id)
+            if not route:
+                return None
+            segments = route.get("line_segments", [])
+            segment_indices = {seg.get("segment_id"): idx for idx, seg in enumerate(segments)}
+
+            # 各ストップの座標を計算し、描画処理と完全に一致するサブパスを生成
+            subpaths = []
+            subpath_stops = []
+            current_subpath = []
+            current_stops = []
+            prev_seg_id = None
+
+            for stop in stops:
+                seg_id = stop.get("segment_id")
+                eid = stop.get("station_entry_id")
+                arr_time_str = stop.get("arrival_time")
+                dep_time_str = stop.get("departure_time")
+
+                arr_sec = self._time_to_seconds(arr_time_str)
+                dep_sec = self._time_to_seconds(dep_time_str)
+
+                # 有効な発着時刻がどちらもない場合は区間が途切れる
+                if arr_sec is None and dep_sec is None:
+                    if len(current_subpath) >= 2:
+                        subpaths.append(current_subpath)
+                        subpath_stops.append(current_stops)
+                    current_subpath = []
+                    current_stops = []
+                    prev_seg_id = None
+                    continue
+
+                # 部分区間が飛んでいるか（連続していないか）チェック
+                if prev_seg_id is not None and seg_id != prev_seg_id:
+                    prev_idx = segment_indices.get(prev_seg_id)
+                    curr_idx = segment_indices.get(seg_id)
+                    if prev_idx is None or curr_idx is None or abs(curr_idx - prev_idx) != 1:
+                        if len(current_subpath) >= 2:
+                            subpaths.append(current_subpath)
+                            subpath_stops.append(current_stops)
+                        current_subpath = []
+                        current_stops = []
+
+                # stations_data 内で一致する駅を検索
+                target_entry = None
+                for idx in range(len(stations_data)):
+                    st = stations_data[idx]
+                    if st.get("segment_id") == seg_id and st.get("station_entry_id") == eid:
+                        target_entry = st
+                        break
+
+                if not target_entry:
+                    if len(current_subpath) >= 2:
+                        subpaths.append(current_subpath)
+                        subpath_stops.append(current_stops)
+                    current_subpath = []
+                    current_stops = []
+                    prev_seg_id = None
+                    continue
+
+                y = target_entry["y"]
+
+                if arr_sec is not None and dep_sec is not None:
+                    x_arr = (arr_sec / 60.0) * self.scale_x
+                    x_dep = (dep_sec / 60.0) * self.scale_x
+                    current_subpath.append((x_arr, y))
+                    if x_arr != x_dep:
+                        current_subpath.append((x_dep, y))
+                elif arr_sec is not None:
+                    x_arr = (arr_sec / 60.0) * self.scale_x
+                    current_subpath.append((x_arr, y))
+                elif dep_sec is not None:
+                    x_dep = (dep_sec / 60.0) * self.scale_x
+                    current_subpath.append((x_dep, y))
+
+                current_stops.append(stop)
+                prev_seg_id = seg_id
+
+            if len(current_subpath) >= 2:
+                subpaths.append(current_subpath)
+                subpath_stops.append(current_stops)
+
+            if not subpaths:
+                return None
+
+            first_sp = subpaths[0]
+            last_sp = subpaths[-1]
+            origin_pt = first_sp[0]
+            term_pt = last_sp[-1]
+
+            # 始発位置での進行方向 dy
+            origin_dy = 0.0
+            for pt in first_sp[1:]:
+                if pt[1] != origin_pt[1]:
+                    origin_dy = pt[1] - origin_pt[1]
+                    break
+            if origin_dy == 0.0 and len(first_sp) > 1:
+                origin_dy = first_sp[1][1] - origin_pt[1]
+
+            # 終着位置での進行方向 dy
+            term_dy = 0.0
+            for pt in reversed(last_sp[:-1]):
+                if pt[1] != term_pt[1]:
+                    term_dy = term_pt[1] - pt[1]
+                    break
+            if term_dy == 0.0 and len(last_sp) > 1:
+                term_dy = term_pt[1] - last_sp[-2][1]
+
+            first_displayed_stop = subpath_stops[0][0]
+            last_displayed_stop = subpath_stops[-1][-1]
+
+            origin_displayed = (
+                first_displayed_stop.get("segment_id") == first_stop.get("segment_id") and
+                first_displayed_stop.get("station_entry_id") == first_stop.get("station_entry_id")
+            )
+            terminal_displayed = (
+                last_displayed_stop.get("segment_id") == last_stop.get("segment_id") and
+                last_displayed_stop.get("station_entry_id") == last_stop.get("station_entry_id")
+            )
+
+            return {
+                "origin": origin_pt,
+                "terminal": term_pt,
+                "origin_dy": origin_dy,
+                "term_dy": term_dy,
+                "origin_displayed": origin_displayed,
+                "terminal_displayed": terminal_displayed,
+            }
+
+        else:
+            # 路線表示
+            target_line_id = self.selected_target
+            route = self.project.routes.get(r_id)
+            if not route:
+                return None
+
+            segments = route.get("line_segments", [])
+            target_segment_ids = {seg["segment_id"] for seg in segments if seg.get("line_id") == target_line_id}
+            if not target_segment_ids:
+                return None
+
+            station_y_map = {st["station_entry_id"]: st["y"] for st in stations_data if st.get("station_entry_id")}
+
+            subpaths = []
+            subpath_stops = []
+            current_subpath = []
+            current_stops = []
+
+            for stop in stops:
+                seg_id = stop.get("segment_id")
+                arr_sec = self._time_to_seconds(stop.get("arrival_time"))
+                dep_sec = self._time_to_seconds(stop.get("departure_time"))
+
+                if seg_id not in target_segment_ids or (arr_sec is None and dep_sec is None):
+                    if len(current_subpath) >= 2:
+                        subpaths.append(current_subpath)
+                        subpath_stops.append(current_stops)
+                    current_subpath = []
+                    current_stops = []
+                    continue
+
+                eid = stop.get("station_entry_id")
+                if eid not in station_y_map:
+                    if len(current_subpath) >= 2:
+                        subpaths.append(current_subpath)
+                        subpath_stops.append(current_stops)
+                    current_subpath = []
+                    current_stops = []
+                    continue
+
+                y = station_y_map[eid]
+
+                if arr_sec is not None and dep_sec is not None:
+                    x_arr = (arr_sec / 60.0) * self.scale_x
+                    x_dep = (dep_sec / 60.0) * self.scale_x
+                    current_subpath.append((x_arr, y))
+                    if x_arr != x_dep:
+                        current_subpath.append((x_dep, y))
+                elif arr_sec is not None:
+                    x_arr = (arr_sec / 60.0) * self.scale_x
+                    current_subpath.append((x_arr, y))
+                elif dep_sec is not None:
+                    x_dep = (dep_sec / 60.0) * self.scale_x
+                    current_subpath.append((x_dep, y))
+
+                current_stops.append(stop)
+
+            if len(current_subpath) >= 2:
+                subpaths.append(current_subpath)
+                subpath_stops.append(current_stops)
+
+            if not subpaths:
+                return None
+
+            first_sp = subpaths[0]
+            last_sp = subpaths[-1]
+            origin_pt = first_sp[0]
+            term_pt = last_sp[-1]
+
+            # 始発位置での進行方向 dy
+            origin_dy = 0.0
+            for pt in first_sp[1:]:
+                if pt[1] != origin_pt[1]:
+                    origin_dy = pt[1] - origin_pt[1]
+                    break
+            if origin_dy == 0.0 and len(first_sp) > 1:
+                origin_dy = first_sp[1][1] - origin_pt[1]
+
+            # 終着位置での進行方向 dy
+            term_dy = 0.0
+            for pt in reversed(last_sp[:-1]):
+                if pt[1] != term_pt[1]:
+                    term_dy = term_pt[1] - pt[1]
+                    break
+            if term_dy == 0.0 and len(last_sp) > 1:
+                term_dy = term_pt[1] - last_sp[-2][1]
+
+            first_displayed_stop = subpath_stops[0][0]
+            last_displayed_stop = subpath_stops[-1][-1]
+
+            origin_displayed = (
+                first_displayed_stop.get("segment_id") == first_stop.get("segment_id") and
+                first_displayed_stop.get("station_entry_id") == first_stop.get("station_entry_id")
+            )
+            terminal_displayed = (
+                last_displayed_stop.get("segment_id") == last_stop.get("segment_id") and
+                last_displayed_stop.get("station_entry_id") == last_stop.get("station_entry_id")
+            )
+
+            return {
+                "origin": origin_pt,
+                "terminal": term_pt,
+                "origin_dy": origin_dy,
+                "term_dy": term_dy,
+                "origin_displayed": origin_displayed,
+                "terminal_displayed": terminal_displayed,
+            }
+
+    def _draw_operation_connecting_path(self, info_prev, info_next, m_train_next):
+        """
+        前の列車の終着駅(x_arr, y_arr)と後の列車の始発駅(x_dep, y_dep)を結ぶパスを描画する。
+        線のスタイル・色は後の列車(m_train_next)の種別に従う。
+        """
+        p_prev = info_prev["terminal"]
+        p_next = info_next["origin"]
+
+        dy_prev = info_prev["term_dy"]
+        dy_next = info_next["origin_dy"]
+
+        tt_id = m_train_next.get("train_type_id")
+        pen = self._create_train_pen(tt_id)
+
+        path = QPainterPath()
+        path.moveTo(p_prev[0], p_prev[1])
+
+        # 前の列車が上方に向かう列車(dy_prev < 0)で後の列車が下方に向かう列車(dy_next > 0)
+        # -> 上に凸の曲線
+        if dy_prev < 0 and dy_next > 0:
+            ctrl_x = (p_prev[0] + p_next[0]) / 2.0
+            ctrl_y = min(p_prev[1], p_next[1]) - 30.0
+            path.quadTo(ctrl_x, ctrl_y, p_next[0], p_next[1])
+        # 前の列車が下方に向かう列車(dy_prev > 0)で後の列車が上方に向かう列車(dy_next < 0)
+        # -> 下に凸の曲線
+        elif dy_prev > 0 and dy_next < 0:
+            ctrl_x = (p_prev[0] + p_next[0]) / 2.0
+            ctrl_y = max(p_prev[1], p_next[1]) + 30.0
+            path.quadTo(ctrl_x, ctrl_y, p_next[0], p_next[1])
+        else:
+            # それ以外は直線
+            path.lineTo(p_next[0], p_next[1])
+
+        path_item = QGraphicsPathItem(path)
+        path_item.setPen(pen)
+        path_item.setZValue(2)
+        self.addItem(path_item)
+
+    def _render_operation_start_end_labels(self, first_train_ops, last_train_ops):
+        """
+        始発・終着運用番号ラベルを描画する。
+        - 始発: ○{op_nums} または (○){op_nums} 上方に向かう列車(dy < 0)はパスの下側、下方に向かう列車(dy > 0)はパスの上側
+        - 終着: △{op_nums} または (△){op_nums} 上方に向かう列車(dy < 0)はパスの上側、下方に向かう列車(dy > 0)はパスの下側
+        """
+        font = QFont()
+        font.setPixelSize(11)
+
+        # 始発ラベル
+        for t_key, data in first_train_ops.items():
+            symbols_dict = data.get("symbols", {})
+            label_parts = []
+            for sym in ["○", "(○)"]:
+                if sym in symbols_dict and symbols_dict[sym]:
+                    op_nums_str = ",".join(symbols_dict[sym])
+                    label_parts.append(f"{sym}{op_nums_str}")
+
+            if not label_parts:
+                continue
+
+            label_text = " ".join(label_parts)
+
+            m_train = data["m_train"]
+            info = data["info"]
+            p_origin = info["origin"]
+            dy = info["origin_dy"]
+
+            tt_id = m_train.get("train_type_id")
+            tt = self.project.train_types.get(tt_id) if (self.project and tt_id) else None
+            main_color = tt.get("main_color", "#333333") if tt else "#333333"
+
+            text_item = QGraphicsSimpleTextItem(label_text)
+            text_item.setFont(font)
+            text_item.setBrush(QBrush(QColor(main_color)))
+
+            br = text_item.boundingRect()
+            pos_x = p_origin[0] - br.width() / 2.0
+
+            if dy < 0:
+                # 上方に向かう列車 -> パスの下側
+                pos_y = p_origin[1] + 4.0
+            else:
+                # 下方に向かう列車 (dy >= 0) -> パスの上側
+                pos_y = p_origin[1] - br.height() - 4.0
+
+            text_item.setPos(pos_x, pos_y)
+            text_item.setZValue(3)
+            self.addItem(text_item)
+
+        # 終着ラベル
+        for t_key, data in last_train_ops.items():
+            symbols_dict = data.get("symbols", {})
+            label_parts = []
+            for sym in ["△", "(△)"]:
+                if sym in symbols_dict and symbols_dict[sym]:
+                    op_nums_str = ",".join(symbols_dict[sym])
+                    label_parts.append(f"{sym}{op_nums_str}")
+
+            if not label_parts:
+                continue
+
+            label_text = " ".join(label_parts)
+
+            m_train = data["m_train"]
+            info = data["info"]
+            p_term = info["terminal"]
+            dy = info["term_dy"]
+
+            tt_id = m_train.get("train_type_id")
+            tt = self.project.train_types.get(tt_id) if (self.project and tt_id) else None
+            main_color = tt.get("main_color", "#333333") if tt else "#333333"
+
+            text_item = QGraphicsSimpleTextItem(label_text)
+            text_item.setFont(font)
+            text_item.setBrush(QBrush(QColor(main_color)))
+
+            br = text_item.boundingRect()
+            pos_x = p_term[0] - br.width() / 2.0
+
+            if dy < 0:
+                # 上方に向かう列車 -> パスの上側
+                pos_y = p_term[1] - br.height() - 4.0
+            else:
+                # 下方に向かう列車 (dy >= 0) -> パスの下側
+                pos_y = p_term[1] + 4.0
+
+            text_item.setPos(pos_x, pos_y)
+            text_item.setZValue(3)
+            self.addItem(text_item)
+
