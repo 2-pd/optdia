@@ -260,28 +260,28 @@ class TimetableDelegate(QStyledItemDelegate):
         num_headers = len(model.row_headers) if hasattr(model, 'row_headers') else 0
         
         # 番線表示エリア (左側15px) のクリック検知
-        if event.type() == QEvent.MouseButtonRelease and row >= num_headers:
+        if event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton and row >= num_headers:
             if event.position().x() < option.rect.left() + 15:
                 if self._is_track_editable(index, model):
                     self._show_track_menu(index, model, option.widget)
                     return True
 
-        if event.type() == QEvent.MouseButtonRelease and index.row() == 1: # 運転日行
+        if event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton and index.row() == 1: # 運転日行
             self._show_diagram_picker_menu(index, model, option.widget)
             return True
-        if event.type() == QEvent.MouseButtonRelease and index.row() == 2: # 運用番号行
+        if event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton and index.row() == 2: # 運用番号行
             self._show_operation_picker_menu(index, model, option.widget)
             return True
-        if event.type() == QEvent.MouseButtonRelease and index.row() == 4: # 種別・愛称行
+        if event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton and index.row() == 4: # 種別・愛称行
             self._show_train_type_menu(index, model, option.widget)
             return True
         
         num_stations = len(model.station_rows) if hasattr(model, 'station_rows') else 0
         footer_row_idx = num_headers + num_stations
-        if event.type() == QEvent.MouseButtonRelease and index.row() == footer_row_idx: # 連続する列車行
+        if event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton and index.row() == footer_row_idx: # 連続する列車行
             self._show_subsequent_train_dialog(index, model, option.widget)
             return True
-        if event.type() == QEvent.MouseButtonRelease and index.row() == footer_row_idx + 1: # 備考行
+        if event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton and index.row() == footer_row_idx + 1: # 備考行
             self._show_note_popup(index, model, option.widget)
             return True
         return super().editorEvent(event, model, option, index)

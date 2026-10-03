@@ -1,7 +1,10 @@
 import re
+import json
+from typing import Optional, List, Dict, Any, Tuple
 import copy
-from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QTimer, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QTimer, Signal, QMimeData, QByteArray
+from PySide6.QtGui import QColor, QClipboard
+from PySide6.QtWidgets import QApplication, QMessageBox
 from core.project import OptDiaProject, generate_random_id
 from core.history_manager import HistoryManager
 from core.events import (
@@ -1073,3 +1076,595 @@ class TimetableModel(QAbstractTableModel):
             return "(連続)", False
 
         return self._get_terminal_station_name(m_train), False
+
+    def get_row_info(self, row: int) -> Dict[str, Any]:
+        """指定された行の種類や追加情報を返す"""
+        num_headers = len(self.row_headers)
+        num_stations = len(self.station_rows)
+        footer_subsequent_row = num_headers + num_stations
+        footer_note_row = num_headers + num_stations + 1
+
+        if row == 0:
+            return {"kind": "train_number"}
+        elif row == 1:
+            return {"kind": "diagrams"}
+        elif row == 2:
+            return {"kind": "operations"}
+        elif row == 3:
+            return {"kind": "car_count"}
+        elif row == 4:
+            return {"kind": "train_type"}
+        elif row == 5:
+            return {"kind": "named_train_number"}
+        elif row == 6:
+            return {"kind": "destination"}
+        elif num_headers <= row < footer_subsequent_row:
+            row_idx = row - num_headers
+            row_def = self.station_rows[row_idx]
+            stop_idx = row_def["stop_idx"]
+            config = self.full_stop_configs[stop_idx]
+            return {
+                "kind": "station_time",
+                "stop_idx": stop_idx,
+                "time_type": row_def["type"],
+                "segment_id": config.get("segment_id"),
+                "station_entry_id": config.get("station_entry_id"),
+                "station_id": config.get("station_id")
+            }
+        elif row == footer_subsequent_row:
+            return {"kind": "subsequent_trains"}
+        elif row == footer_note_row:
+            return {"kind": "note"}
+        return {"kind": "unknown"}
+
+    def copy_cells(self, selected_indexes: List[QModelIndex]) -> bool:
+        """選択されているセルの内容を、text/plain と application/x-optdia-timetable-data でクリップボードに登録する"""
+        if not selected_indexes or not self.route_id or not self.diagram_id:
+            return False
+
+        # 選択範囲の行・列の範囲を取得
+        rows = sorted(list(set(idx.row() for idx in selected_indexes)))
+        cols = sorted(list(set(idx.column() for idx in selected_indexes)))
+        if not rows or not cols:
+            return False
+
+        min_row, max_row = rows[0], rows[-1]
+        min_col, max_col = cols[0], cols[-1]
+
+        route = self.project.routes.get(self.route_id, {})
+        tbd = route.get("trains_by_diagram", {}).get(self.diagram_id, {})
+        train_key = "inbound_trains" if self.direction == "inbound" else "outbound_trains"
+        d_trains = tbd.get(train_key, {})
+        m_trains = route.get(train_key, {})
+
+        # 2次元グリッドの構築
+        plain_text_rows = []
+        custom_data_grid = []
+
+        for r in range(min_row, max_row + 1):
+            plain_row = []
+            custom_row = []
+            row_info = self.get_row_info(r)
+
+            for c in range(min_col, max_col + 1):
+                # 該当セルが選択されているか確認
+                # 矩形範囲全体を走査（未選択セルは空値として扱う）
+                is_selected = any(idx.row() == r and idx.column() == c for idx in selected_indexes)
+                idx = self.index(r, c)
+
+                if not is_selected or c >= len(self.train_ids):
+                    plain_row.append("")
+                    custom_row.append({
+                        "kind": row_info.get("kind"),
+                        "row_info": row_info,
+                        "value": None,
+                        "track_id": None,
+                        "stop_type": None
+                    })
+                    continue
+
+                train_id = self.train_ids[c]
+                d_train = d_trains.get(train_id, {})
+                m_train = m_trains.get(train_id, {})
+
+                # 表示テキスト (DisplayRole) - 番線表示は除外
+                display_str = str(self.data(idx, Qt.DisplayRole) or "")
+                plain_row.append(display_str)
+
+                # 独自形式データのセル情報
+                cell_data = {
+                    "kind": row_info.get("kind"),
+                    "row_info": row_info,
+                    "value": None,
+                    "track_id": None,
+                    "stop_type": None
+                }
+
+                kind = row_info.get("kind")
+                if kind == "train_number":
+                    cell_data["value"] = m_train.get("train_number", "")
+                elif kind == "diagrams":
+                    cell_data["value"] = copy.deepcopy(m_train.get("_diagram_ids", []))
+                elif kind == "operations":
+                    cell_data["value"] = copy.deepcopy(d_train.get("operations", []))
+                elif kind == "car_count":
+                    cell_data["value"] = d_train.get("car_count")
+                elif kind == "train_type":
+                    cell_data["value"] = m_train.get("train_type_id")
+                elif kind == "named_train_number":
+                    cell_data["value"] = m_train.get("named_train_number")
+                elif kind == "destination":
+                    cell_data["value"] = d_train.get("destination")
+                elif kind == "subsequent_trains":
+                    cell_data["value"] = copy.deepcopy(d_train.get("subsequent_trains", []))
+                elif kind == "note":
+                    cell_data["value"] = m_train.get("note", "")
+                elif kind == "station_time":
+                    stop_idx = row_info.get("stop_idx")
+                    stop_map = m_train.get("_stop_map")
+                    if stop_map is not None:
+                        stop = stop_map.get(stop_idx)
+                    else:
+                        stop = next((s for s in m_train.get("stops", []) if s.get("stop_idx") == stop_idx), None)
+
+                    if stop:
+                        time_key = "arrival_time" if row_info.get("time_type") == "arr" else "departure_time"
+                        cell_data["value"] = stop.get(time_key)  # hh:mm:ss または None
+                        cell_data["track_id"] = stop.get("track_id")
+                        cell_data["stop_type"] = stop.get("stop_type", 1)
+                    else:
+                        cell_data["value"] = None
+                        cell_data["track_id"] = None
+                        cell_data["stop_type"] = 1
+
+                custom_row.append(cell_data)
+
+            plain_text_rows.append("\t".join(plain_row))
+            custom_data_grid.append(custom_row)
+
+        plain_text = "\n".join(plain_text_rows)
+        payload = {
+            "version": "1.0",
+            "num_rows": len(custom_data_grid),
+            "num_cols": len(custom_data_grid[0]) if custom_data_grid else 0,
+            "grid": custom_data_grid
+        }
+        json_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+        mime_data = QMimeData()
+        mime_data.setText(plain_text)
+        mime_data.setData("application/x-optdia-timetable-data", QByteArray(json_bytes))
+
+        clipboard = QApplication.clipboard()
+        clipboard.setMimeData(mime_data)
+        return True
+
+    def paste_cells(self, start_index: QModelIndex, target_shape: Optional[Tuple[int, int]] = None, parent_widget=None) -> bool:
+        """クリップボードからデータを取得し、start_index を左上として貼り付ける。
+        target_shape が指定され、クリップボードの範囲より大きい場合はデータを反復して貼り付ける。"""
+        if not start_index.isValid() or not self.route_id or not self.diagram_id:
+            return False
+
+        clipboard = QApplication.clipboard()
+        mime_data = clipboard.mimeData()
+
+        # MIMEタイプの検証
+        if not mime_data.hasFormat("application/x-optdia-timetable-data"):
+            QMessageBox.critical(parent_widget, "貼り付けエラー", "クリップボードに貼り付け可能な時刻表データがありません。")
+            return False
+
+        raw_data = bytes(mime_data.data("application/x-optdia-timetable-data"))
+        try:
+            payload = json.loads(raw_data.decode("utf-8"))
+            src_grid = payload.get("grid", [])
+            src_rows = payload.get("num_rows", len(src_grid))
+            src_cols = payload.get("num_cols", len(src_grid[0]) if src_grid else 0)
+        except Exception:
+            QMessageBox.critical(parent_widget, "貼り付けエラー", "クリップボードのデータ形式が不正です。")
+            return False
+
+        if not src_grid or src_rows == 0 or src_cols == 0:
+            return False
+
+        # 選択範囲のサイズに応じて反復（タイリング）
+        if target_shape is not None:
+            tgt_rows, tgt_cols = target_shape
+            num_rows = max(src_rows, tgt_rows)
+            num_cols = max(src_cols, tgt_cols)
+        else:
+            num_rows = src_rows
+            num_cols = src_cols
+
+        grid = []
+        for r in range(num_rows):
+            row_cells = []
+            for c in range(num_cols):
+                cell_copy = copy.deepcopy(src_grid[r % src_rows][c % src_cols])
+                # 「運転日」行への貼り付け時、現在表示中の運転ダイヤが含まれていなければ自動追加
+                if cell_copy.get("kind") == "diagrams" and isinstance(cell_copy.get("value"), list):
+                    if self.diagram_id not in cell_copy["value"]:
+                        cell_copy["value"].append(self.diagram_id)
+                row_cells.append(cell_copy)
+            grid.append(row_cells)
+
+        start_row = start_index.row()
+        start_col = start_index.column()
+        total_table_rows = self.rowCount()
+
+        # --- 整合性チェック (貼り付け前に全体を検証) ---
+        # 1. 行種類の適合性チェック
+        # 2. 参照IDの存在チェック (車両運用ID, 運転ダイヤID, 連続する列車の運行系統・ダイヤ・列車ID)
+        for r_offset, row_cells in enumerate(grid):
+            target_row = start_row + r_offset
+            if target_row >= total_table_rows:
+                # テーブルの行数を超える場合は貼り付け不可（またはエラー）
+                QMessageBox.critical(parent_widget, "貼り付けエラー", "貼り付け先の行範囲がテーブルの行数を超えています。")
+                return False
+
+            target_row_info = self.get_row_info(target_row)
+            target_kind = target_row_info.get("kind")
+
+            for c_offset, cell in enumerate(row_cells):
+                src_kind = cell.get("kind")
+                val = cell.get("value")
+
+                # 行の種類の整合性
+                # 駅発着時刻同士は許容（src_kind == "station_time" and target_kind == "station_time"）
+                if src_kind != target_kind:
+                    if not (src_kind == "station_time" and target_kind == "station_time"):
+                        QMessageBox.critical(
+                            parent_widget,
+                            "貼り付けエラー",
+                            f"異なる種類の行にデータを貼り付けることはできません。（{src_kind} → {target_kind}）"
+                        )
+                        return False
+
+                # 参照IDの存在チェック
+                if src_kind == "operations":
+                    # val is list of operation items (dict or id string)
+                    if isinstance(val, list):
+                        diagram_ops = self.project.diagrams.get(self.diagram_id, {}).get("operations", {})
+                        for op in val:
+                            op_id = op.get("operation_id") if isinstance(op, dict) else op
+                            if op_id and op_id not in diagram_ops:
+                                QMessageBox.critical(
+                                    parent_widget,
+                                    "貼り付けエラー",
+                                    f"プロジェクトデータ上に存在しない車両運用ID ({op_id}) が含まれているため、貼り付けできません。"
+                                )
+                                return False
+
+                elif src_kind == "diagrams":
+                    # val is list of diagram_id strings
+                    if isinstance(val, list):
+                        for did in val:
+                            if did and did not in self.project.diagrams:
+                                QMessageBox.critical(
+                                    parent_widget,
+                                    "貼り付けエラー",
+                                    f"プロジェクトデータ上に存在しない運転ダイヤID ({did}) が含まれているため、貼り付けできません。"
+                                )
+                                return False
+
+                elif src_kind == "train_type":
+                    # val is train_type_id
+                    if val and val not in self.project.train_types:
+                        QMessageBox.critical(
+                            parent_widget,
+                            "貼り付けエラー",
+                            f"プロジェクトデータ上に存在しない列車種別ID ({val}) が含まれているため、貼り付けできません。"
+                        )
+                        return False
+
+                elif src_kind == "subsequent_trains":
+                    # val is list of dicts with route_id, direction, train_id
+                    if isinstance(val, list):
+                        for sub in val:
+                            s_rid = sub.get("route_id")
+                            s_dir = sub.get("direction")
+                            s_tid = sub.get("train_id")
+                            if s_rid or s_dir or s_tid:
+                                sub_route = self.project.routes.get(s_rid)
+                                if not sub_route:
+                                    QMessageBox.critical(
+                                        parent_widget,
+                                        "貼り付けエラー",
+                                        f"プロジェクトデータ上に存在しない「連続する列車」（運行系統: {s_rid}）が含まれているため、貼り付けできません。"
+                                    )
+                                    return False
+                                sub_train_key = "inbound_trains" if s_dir == "inbound" else "outbound_trains"
+                                if s_tid not in sub_route.get(sub_train_key, {}):
+                                    QMessageBox.critical(
+                                        parent_widget,
+                                        "貼り付けエラー",
+                                        f"プロジェクトデータ上に存在しない「連続する列車」（列車ID: {s_tid}）が含まれているため、貼り付けできません。"
+                                    )
+                                    return False
+
+        # --- 列数がテーブルからはみ出す場合の自動列車追加 ---
+        needed_cols = start_col + num_cols
+        current_cols = len(self.train_ids)
+        if needed_cols > current_cols:
+            cols_to_add = needed_cols - current_cols
+            route = self.project.routes.get(self.route_id, {})
+            tbd = route.setdefault("trains_by_diagram", {}).setdefault(self.diagram_id, {})
+            train_key = "inbound_trains" if self.direction == "inbound" else "outbound_trains"
+            order_key = f"{train_key}_order"
+            d_trains = tbd.setdefault(train_key, {})
+            order = tbd.setdefault(order_key, [])
+            m_trains = route.setdefault(train_key, {})
+
+            add_train_events = []
+            for _ in range(cols_to_add):
+                while True:
+                    new_id = generate_random_id()
+                    if new_id not in d_trains and new_id not in m_trains:
+                        break
+                new_d = {
+                    "train_id": new_id,
+                    "operations": [],
+                    "car_count": None,
+                    "destination": None,
+                    "subsequent_trains": [],
+                    "to_be_saved": True
+                }
+                new_m = {
+                    "train_number": "",
+                    "train_type_id": None,
+                    "named_train_number": None,
+                    "note": "",
+                    "stops": [],
+                    "_diagram_ids": [self.diagram_id]
+                }
+                ins_idx = len(order)
+                d_trains[new_id] = new_d
+                m_trains[new_id] = new_m
+                order.append(new_id)
+                add_train_events.append(AddTrainEvent(self.route_id, self.direction, new_id, self.diagram_id, ins_idx, new_d, new_m))
+
+            self.train_ids = order
+
+        # --- データの適用と履歴イベントの生成 ---
+        route = self.project.routes.get(self.route_id, {})
+        tbd = route.get("trains_by_diagram", {}).get(self.diagram_id, {})
+        train_key = "inbound_trains" if self.direction == "inbound" else "outbound_trains"
+        d_trains = tbd.get(train_key, {})
+        m_trains = route.get(train_key, {})
+
+        events_to_push = []
+        if 'add_train_events' in locals() and add_train_events:
+            events_to_push.extend(add_train_events)
+
+        affected_cols = set()
+
+        for c_offset in range(num_cols):
+            col = start_col + c_offset
+            if col >= len(self.train_ids):
+                continue
+            train_id = self.train_ids[col]
+            d_train = d_trains.get(train_id)
+            m_train = m_trains.get(train_id)
+            if not d_train or not m_train:
+                continue
+
+            col_changed = False
+            col_events = []
+            all_stops_before = {s["stop_idx"]: copy.deepcopy(s) for s in m_train.get("stops", []) if "stop_idx" in s}
+
+            for r_offset in range(num_rows):
+                row = start_row + r_offset
+                if row >= total_table_rows:
+                    continue
+                cell = grid[r_offset][c_offset]
+                target_row_info = self.get_row_info(row)
+                target_kind = target_row_info.get("kind")
+                val = cell.get("value")
+
+                if target_kind == "train_number":
+                    new_val = str(val) if val is not None else ""
+                    if m_train.get("train_number") != new_val:
+                        old_val = m_train.get("train_number", "")
+                        m_train["train_number"] = new_val
+                        col_events.append(ChangeTrainNumberEvent(self.route_id, self.direction, train_id, old_val, new_val))
+                        col_changed = True
+
+                elif target_kind == "diagrams":
+                    if isinstance(val, list):
+                        new_dids = list(val)
+                        old_dids = list(m_train.get("_diagram_ids", []))
+                        if old_dids != new_dids:
+                            # 削除されたダイヤと追加されたダイヤのイベントを生成
+                            for did in old_dids:
+                                if did not in new_dids:
+                                    tbd_old = route.get("trains_by_diagram", {}).get(did, {})
+                                    dt_old = tbd_old.get(train_key, {}).get(train_id, {})
+                                    ord_old = tbd_old.get(f"{train_key}_order", [])
+                                    idx_old = ord_old.index(train_id) if train_id in ord_old else 0
+                                    col_events.append(RemoveTrainDiagramEvent(self.route_id, self.direction, train_id, did, idx_old, dt_old))
+                                    if train_id in ord_old: ord_old.remove(train_id)
+                                    if train_id in tbd_old.get(train_key, {}): del tbd_old[train_key][train_id]
+                            for did in new_dids:
+                                if did not in old_dids:
+                                    tbd_new = route.setdefault("trains_by_diagram", {}).setdefault(did, {})
+                                    dt_new = tbd_new.setdefault(train_key, {})
+                                    ord_new = tbd_new.setdefault(f"{train_key}_order", [])
+                                    dt_obj = {
+                                        "train_id": train_id,
+                                        "operations": [],
+                                        "car_count": None,
+                                        "destination": None,
+                                        "subsequent_trains": [],
+                                        "to_be_saved": True
+                                    }
+                                    dt_new[train_id] = dt_obj
+                                    ord_new.append(train_id)
+                                    col_events.append(AddTrainDiagramEvent(self.route_id, self.direction, train_id, did, len(ord_new) - 1, dt_obj))
+                            m_train["_diagram_ids"] = new_dids
+                            col_changed = True
+
+                elif target_kind == "operations":
+                    new_ops = copy.deepcopy(val) if isinstance(val, list) else []
+                    old_ops = copy.deepcopy(d_train.get("operations", []))
+                    if old_ops != new_ops:
+                        d_train["operations"] = new_ops
+                        col_events.append(ChangeTrainOperationEvent(self.route_id, self.direction, train_id, self.diagram_id, old_ops, new_ops))
+                        col_changed = True
+
+                elif target_kind == "car_count":
+                    new_val = int(val) if val is not None and str(val).strip() != "" else None
+                    if d_train.get("car_count") != new_val:
+                        old_val = d_train.get("car_count")
+                        d_train["car_count"] = new_val
+                        col_events.append(ChangeTrainCarCountEvent(self.route_id, self.direction, train_id, self.diagram_id, old_val, new_val))
+                        col_changed = True
+
+                elif target_kind == "train_type":
+                    new_val = val if val else None
+                    if m_train.get("train_type_id") != new_val:
+                        old_val = m_train.get("train_type_id")
+                        m_train["train_type_id"] = new_val
+                        col_events.append(ChangeTrainTypeEvent(self.route_id, self.direction, train_id, old_val, new_val))
+                        col_changed = True
+
+                elif target_kind == "named_train_number":
+                    new_val = int(val) if val is not None and str(val).strip() != "" else None
+                    if m_train.get("named_train_number") != new_val:
+                        old_val = m_train.get("named_train_number")
+                        m_train["named_train_number"] = new_val
+                        col_events.append(ChangeTrainNamedNumberEvent(self.route_id, self.direction, train_id, old_val, new_val))
+                        col_changed = True
+
+                elif target_kind == "destination":
+                    new_val = val if val else None
+                    if d_train.get("destination") != new_val:
+                        old_val = d_train.get("destination")
+                        d_train["destination"] = new_val
+                        col_events.append(ChangeTrainDestinationEvent(self.route_id, self.direction, train_id, self.diagram_id, old_val, new_val))
+                        col_changed = True
+
+                elif target_kind == "subsequent_trains":
+                    new_subs = copy.deepcopy(val) if isinstance(val, list) else []
+                    old_subs = copy.deepcopy(d_train.get("subsequent_trains", []))
+                    if old_subs != new_subs:
+                        d_train["subsequent_trains"] = new_subs
+                        col_events.append(ChangeSubsequentTrainEvent(self.route_id, self.direction, train_id, self.diagram_id, old_subs, new_subs))
+                        col_changed = True
+
+                elif target_kind == "note":
+                    new_val = str(val) if val is not None else ""
+                    if m_train.get("note") != new_val:
+                        old_val = m_train.get("note", "")
+                        m_train["note"] = new_val
+                        col_events.append(ChangeTrainNoteEvent(self.route_id, self.direction, train_id, old_val, new_val))
+                        col_changed = True
+
+                elif target_kind == "station_time":
+                    stop_idx = target_row_info["stop_idx"]
+                    config = self.full_stop_configs[stop_idx]
+                    seg_id = config["segment_id"]
+                    seid = config.get("station_entry_id")
+
+                    if "stops" not in m_train:
+                        m_train["stops"] = []
+
+                    stop = next((s for s in m_train["stops"] if s.get("stop_idx") == stop_idx), None)
+
+                    # コピー元とコピー先が同一駅かどうかで発着番線の扱いを決定
+                    src_row_info = cell.get("row_info") or {}
+                    src_station_id = src_row_info.get("station_id")
+                    tgt_station_id = target_row_info.get("station_id")
+                    is_same_station = (src_station_id is not None and src_station_id == tgt_station_id)
+
+                    new_track_id = cell.get("track_id") if is_same_station else config.get("track_id")
+                    new_stop_type = cell.get("stop_type", 1)
+                    if new_stop_type is None:
+                        new_stop_type = 1
+
+                    raw_time = cell.get("value")
+                    formatted_time = self._format_time(raw_time) if raw_time else None
+                    time_key = "arrival_time" if target_row_info.get("time_type") == "arr" else "departure_time"
+
+                    if not stop:
+                        if formatted_time is not None or new_track_id is not None or new_stop_type != 1:
+                            stop = {
+                                "segment_id": seg_id,
+                                "station_entry_id": seid,
+                                "track_id": new_track_id,
+                                "arrival_time": None,
+                                "departure_time": None,
+                                "stop_type": new_stop_type,
+                                "stop_idx": stop_idx
+                            }
+                            stop[time_key] = formatted_time
+                            m_train["stops"].append(stop)
+                            col_changed = True
+                    else:
+                        if stop.get(time_key) != formatted_time:
+                            stop[time_key] = formatted_time
+                            col_changed = True
+                        if is_same_station and cell.get("track_id") is not None and stop.get("track_id") != cell.get("track_id"):
+                            stop["track_id"] = cell.get("track_id")
+                            col_changed = True
+                        if cell.get("stop_type") is not None and stop.get("stop_type") != new_stop_type:
+                            stop["stop_type"] = new_stop_type
+                            col_changed = True
+
+            # 駅行の差分からイベントを生成
+            if "stops" in m_train:
+                m_train["stops"].sort(key=lambda x: x.get("stop_idx", 0))
+                # 完全に空になったストップの除去、変更、追加を検出
+                new_stops = []
+                for s in m_train["stops"]:
+                    s_idx = s.get("stop_idx")
+                    old_s = all_stops_before.get(s_idx)
+                    arr = s.get("arrival_time")
+                    dep = s.get("departure_time")
+                    if arr is None and dep is None and s.get("stop_type", 1) == 1 and s.get("track_id") == self.full_stop_configs[s_idx].get("track_id"):
+                        if old_s is not None:
+                            old_pos = list(all_stops_before.keys()).index(s_idx)
+                            col_events.append(RemoveTrainStopEvent(self.route_id, self.direction, train_id, old_pos, old_s))
+                            col_changed = True
+                    else:
+                        new_stops.append(s)
+                        if old_s is None:
+                            col_events.append(AddTrainStopEvent(self.route_id, self.direction, train_id, len(new_stops) - 1, s))
+                            col_changed = True
+                        elif old_s != s:
+                            col_events.append(ChangeTrainStopEvent(self.route_id, self.direction, train_id, s_idx, old_s, s))
+                            col_changed = True
+                m_train["stops"] = new_stops
+
+            if col_changed:
+                events_to_push.extend(col_events)
+                affected_cols.add(col)
+
+        if events_to_push:
+            if self.history_manager:
+                self.history_manager.push_events(events_to_push)
+            self.clear_destination_cache()
+
+            # 保存フラグの更新
+            converted = False
+            for col in affected_cols:
+                for i in range(col + 1):
+                    tid = self.train_ids[i]
+                    t = d_trains.get(tid)
+                    if t and not t.get("to_be_saved"):
+                        t["to_be_saved"] = True
+                        converted = True
+                m_t = m_trains.get(self.train_ids[col])
+                if m_t:
+                    self._normalize_train_stops(m_t)
+
+            if converted or ('add_train_events' in locals() and add_train_events):
+                self.update_data(self.route_id, self.diagram_id, self.direction)
+            else:
+                for col in affected_cols:
+                    self.dataChanged.emit(
+                        self.index(0, col),
+                        self.index(self.rowCount() - 1, col),
+                        [Qt.DisplayRole, Qt.EditRole, Qt.ForegroundRole, Qt.BackgroundRole, StopTypeRole]
+                    )
+            return True
+
+        return False

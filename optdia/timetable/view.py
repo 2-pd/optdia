@@ -1,8 +1,7 @@
 import re
 from PySide6.QtCore import Qt, Signal, QRect, QModelIndex
-from PySide6.QtGui import QColor, QPainter, QFont, QFontMetrics, QIcon, QPen, QPalette
+from PySide6.QtGui import QColor, QPainter, QFont, QFontMetrics, QIcon, QPen, QPalette, QKeySequence, QActionGroup
 from PySide6.QtWidgets import QHeaderView, QStyleOptionHeader, QStyle, QTableView, QSizePolicy, QVBoxLayout, QLabel, QMenu, QDialog, QAbstractItemView
-from PySide6.QtGui import QActionGroup
 from .model import StopTypeRole
 
 # 時刻表テーブルの垂直ヘッダーのビュー
@@ -419,6 +418,18 @@ class TimetableView(QTableView):
             if self.move_to_next_cell_and_edit():
                 return
 
+        elif event.matches(QKeySequence.Cut) or (event.modifiers() == Qt.ControlModifier and event.key() == Qt.Key_X):
+            if self.cut_selection():
+                return
+
+        elif event.matches(QKeySequence.Copy) or (event.modifiers() == Qt.ControlModifier and event.key() == Qt.Key_C):
+            if self.copy_selection():
+                return
+
+        elif event.matches(QKeySequence.Paste) or (event.modifiers() == Qt.ControlModifier and event.key() == Qt.Key_V):
+            if self.paste_selection():
+                return
+
         elif event.key() == Qt.Key_Delete:
             if self.clear_selected_cells():
                 return
@@ -637,6 +648,12 @@ class TimetableView(QTableView):
 
         menu = QMenu(self)
 
+        # クリップボード操作項目
+        copy_action = menu.addAction("コピー")
+        cut_action = menu.addAction("切り取り")
+        paste_action = menu.addAction("貼り付け")
+        menu.addSeparator()
+
         # 共通列車操作項目
         add_left_action = menu.addAction("左に列車を追加")
         add_right_action = menu.addAction("右に列車を追加")
@@ -695,7 +712,13 @@ class TimetableView(QTableView):
             delete_trains, split_train_at_cell
         )
 
-        if selected_action == add_left_action:
+        if selected_action == copy_action:
+            self.copy_selection()
+        elif selected_action == cut_action:
+            self.cut_selection()
+        elif selected_action == paste_action:
+            self.paste_selection()
+        elif selected_action == add_left_action:
             add_empty_trains(model, selected_cols, "left")
         elif selected_action == add_right_action:
             add_empty_trains(model, selected_cols, "right")
@@ -728,4 +751,47 @@ class TimetableView(QTableView):
                 model.setData(tgt_idx, new_val, StopTypeRole)
         elif selected_action == split_action:
             split_train_at_cell(self, model, index)
+
+    def copy_selection(self) -> bool:
+        """選択されているセルのデータをクリップボードにコピーする"""
+        model = self.model()
+        if not model or not hasattr(model, 'copy_cells'):
+            return False
+        selected_indexes = self.selectedIndexes()
+        if not selected_indexes:
+            current = self.currentIndex()
+            if current.isValid():
+                selected_indexes = [current]
+            else:
+                return False
+        return model.copy_cells(selected_indexes)
+
+    def cut_selection(self) -> bool:
+        """選択されているセルのデータをコピーし、クリアする"""
+        if self.copy_selection():
+            self.clear_selected_cells()
+            return True
+        return False
+
+    def paste_selection(self) -> bool:
+        """クリップボードのデータをカレントセル（または選択セルの左上）へ貼り付ける"""
+        model = self.model()
+        if not model or not hasattr(model, 'paste_cells'):
+            return False
+        selected_indexes = self.selectedIndexes()
+        target_shape = None
+        if selected_indexes:
+            min_r = min(idx.row() for idx in selected_indexes)
+            max_r = max(idx.row() for idx in selected_indexes)
+            min_c = min(idx.column() for idx in selected_indexes)
+            max_c = max(idx.column() for idx in selected_indexes)
+            start_index = model.index(min_r, min_c)
+            target_shape = (max_r - min_r + 1, max_c - min_c + 1)
+        else:
+            start_index = self.currentIndex()
+
+        if not start_index.isValid():
+            return False
+        return model.paste_cells(start_index, target_shape=target_shape, parent_widget=self.window())
+
 
