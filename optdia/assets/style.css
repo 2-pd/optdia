@@ -63,6 +63,13 @@ QCheckBox::indicator, QRadioButton::indicator {
 QCheckBox::indicator:checked, QRadioButton::indicator::checked {
     background-color: #55aaff;
 }
+QCheckBox:disabled, QRadioButton:disabled {
+    color: #999999;
+}
+QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {
+    border-color: #dddddd;
+    background-color: #dddddd;
+}
 
 QRadioButton::indicator {
     border-radius: 8px;

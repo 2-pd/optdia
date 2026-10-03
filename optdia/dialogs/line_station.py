@@ -1,12 +1,14 @@
 import re
+import copy
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QDialog, QColorDialog, QVBoxLayout, QHBoxLayout, QPushButton, QMessageBox, QLabel,
     QLineEdit, QListWidget, QListWidgetItem, QCheckBox, QStackedWidget,
-    QRadioButton, QComboBox, QGroupBox, QFormLayout, QSpinBox, QWidget, QTabWidget
+    QRadioButton, QComboBox, QGroupBox, QFormLayout, QSpinBox, QWidget, QTabWidget,
+    QFileDialog, QScrollArea
 )
-from core.project import OptDiaProject, generate_random_id
+from core.project import OptDiaProject, SchemaVersionError, generate_random_id, load_project
 from common.gui_utils import HtmlDelegate, create_color_square_pixmap
 from common.widgets import ColorPickerWidget
 
@@ -15,73 +17,194 @@ class AddLineDialog(QDialog):
     def __init__(self, parent, project: OptDiaProject):
         super().__init__(parent)
         self.project = project
+        # インポートモード用の状態変数
+        self._imported_project: OptDiaProject | None = None
+        self._import_checkboxes: list[tuple[str, QCheckBox]] = []  # [(line_id, checkbox), ...]
+
         self.setWindowTitle("路線の追加")
-        self.setFixedSize(480, 240)
+        self.setFixedSize(480, 480)
 
         layout = QVBoxLayout(self)
 
+        # ラジオボタン
+        self.new_line_radio = QRadioButton("路線を新規作成")
+        self.import_radio = QRadioButton("他のプロジェクトファイルから路線をインポート")
+        self.new_line_radio.setChecked(True)
+        layout.addWidget(self.new_line_radio)
+        layout.addWidget(self.import_radio)
+
+        # スタックドウィジェット
+        self.stack = QStackedWidget()
+        layout.addWidget(self.stack)
+
+        # --- ページ0: 新規作成 ---
+        new_page = QWidget()
+        new_layout = QVBoxLayout(new_page)
+        new_layout.setContentsMargins(0, 8, 0, 0)
+
         # 路線ID
-        layout.addWidget(QLabel("路線ID:"))
+        new_layout.addWidget(QLabel("路線ID:"))
         self.id_edit = QLineEdit()
         self.id_edit.setPlaceholderText("例) osaka_loop_line")
         self.id_edit.textChanged.connect(self._clear_id_error)
-        layout.addWidget(self.id_edit)
+        new_layout.addWidget(self.id_edit)
 
         # 警告表示スペース
         self.warning_label = QLabel("")
         self.warning_label.setStyleSheet("color: #cc3333; padding-left: 5px;")
-        layout.addWidget(self.warning_label)
+        new_layout.addWidget(self.warning_label)
 
         # 路線名
-        layout.addWidget(QLabel("路線名:"))
+        new_layout.addWidget(QLabel("路線名:"))
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText("例) 大阪環状線")
-        layout.addWidget(self.name_edit)
+        new_layout.addWidget(self.name_edit)
 
-        layout.addStretch()
+        new_layout.addStretch()
+        self.stack.addWidget(new_page)
 
-        # ボタンエリア (追加 / キャンセル)
+        # --- ページ1: インポート ---
+        import_page = QWidget()
+        import_layout = QVBoxLayout(import_page)
+        import_layout.setContentsMargins(0, 8, 0, 0)
+
+        self.select_file_button = QPushButton("プロジェクトファイルを選択")
+        self.select_file_button.clicked.connect(self._on_select_file)
+        import_layout.addWidget(self.select_file_button)
+
+        # スクロール可能領域
+        self.import_scroll = QScrollArea()
+        self.import_scroll.setWidgetResizable(True)
+        self.import_scroll.setFrameShape(QScrollArea.NoFrame)
+        self.import_scroll_content = QWidget()
+        self.import_scroll_content.setProperty("class", "scroll_content")
+        self.import_scroll_layout = QVBoxLayout(self.import_scroll_content)
+        self.import_scroll_layout.setAlignment(Qt.AlignTop)
+        self.import_scroll.setWidget(self.import_scroll_content)
+        import_layout.addWidget(self.import_scroll)
+
+        self.stack.addWidget(import_page)
+
+        # ラジオボタンの切り替え
+        self.new_line_radio.toggled.connect(self._on_radio_toggled)
+
+        # ボタンエリア (OK / キャンセル)
         button_layout = QHBoxLayout()
-        self.add_button = QPushButton("追加")
-        self.add_button.setProperty("class", "ok_button")
+        self.ok_button = QPushButton("OK")
+        self.ok_button.setProperty("class", "ok_button")
         self.cancel_button = QPushButton("キャンセル")
 
         button_layout.addStretch()
-        button_layout.addWidget(self.add_button)
+        button_layout.addWidget(self.ok_button)
         button_layout.addWidget(self.cancel_button)
         layout.addLayout(button_layout)
 
-        self.add_button.clicked.connect(self._on_add_clicked)
+        self.ok_button.clicked.connect(self._on_ok_clicked)
         self.cancel_button.clicked.connect(self.reject)
+
+    def _on_radio_toggled(self, checked: bool):
+        """ラジオボタンの選択に合わせてスタックを切り替える"""
+        if self.new_line_radio.isChecked():
+            self.stack.setCurrentIndex(0)
+        else:
+            self.stack.setCurrentIndex(1)
 
     def _clear_id_error(self):
         """ID入力欄のエラー表示状態をクリアする"""
         self.id_edit.setStyleSheet("")
         self.warning_label.setText("")
 
-    def _on_add_clicked(self):
-        """入力内容を検証し、問題なければ accept する"""
-        line_id = self.id_edit.text().strip()
-
-        # スタイルをリセット
-        self.id_edit.setStyleSheet("")
-
-        if not line_id:
-            self.warning_label.setText("IDを指定してください")
-            self.id_edit.setStyleSheet("background-color: #ffeeee;")
+    def _on_select_file(self):
+        """ファイル選択ダイアログを表示し、選択されたプロジェクトファイルから路線一覧を読み込む"""
+        filepath, _ = QFileDialog.getOpenFileName(
+            self,
+            "プロジェクトファイルを選択",
+            "",
+            "OptDiaプロジェクトファイル (*.optd *.optdia)"
+        )
+        if not filepath:
             return
 
-        if not re.match(r"^[a-zA-Z0-9_]+$", line_id):
-            self.warning_label.setText("IDには半角英数字とアンダーバーのみが使用可能です")
-            self.id_edit.setStyleSheet("background-color: #ffeeee;")
+        try:
+            imported = load_project(filepath)
+        except SchemaVersionError:
+            # load_project 内で既にエラーダイアログを表示しているので何もしない
+            return
+        except Exception as e:
+            QMessageBox.critical(self, "エラー", f"ファイルの読み込みに失敗しました。\n{e}")
             return
 
-        if line_id in self.project.lines:
-            self.warning_label.setText("既に使用されているIDです")
-            self.id_edit.setStyleSheet("background-color: #ffeeee;")
+        self._imported_project = imported
+        self._rebuild_import_checkboxes()
+
+    def _rebuild_import_checkboxes(self):
+        """インポート候補の路線をチェックボックスとしてスクロール領域に再構築する"""
+        # 既存チェックボックスをクリア
+        for i in reversed(range(self.import_scroll_layout.count())):
+            widget = self.import_scroll_layout.itemAt(i).widget()
+            if widget:
+                widget.deleteLater()
+        self._import_checkboxes.clear()
+
+        if not self._imported_project:
             return
 
-        self.accept()
+        existing_line_ids = set(self.project.lines.keys())
+
+        for line_id in self._imported_project.lines_order:
+            line_data = self._imported_project.lines[line_id]
+            line_name = line_data.get("line_name", line_id)
+
+            cb = QCheckBox()
+            if line_id in existing_line_ids:
+                cb.setText(f"{line_name}(登録済み)")
+                cb.setEnabled(False)
+            else:
+                cb.setText(line_name)
+
+            self.import_scroll_layout.addWidget(cb)
+            self._import_checkboxes.append((line_id, cb))
+
+    def _on_ok_clicked(self):
+        """OKボタン押下時の処理"""
+        if self.new_line_radio.isChecked():
+            # 新規作成モードの検証
+            line_id = self.id_edit.text().strip()
+            self.id_edit.setStyleSheet("")
+
+            if not line_id:
+                self.warning_label.setText("IDを指定してください")
+                self.id_edit.setStyleSheet("background-color: #ffeeee;")
+                return
+
+            if not re.match(r"^[a-zA-Z0-9_]+$", line_id):
+                self.warning_label.setText("IDには半角英数字とアンダーバーのみが使用可能です")
+                self.id_edit.setStyleSheet("background-color: #ffeeee;")
+                return
+
+            if line_id in self.project.lines:
+                self.warning_label.setText("既に使用されているIDです")
+                self.id_edit.setStyleSheet("background-color: #ffeeee;")
+                return
+
+            self.accept()
+        else:
+            # インポートモードの検証
+            if self._imported_project is None:
+                QMessageBox.warning(self, "エラー", "プロジェクトファイルを選択してください。")
+                return
+
+            checked_ids = [lid for lid, cb in self._import_checkboxes if cb.isChecked() and cb.isEnabled()]
+            if not checked_ids:
+                QMessageBox.warning(self, "エラー", "インポートする路線を1つ以上選択してください。")
+                return
+
+            self.accept()
+
+    def get_checked_import_line_ids(self) -> list[str]:
+        """インポートモードでチェックされた路線IDのリストを返す"""
+        return [lid for lid, cb in self._import_checkboxes if cb.isChecked() and cb.isEnabled()]
+
 
 
 # 駅の追加ダイアログ
@@ -1124,29 +1247,117 @@ class LineStationEditorDialog(QDialog):
         """路線の追加ダイアログを表示する"""
         dialog = AddLineDialog(self, self.project)
         if dialog.exec() == QDialog.Accepted:
-            line_id = dialog.id_edit.text().strip()
-            line_name = dialog.name_edit.text().strip()
+            if dialog.new_line_radio.isChecked():
+                # 新規作成モード
+                line_id = dialog.id_edit.text().strip()
+                line_name = dialog.name_edit.text().strip()
 
-            # プロジェクトデータに新規路線を追加
-            self.project.lines[line_id] = {
-                "line_id": line_id,
-                "line_name": line_name,
-                "line_color": "#333333",
-                "line_symbol": None,
-                "inbound_direction_is_forward_direction": True,
-                "station_list": []
-            }
-            self.project.lines_order.append(line_id)
+                # プロジェクトデータに新規路線を追加
+                self.project.lines[line_id] = {
+                    "line_id": line_id,
+                    "line_name": line_name,
+                    "line_color": "#333333",
+                    "line_symbol": None,
+                    "inbound_direction_is_forward_direction": True,
+                    "station_list": []
+                }
+                self.project.lines_order.append(line_id)
+            else:
+                # インポートモード
+                imported_project = dialog._imported_project
+                checked_line_ids = dialog.get_checked_import_line_ids()
+                self._import_lines_from_project(imported_project, checked_line_ids)
 
             # リスト表示を更新
             self._populate_line_list()
-            
+
             # 変更フラグを立てる
             if hasattr(self.parent(), "set_modified"):
                 self.parent().set_modified(True)
             # 新しく追加された路線を選択状態にする
             if self.line_list_widget.count() > 0:
                 self.line_list_widget.setCurrentRow(self.line_list_widget.count() - 1)
+
+    def _import_lines_from_project(self, imported_project: OptDiaProject, line_ids: list):
+        """他のプロジェクトから指定された路線と駅データを現在のプロジェクトにインポートする"""
+        existing_station_ids = set(self.project.stations.keys())
+
+        for line_id in line_ids:
+            src_line = imported_project.lines.get(line_id)
+            if not src_line:
+                continue
+
+            # 路線に含まれる駅をインポート
+            new_station_list = []
+            for entry in src_line.get("station_list", []):
+                src_station_id = entry.get("station_id")
+                src_station_data = imported_project.stations.get(src_station_id)
+
+                if src_station_id in existing_station_ids:
+                    # 既存駅: station_entry のみ追加（発着番線IDが存在しない場合はNone）
+                    current_station = self.project.stations.get(src_station_id, {})
+                    current_track_ids = set(current_station.get("tracks", {}).keys())
+
+                    inbound_track = entry.get("inbound_main_track")
+                    outbound_track = entry.get("outbound_main_track")
+                    # 現在の駅に存在しない発着番線IDはNoneとみなす
+                    if inbound_track not in current_track_ids:
+                        inbound_track = None
+                    if outbound_track not in current_track_ids:
+                        outbound_track = None
+
+                    new_entry = {
+                        "station_entry_id": generate_random_id(12),
+                        "station_id": src_station_id,
+                        "station_number": entry.get("station_number"),
+                        "inbound_main_track": inbound_track,
+                        "outbound_main_track": outbound_track,
+                        "absolute_standard_running_time": entry.get("absolute_standard_running_time"),
+                    }
+                else:
+                    # 新規駅: 駅データとstation_entryを追加
+                    if src_station_data:
+                        station_copy = copy.deepcopy(src_station_data)
+                        # tracks を辞書+順序リスト形式に正規化
+                        if "tracks" in station_copy and isinstance(station_copy["tracks"], list):
+                            tracks_dict = {}
+                            tracks_order = []
+                            for t in station_copy["tracks"]:
+                                tid = t.get("track_id")
+                                if tid:
+                                    tracks_dict[tid] = t
+                                    tracks_order.append(tid)
+                            station_copy["tracks"] = tracks_dict
+                            station_copy["tracks_order"] = tracks_order
+                        elif "tracks" not in station_copy:
+                            station_copy["tracks"] = {}
+                            station_copy["tracks_order"] = []
+                        self.project.stations[src_station_id] = station_copy
+                        existing_station_ids.add(src_station_id)
+
+                    new_entry = {
+                        "station_entry_id": generate_random_id(12),
+                        "station_id": src_station_id,
+                        "station_number": entry.get("station_number"),
+                        "inbound_main_track": entry.get("inbound_main_track"),
+                        "outbound_main_track": entry.get("outbound_main_track"),
+                        "absolute_standard_running_time": entry.get("absolute_standard_running_time"),
+                    }
+
+                new_station_list.append(new_entry)
+
+            # 路線データをコピーしてプロジェクトに追加
+            line_copy = copy.deepcopy(src_line)
+            line_copy["station_list"] = new_station_list
+            self.project.lines[line_id] = line_copy
+            self.project.lines_order.append(line_id)
+
+            # station_entry_to_station_id を更新
+            for entry in new_station_list:
+                eid = entry.get("station_entry_id")
+                sid = entry.get("station_id")
+                if eid and sid:
+                    self.project.station_entry_to_station_id[eid] = sid
 
     def _populate_station_list(self, line_data: dict):
         """選択された路線に紐づく駅をリストに表示する"""
