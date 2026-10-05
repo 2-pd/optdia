@@ -747,8 +747,12 @@ class TimetableView(QTableView):
             target_indexes = [idx for idx in selected_indexes if len(model.row_headers) <= idx.row() < len(model.row_headers) + len(model.station_rows)]
             if not target_indexes or index not in selected_indexes:
                 target_indexes = [index]
+            if len(target_indexes) > 1:
+                model.begin_batch()
             for tgt_idx in target_indexes:
                 model.setData(tgt_idx, new_val, StopTypeRole)
+            if len(target_indexes) > 1:
+                model.end_batch()
         elif selected_action == split_action:
             split_train_at_cell(self, model, index)
 

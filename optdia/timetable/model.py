@@ -41,6 +41,8 @@ class TimetableModel(QAbstractTableModel):
         self._dest_cache = {}    # 行き先表示高速化用
         self.auto_fill_enabled = False
         self.adjust_later_enabled = False
+        self._batch_mode = False
+        self._batch_events = []
 
         if self.history_manager:
             self.history_manager.undone.connect(self._on_history_changed)
@@ -94,6 +96,27 @@ class TimetableModel(QAbstractTableModel):
 
     def set_adjust_later_enabled(self, enabled):
         self.adjust_later_enabled = enabled
+
+    def begin_batch(self):
+        """複数セルへの変更を1回のUndoエントリとしてまとめるバッチモードを開始する"""
+        self._batch_mode = True
+        self._batch_events = []
+
+    def end_batch(self):
+        """バッチモードを終了し、蓄積されたイベントをまとめてHistoryManagerに登録する"""
+        self._batch_mode = False
+        if self._batch_events and self.history_manager:
+            self.history_manager.push_events(self._batch_events)
+        self._batch_events = []
+
+    def _push_events(self, events):
+        """イベントをHistoryManagerに登録する。バッチモード中は蓄積する"""
+        if not events:
+            return
+        if self._batch_mode:
+            self._batch_events.extend(events)
+        elif self.history_manager:
+            self.history_manager.push_events(events)
 
     def _seconds_to_time(self, seconds: int):
         if seconds is None:
@@ -512,7 +535,7 @@ class TimetableModel(QAbstractTableModel):
                             pass
                         
                         if self.history_manager and events_to_push:
-                            self.history_manager.push_events(events_to_push)
+                            self._push_events(events_to_push)
                         self._trigger_update(col, d_trains, index)
                     return changed
             return False
@@ -599,7 +622,7 @@ class TimetableModel(QAbstractTableModel):
                     
                     if changed:
                         if self.history_manager and events_to_push:
-                            self.history_manager.push_events(events_to_push)
+                            self._push_events(events_to_push)
                         self._trigger_update(col, d_trains, index)
                     return changed
 
@@ -771,7 +794,7 @@ class TimetableModel(QAbstractTableModel):
 
         if changed:
             if self.history_manager and events_to_push:
-                self.history_manager.push_events(events_to_push)
+                self._push_events(events_to_push)
             self._trigger_update(col, d_trains, index)
             return True
         return False
@@ -1186,11 +1209,29 @@ class TimetableModel(QAbstractTableModel):
                 elif kind == "diagrams":
                     cell_data["value"] = copy.deepcopy(m_train.get("_diagram_ids", []))
                 elif kind == "operations":
-                    cell_data["value"] = copy.deepcopy(d_train.get("operations", []))
+                    ops_data = []
+                    diagram_ops = self.project.diagrams.get(self.diagram_id, {}).get("operations", {})
+                    for op in d_train.get("operations", []):
+                        op_id = op.get("operation_id") if isinstance(op, dict) else op
+                        op_obj = diagram_ops.get(op_id, {}) if op_id else {}
+                        op_num = op_obj.get("operation_number")
+                        ops_data.append({
+                            "operation_id": op_id,
+                            "operation_number": op_num
+                        })
+                    cell_data["value"] = ops_data
                 elif kind == "car_count":
                     cell_data["value"] = d_train.get("car_count")
                 elif kind == "train_type":
-                    cell_data["value"] = m_train.get("train_type_id")
+                    tt_id = m_train.get("train_type_id")
+                    tt_obj = self.project.train_types.get(tt_id, {}) if tt_id else {}
+                    cell_data["value"] = tt_id
+                    cell_data["train_type_info"] = {
+                        "train_type_id": tt_id,
+                        "train_type_name": tt_obj.get("train_type_name"),
+                        "train_type_short_name": tt_obj.get("train_type_short_name"),
+                        "train_name": tt_obj.get("train_name")
+                    }
                 elif kind == "named_train_number":
                     cell_data["value"] = m_train.get("named_train_number")
                 elif kind == "destination":
@@ -1223,10 +1264,20 @@ class TimetableModel(QAbstractTableModel):
             custom_data_grid.append(custom_row)
 
         plain_text = "\n".join(plain_text_rows)
+
+        # 各列に対応する列車IDのリスト
+        col_train_ids = []
+        for c in range(min_col, max_col + 1):
+            if c < len(self.train_ids):
+                col_train_ids.append(self.train_ids[c])
+            else:
+                col_train_ids.append(None)
+
         payload = {
             "version": "1.0",
             "num_rows": len(custom_data_grid),
             "num_cols": len(custom_data_grid[0]) if custom_data_grid else 0,
+            "train_ids": col_train_ids,
             "grid": custom_data_grid
         }
         json_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -1259,6 +1310,7 @@ class TimetableModel(QAbstractTableModel):
             src_grid = payload.get("grid", [])
             src_rows = payload.get("num_rows", len(src_grid))
             src_cols = payload.get("num_cols", len(src_grid[0]) if src_grid else 0)
+            src_col_train_ids = payload.get("train_ids", [])
         except Exception:
             QMessageBox.critical(parent_widget, "貼り付けエラー", "クリップボードのデータ形式が不正です。")
             return False
@@ -1276,16 +1328,21 @@ class TimetableModel(QAbstractTableModel):
             num_cols = src_cols
 
         grid = []
+        tiled_src_train_ids = []
         for r in range(num_rows):
             row_cells = []
             for c in range(num_cols):
-                cell_copy = copy.deepcopy(src_grid[r % src_rows][c % src_cols])
-                # 「運転日」行への貼り付け時、現在表示中の運転ダイヤが含まれていなければ自動追加
-                if cell_copy.get("kind") == "diagrams" and isinstance(cell_copy.get("value"), list):
-                    if self.diagram_id not in cell_copy["value"]:
-                        cell_copy["value"].append(self.diagram_id)
+                src_c = c % src_cols
+                cell_copy = copy.deepcopy(src_grid[r % src_rows][src_c])
                 row_cells.append(cell_copy)
             grid.append(row_cells)
+
+        for c in range(num_cols):
+            src_c = c % src_cols
+            if src_col_train_ids and src_c < len(src_col_train_ids):
+                tiled_src_train_ids.append(src_col_train_ids[src_c])
+            else:
+                tiled_src_train_ids.append(None)
 
         start_row = start_index.row()
         start_col = start_index.column()
@@ -1293,7 +1350,6 @@ class TimetableModel(QAbstractTableModel):
 
         # --- 整合性チェック (貼り付け前に全体を検証) ---
         # 1. 行種類の適合性チェック
-        # 2. 参照IDの存在チェック (車両運用ID, 運転ダイヤID, 連続する列車の運行系統・ダイヤ・列車ID)
         for r_offset, row_cells in enumerate(grid):
             target_row = start_row + r_offset
             if target_row >= total_table_rows:
@@ -1306,8 +1362,6 @@ class TimetableModel(QAbstractTableModel):
 
             for c_offset, cell in enumerate(row_cells):
                 src_kind = cell.get("kind")
-                val = cell.get("value")
-
                 # 行の種類の整合性
                 # 駅発着時刻同士は許容（src_kind == "station_time" and target_kind == "station_time"）
                 if src_kind != target_kind:
@@ -1318,68 +1372,6 @@ class TimetableModel(QAbstractTableModel):
                             f"異なる種類の行にデータを貼り付けることはできません。（{src_kind} → {target_kind}）"
                         )
                         return False
-
-                # 参照IDの存在チェック
-                if src_kind == "operations":
-                    # val is list of operation items (dict or id string)
-                    if isinstance(val, list):
-                        diagram_ops = self.project.diagrams.get(self.diagram_id, {}).get("operations", {})
-                        for op in val:
-                            op_id = op.get("operation_id") if isinstance(op, dict) else op
-                            if op_id and op_id not in diagram_ops:
-                                QMessageBox.critical(
-                                    parent_widget,
-                                    "貼り付けエラー",
-                                    f"プロジェクトデータ上に存在しない車両運用ID ({op_id}) が含まれているため、貼り付けできません。"
-                                )
-                                return False
-
-                elif src_kind == "diagrams":
-                    # val is list of diagram_id strings
-                    if isinstance(val, list):
-                        for did in val:
-                            if did and did not in self.project.diagrams:
-                                QMessageBox.critical(
-                                    parent_widget,
-                                    "貼り付けエラー",
-                                    f"プロジェクトデータ上に存在しない運転ダイヤID ({did}) が含まれているため、貼り付けできません。"
-                                )
-                                return False
-
-                elif src_kind == "train_type":
-                    # val is train_type_id
-                    if val and val not in self.project.train_types:
-                        QMessageBox.critical(
-                            parent_widget,
-                            "貼り付けエラー",
-                            f"プロジェクトデータ上に存在しない列車種別ID ({val}) が含まれているため、貼り付けできません。"
-                        )
-                        return False
-
-                elif src_kind == "subsequent_trains":
-                    # val is list of dicts with route_id, direction, train_id
-                    if isinstance(val, list):
-                        for sub in val:
-                            s_rid = sub.get("route_id")
-                            s_dir = sub.get("direction")
-                            s_tid = sub.get("train_id")
-                            if s_rid or s_dir or s_tid:
-                                sub_route = self.project.routes.get(s_rid)
-                                if not sub_route:
-                                    QMessageBox.critical(
-                                        parent_widget,
-                                        "貼り付けエラー",
-                                        f"プロジェクトデータ上に存在しない「連続する列車」（運行系統: {s_rid}）が含まれているため、貼り付けできません。"
-                                    )
-                                    return False
-                                sub_train_key = "inbound_trains" if s_dir == "inbound" else "outbound_trains"
-                                if s_tid not in sub_route.get(sub_train_key, {}):
-                                    QMessageBox.critical(
-                                        parent_widget,
-                                        "貼り付けエラー",
-                                        f"プロジェクトデータ上に存在しない「連続する列車」（列車ID: {s_tid}）が含まれているため、貼り付けできません。"
-                                    )
-                                    return False
 
         # --- 列数がテーブルからはみ出す場合の自動列車追加 ---
         needed_cols = start_col + num_cols
@@ -1424,6 +1416,19 @@ class TimetableModel(QAbstractTableModel):
 
             self.train_ids = order
 
+        # クリップボード列車ID -> 貼り付け先列車ID のマップ作成（連続する列車の再割り当て用）
+        src_train_id_to_dest = {}
+        for c_offset in range(num_cols):
+            dest_col = start_col + c_offset
+            src_tid = tiled_src_train_ids[c_offset]
+            if src_tid and dest_col < len(self.train_ids):
+                # 最初の対応関係を記録（重複があっても最初または最新の列に対応付け）
+                src_train_id_to_dest[src_tid] = {
+                    "route_id": self.route_id,
+                    "direction": self.direction,
+                    "train_id": self.train_ids[dest_col]
+                }
+
         # --- データの適用と履歴イベントの生成 ---
         route = self.project.routes.get(self.route_id, {})
         tbd = route.get("trains_by_diagram", {}).get(self.diagram_id, {})
@@ -1436,6 +1441,9 @@ class TimetableModel(QAbstractTableModel):
             events_to_push.extend(add_train_events)
 
         affected_cols = set()
+        skipped_headers = []
+
+        diagram_ops = self.project.diagrams.get(self.diagram_id, {}).get("operations", {})
 
         for c_offset in range(num_cols):
             col = start_col + c_offset
@@ -1470,12 +1478,21 @@ class TimetableModel(QAbstractTableModel):
 
                 elif target_kind == "diagrams":
                     if isinstance(val, list):
-                        new_dids = list(val)
+                        raw_dids = list(val)
+                        # 存在しない運転ダイヤIDは無視し、存在するもののみ抽出
+                        valid_dids = [did for did in raw_dids if did in self.project.diagrams]
+                        if any(did not in self.project.diagrams for did in raw_dids):
+                            if "運転日" not in skipped_headers:
+                                skipped_headers.append("運転日")
+                        # 現在表示中の運転ダイヤが含まれていなければ自動追加
+                        if self.diagram_id not in valid_dids:
+                            valid_dids.append(self.diagram_id)
+
                         old_dids = list(m_train.get("_diagram_ids", []))
-                        if old_dids != new_dids:
+                        if old_dids != valid_dids:
                             # 削除されたダイヤと追加されたダイヤのイベントを生成
                             for did in old_dids:
-                                if did not in new_dids:
+                                if did not in valid_dids:
                                     tbd_old = route.get("trains_by_diagram", {}).get(did, {})
                                     dt_old = tbd_old.get(train_key, {}).get(train_id, {})
                                     ord_old = tbd_old.get(f"{train_key}_order", [])
@@ -1483,7 +1500,7 @@ class TimetableModel(QAbstractTableModel):
                                     col_events.append(RemoveTrainDiagramEvent(self.route_id, self.direction, train_id, did, idx_old, dt_old))
                                     if train_id in ord_old: ord_old.remove(train_id)
                                     if train_id in tbd_old.get(train_key, {}): del tbd_old[train_key][train_id]
-                            for did in new_dids:
+                            for did in valid_dids:
                                 if did not in old_dids:
                                     tbd_new = route.setdefault("trains_by_diagram", {}).setdefault(did, {})
                                     dt_new = tbd_new.setdefault(train_key, {})
@@ -1499,16 +1516,46 @@ class TimetableModel(QAbstractTableModel):
                                     dt_new[train_id] = dt_obj
                                     ord_new.append(train_id)
                                     col_events.append(AddTrainDiagramEvent(self.route_id, self.direction, train_id, did, len(ord_new) - 1, dt_obj))
-                            m_train["_diagram_ids"] = new_dids
+                            m_train["_diagram_ids"] = valid_dids
                             col_changed = True
 
                 elif target_kind == "operations":
-                    new_ops = copy.deepcopy(val) if isinstance(val, list) else []
-                    old_ops = copy.deepcopy(d_train.get("operations", []))
-                    if old_ops != new_ops:
-                        d_train["operations"] = new_ops
-                        col_events.append(ChangeTrainOperationEvent(self.route_id, self.direction, train_id, self.diagram_id, old_ops, new_ops))
-                        col_changed = True
+                    if isinstance(val, list):
+                        resolved_ops = []
+                        has_skipped_op = False
+                        for op_item in val:
+                            if isinstance(op_item, dict):
+                                op_id = op_item.get("operation_id")
+                                op_num = op_item.get("operation_number")
+                            else:
+                                op_id = op_item
+                                op_num = None
+
+                            # 1. IDが現在のダイヤに存在するか確認
+                            if op_id and op_id in diagram_ops:
+                                resolved_ops.append({"operation_id": op_id})
+                            elif op_num is not None:
+                                # 2. 運用番号が一致する運用を検索
+                                matched_id = None
+                                for d_op_id, d_op in diagram_ops.items():
+                                    if d_op.get("operation_number") == op_num or str(d_op.get("operation_number")) == str(op_num):
+                                        matched_id = d_op_id
+                                        break
+                                if matched_id:
+                                    resolved_ops.append({"operation_id": matched_id})
+                                else:
+                                    has_skipped_op = True
+                            else:
+                                has_skipped_op = True
+
+                        if has_skipped_op and "運用番号" not in skipped_headers:
+                            skipped_headers.append("運用番号")
+
+                        old_ops = copy.deepcopy(d_train.get("operations", []))
+                        if old_ops != resolved_ops:
+                            d_train["operations"] = resolved_ops
+                            col_events.append(ChangeTrainOperationEvent(self.route_id, self.direction, train_id, self.diagram_id, old_ops, resolved_ops))
+                            col_changed = True
 
                 elif target_kind == "car_count":
                     new_val = int(val) if val is not None and str(val).strip() != "" else None
@@ -1519,11 +1566,33 @@ class TimetableModel(QAbstractTableModel):
                         col_changed = True
 
                 elif target_kind == "train_type":
-                    new_val = val if val else None
-                    if m_train.get("train_type_id") != new_val:
+                    tt_info = cell.get("train_type_info") or {}
+                    raw_tt_id = val or tt_info.get("train_type_id")
+                    resolved_tt_id = None
+
+                    if raw_tt_id and raw_tt_id in self.project.train_types:
+                        resolved_tt_id = raw_tt_id
+                    elif raw_tt_id or tt_info:
+                        tt_name = tt_info.get("train_type_name")
+                        tt_short = tt_info.get("train_type_short_name")
+                        t_name = tt_info.get("train_name")
+
+                        # 検索条件: (train_type_name と train_name が共に一致) または (train_type_short_name が一致)
+                        for p_tt_id, p_tt in self.project.train_types.items():
+                            match1 = (tt_name is not None and p_tt.get("train_type_name") == tt_name and p_tt.get("train_name") == t_name)
+                            match2 = (tt_short is not None and p_tt.get("train_type_short_name") == tt_short)
+                            if match1 or match2:
+                                resolved_tt_id = p_tt_id
+                                break
+
+                        if not resolved_tt_id and (raw_tt_id is not None or tt_name or tt_short):
+                            if "種別・愛称" not in skipped_headers:
+                                skipped_headers.append("種別・愛称")
+
+                    if m_train.get("train_type_id") != resolved_tt_id:
                         old_val = m_train.get("train_type_id")
-                        m_train["train_type_id"] = new_val
-                        col_events.append(ChangeTrainTypeEvent(self.route_id, self.direction, train_id, old_val, new_val))
+                        m_train["train_type_id"] = resolved_tt_id
+                        col_events.append(ChangeTrainTypeEvent(self.route_id, self.direction, train_id, old_val, resolved_tt_id))
                         col_changed = True
 
                 elif target_kind == "named_train_number":
@@ -1543,12 +1612,35 @@ class TimetableModel(QAbstractTableModel):
                         col_changed = True
 
                 elif target_kind == "subsequent_trains":
-                    new_subs = copy.deepcopy(val) if isinstance(val, list) else []
-                    old_subs = copy.deepcopy(d_train.get("subsequent_trains", []))
-                    if old_subs != new_subs:
-                        d_train["subsequent_trains"] = new_subs
-                        col_events.append(ChangeSubsequentTrainEvent(self.route_id, self.direction, train_id, self.diagram_id, old_subs, new_subs))
-                        col_changed = True
+                    if isinstance(val, list):
+                        resolved_subs = []
+                        for sub in val:
+                            s_rid = sub.get("route_id")
+                            s_dir = sub.get("direction")
+                            s_tid = sub.get("train_id")
+                            if s_tid in src_train_id_to_dest:
+                                # 同時にクリップボードにあった列の列車IDに置き換え
+                                resolved_subs.append(copy.deepcopy(src_train_id_to_dest[s_tid]))
+                            else:
+                                # そのままの情報を検証して使用
+                                if s_rid or s_dir or s_tid:
+                                    sub_route = self.project.routes.get(s_rid)
+                                    if sub_route:
+                                        sub_train_key = "inbound_trains" if s_dir == "inbound" else "outbound_trains"
+                                        if s_tid in sub_route.get(sub_train_key, {}):
+                                            resolved_subs.append(copy.deepcopy(sub))
+                                        else:
+                                            if "連続する列車" not in skipped_headers:
+                                                skipped_headers.append("連続する列車")
+                                    else:
+                                        if "連続する列車" not in skipped_headers:
+                                            skipped_headers.append("連続する列車")
+
+                        old_subs = copy.deepcopy(d_train.get("subsequent_trains", []))
+                        if old_subs != resolved_subs:
+                            d_train["subsequent_trains"] = resolved_subs
+                            col_events.append(ChangeSubsequentTrainEvent(self.route_id, self.direction, train_id, self.diagram_id, old_subs, resolved_subs))
+                            col_changed = True
 
                 elif target_kind == "note":
                     new_val = str(val) if val is not None else ""
@@ -1665,6 +1757,23 @@ class TimetableModel(QAbstractTableModel):
                         self.index(self.rowCount() - 1, col),
                         [Qt.DisplayRole, Qt.EditRole, Qt.ForegroundRole, Qt.BackgroundRole, StopTypeRole]
                     )
+
+            if skipped_headers:
+                joined_headers = "、".join(skipped_headers)
+                QMessageBox.information(
+                    parent_widget,
+                    "貼り付けのスキップ",
+                    f"現在編集中のデータに登録されていない{joined_headers}の貼り付けをスキップしました"
+                )
+
             return True
+
+        if skipped_headers:
+            joined_headers = "、".join(skipped_headers)
+            QMessageBox.information(
+                parent_widget,
+                "貼り付けのスキップ",
+                f"現在編集中のデータに登録されていない{joined_headers}の貼り付けをスキップしました"
+            )
 
         return False

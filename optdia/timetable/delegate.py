@@ -323,9 +323,13 @@ class TimetableDelegate(QStyledItemDelegate):
             target_cols = [idx.column() for idx in selected_indexes if idx.row() == index.row()]
             if index.column() not in target_cols:
                 target_cols = [index.column()]
+            if len(target_cols) > 1:
+                model.begin_batch()
             for col in target_cols:
                 if 0 <= col < len(model.train_ids):
                     model.setData(model.index(index.row(), col), picker.selected_id, Qt.EditRole)
+            if len(target_cols) > 1:
+                model.end_batch()
 
     def _show_operation_picker_menu(self, index, model, widget):
         # 担当運用選択ポップアップを表示
