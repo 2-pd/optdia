@@ -6,7 +6,7 @@
  */
 
 
-// 仕様バージョン 2026.09.002
+// 仕様バージョン 2026.10.001
 
 // OptDiaでは、鉄道ダイヤグラムデータを以下のオブジェクト「optdia_project」に適合するJSON文字列として、拡張子「.optdia」のファイルに保存する。
 // 「optdia_project」オブジェクトに適合するJSON文字列をgzip圧縮して保存したファイルも利用可能であり、その場合の拡張子は「.optd」となる。
@@ -21,15 +21,27 @@ export interface optdia_project {
 
 // プロジェクトファイルのメタデータを格納するオブジェクト
 interface optdia_project_metadata {
+    railroad_id: string | null; // 路線系統ID(未入力の場合はnull)
     railroad_name: string; // 路線系統名
+    timetable_revision_date: string | null; // ダイヤ改正日(YYYY-MM-DD形式、未入力の場合はnull)
     description: string; // 路線系統についての説明文
     license_text: string; // プロジェクトファイルのライセンス文
+    timezone: string; //プロジェクトファイルで使用される時刻のタイムゾーンのIANA time zone identifier (デフォルト値は Asia/Tokyo)
+    publishers: optdia_publisher[]; // プロジェクトファイルの作成者情報を表示順に配列で
     project_schema_version: string; // プロジェクトファイルの仕様バージョン
+}
+
+
+// プロジェクトファイルの作成者情報を格納するオブジェクト
+interface optdia_publisher {
+    publisher_name: string; // プロジェクトファイルの作成者名
+    publisher_url: string | null; // プロジェクトファイルの作成者情報を閲覧できるURL
 }
 
 
 // プロジェクトのコンテンツ本体を格納するオブジェクト
 interface optdia_project_entities {
+    agencies: optdia_agency[]; // 鉄道事業者の情報を表示順に配列で
     lines: optdia_line[]; // 各路線の情報(下記)を表示順に配列で
     stations: optdia_station_dict; // 各駅の情報(下記)を連想配列で
     routes: optdia_route[]; // 運行系統の情報(下記)を表示順に配列で
@@ -40,14 +52,25 @@ interface optdia_project_entities {
 }
 
 
+// 鉄道事業者の情報を格納するオブジェクト
+interface optdia_agency {
+    agency_id: string; // 事業者ID
+    agency_name: string; // 事業者名
+    agency_short_name: string; // 事業者名の省略表記
+    agency_url: string | null; // 事業者公式サイトのURL
+}
+
+
 // 路線情報を格納するオブジェクト
 interface optdia_line {
     line_id: string; // 路線ID
     line_name: string; // 路線名
+    line_type: "rail" | "metro" | "high_speed_rail" | "tram" | "agt" | "monorail" | "funicular" | "bus"; // 路線の分類(普通鉄道、地下鉄、高速鉄道、路面電車・ライトレール、新交通システム、モノレール、ケーブルカー、バス・DMV)
     line_color: string; // 路線の色(デフォルト値は #333333)
     line_symbol: string | null; // 路線記号等(1〜2文字の英数字または1文字のマルチバイト文字)
     inbound_direction_is_forward_direction: boolean; // 編成の前位向きと列車の上り向きが一致するか否か
-    station_list: optdia_line_station_entry[]; // 路線に駅を紐付ける情報(下記)を起点側の駅のものから順に配列で
+    station_entries: optdia_line_station_entry[]; // 路線に駅を紐付ける情報(下記)を起点側の駅のものから順に配列で
+    agency_ids: string[]; // 路線を管轄する鉄道事業者の事業者IDを表示順に配列で
 }
 
 
@@ -66,6 +89,8 @@ interface optdia_station {
     is_signal_station: boolean; // 信号場か否か
     show_arrival_time: boolean; // 時刻表で着時刻を表示するか否か
     show_track_name: boolean; // 時刻表で発着番線を表示するか否か
+    latitude: number; // 駅の緯度(小数点以下は6桁まで)
+    longitude: number; // 駅の経度(小数点以下は6桁まで)
     tracks: optdia_station_track[]; // 発着番線情報(下記)を表示順に配列で
 }
 
@@ -83,6 +108,7 @@ interface optdia_line_station_entry {
     station_entry_id: string; // 路線-駅対応ID(ランダムな英数字12文字)
     station_id: string; // 駅ID
     station_number: string | null; // 駅番号
+    operating_kilometers: number | null; // 起点からのキロ程(小数点以下1桁、未入力の場合はnull)
     inbound_main_track: string | null; // 上り本線の発着番線ID
     outbound_main_track: string | null; // 下り本線の発着番線ID
     absolute_standard_running_time: number | null; // 起点駅からの基準運転時分(秒単位、未入力の場合はnull)
