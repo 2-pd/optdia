@@ -45,6 +45,9 @@ QListWidget::item:disabled:selected {
     background-color: #cccccc;
     color: #efefef;
 }
+QListWidget QScrollBar:vertical {
+    background-color: #f7f7f7;
+}
 
 QPushButton {
     padding: 5px;
