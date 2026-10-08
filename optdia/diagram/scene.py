@@ -1,5 +1,9 @@
 import math
-from PySide6.QtWidgets import QGraphicsScene, QGraphicsLineItem, QGraphicsSimpleTextItem, QGraphicsPathItem
+import html
+from PySide6.QtWidgets import (
+    QGraphicsScene, QGraphicsLineItem, QGraphicsSimpleTextItem,
+    QGraphicsPathItem, QGraphicsTextItem, QGraphicsDropShadowEffect
+)
 from PySide6.QtGui import QColor, QPen, QBrush, QFont, QPainterPath
 from PySide6.QtCore import Qt, QRectF
 
@@ -113,6 +117,9 @@ class DiagramScene(QGraphicsScene):
         self.filter_train_type_id = None
         self.scale_x = scale_x
         self.scale_y = scale_y
+        self.rendered_trains = []
+        self.current_highlight_train = None
+        self.current_highlight_query = ""
 
     def set_scales(self, scale_x: float, scale_y: float):
         if self.scale_x != scale_x or self.scale_y != scale_y:
@@ -133,6 +140,9 @@ class DiagramScene(QGraphicsScene):
         self.route_id = route_id
         self.diagram_id = diagram_id
         self.filter_train_type_id = filter_train_type_id
+        self.rendered_trains = []
+        self.current_highlight_train = None
+        self.current_highlight_query = ""
 
         self.clear()
 
@@ -496,11 +506,42 @@ class DiagramScene(QGraphicsScene):
         if len(current_subpath) >= 2:
             subpaths.append(current_subpath)
 
+        path_items = []
         for sp in subpaths:
-            self._draw_path(sp, pen)
+            p_item = self._draw_path(sp, pen)
+            if p_item:
+                path_items.append(p_item)
 
         # 列車番号ラベルの描画
-        self._render_train_number_label(train, subpaths)
+        text_item = self._render_train_number_label(train, subpaths)
+
+        # 始発時刻（表示されている最初の有効な発着時刻）を取得
+        sort_key = None
+        for stop in stops:
+            arr = self._time_to_seconds(stop.get("arrival_time"))
+            dep = self._time_to_seconds(stop.get("departure_time"))
+            if dep is not None:
+                sort_key = dep
+                break
+            elif arr is not None:
+                sort_key = arr
+                break
+        if sort_key is None:
+            sort_key = 0
+
+        p0 = subpaths[0][0] if subpaths and subpaths[0] else (0, 0)
+        tt_id = train.get("train_type_id")
+        tt = self.project.train_types.get(tt_id) if (self.project and tt_id) else None
+        main_color = tt.get("main_color", "#333333") if tt else "#333333"
+
+        self.rendered_trains.append({
+            "train_number": str(train.get("train_number", "")),
+            "sort_key": sort_key,
+            "path_items": path_items,
+            "text_item": text_item,
+            "main_color": main_color,
+            "p0": p0,
+        })
 
     def _render_trains_for_line(self, stations_data):
         target_line_id = self.selected_target
@@ -581,21 +622,52 @@ class DiagramScene(QGraphicsScene):
                     if len(current_subpath) >= 2:
                         subpaths.append(current_subpath)
 
+                    path_items = []
                     for sp in subpaths:
-                        self._draw_path(sp, pen)
+                        p_item = self._draw_path(sp, pen)
+                        if p_item:
+                            path_items.append(p_item)
 
                     # 列車番号ラベルの描画
-                    self._render_train_number_label(m_train, subpaths)
+                    text_item = self._render_train_number_label(m_train, subpaths)
+
+                    # 始発時刻（表示されている最初の有効な発着時刻）を取得
+                    sort_key = None
+                    for stop in stops:
+                        arr = self._time_to_seconds(stop.get("arrival_time"))
+                        dep = self._time_to_seconds(stop.get("departure_time"))
+                        if dep is not None:
+                            sort_key = dep
+                            break
+                        elif arr is not None:
+                            sort_key = arr
+                            break
+                    if sort_key is None:
+                        sort_key = 0
+
+                    p0 = subpaths[0][0] if subpaths and subpaths[0] else (0, 0)
+                    tt_id = m_train.get("train_type_id")
+                    tt = self.project.train_types.get(tt_id) if (self.project and tt_id) else None
+                    main_color = tt.get("main_color", "#333333") if tt else "#333333"
+
+                    self.rendered_trains.append({
+                        "train_number": str(m_train.get("train_number", "")),
+                        "sort_key": sort_key,
+                        "path_items": path_items,
+                        "text_item": text_item,
+                        "main_color": main_color,
+                        "p0": p0,
+                    })
 
     def _render_train_number_label(self, train, subpaths):
         train_number = train.get("train_number", "")
         if not train_number or not subpaths:
-            return
+            return None
 
         # 最初のサブパスを取得
         first_subpath = subpaths[0]
         if len(first_subpath) < 2:
-            return
+            return None
 
         p0 = first_subpath[0]
         # p0とy座標が異なる最初の点（次の経由駅での点）を探す
@@ -615,7 +687,7 @@ class DiagramScene(QGraphicsScene):
         # dy > 0: 上から下に向かう列車
         # dy < 0: 下から上に向かう列車
         if dy == 0 and dx == 0:
-            return
+            return None
 
         # 角度計算（度単位）
         angle_rad = math.atan2(dy, dx)
@@ -629,9 +701,11 @@ class DiagramScene(QGraphicsScene):
         font = QFont()
         font.setPixelSize(12)
 
-        text_item = QGraphicsSimpleTextItem(train_number)
+        text_item = QGraphicsTextItem()
+        text_item.document().setDocumentMargin(0)
         text_item.setFont(font)
-        text_item.setBrush(QBrush(QColor(main_color)))
+        text_item.setDefaultTextColor(QColor(main_color))
+        text_item.setPlainText(train_number)
 
         # 回転中心をテキストの左上(0,0)にして回転
         text_item.setRotation(angle_deg)
@@ -661,10 +735,11 @@ class DiagramScene(QGraphicsScene):
         text_item.setPos(pos_x, pos_y)
         text_item.setZValue(3)
         self.addItem(text_item)
+        return text_item
 
     def _draw_path(self, points, pen):
         if len(points) < 2:
-            return
+            return None
         path = QPainterPath()
         path.moveTo(points[0][0], points[0][1])
         for pt in points[1:]:
@@ -674,6 +749,7 @@ class DiagramScene(QGraphicsScene):
         path_item.setPen(pen)
         path_item.setZValue(2)
         self.addItem(path_item)
+        return path_item
 
     def _create_train_pen(self, train_type_id):
         tt = self.project.train_types.get(train_type_id) if (self.project and train_type_id) else None
@@ -717,6 +793,77 @@ class DiagramScene(QGraphicsScene):
         except (ValueError, IndexError):
             pass
         return None
+
+    def get_matching_trains(self, query: str):
+        """
+        検索文字列に列車番号が部分一致する表示中の列車を、始発時刻順（同一時は列車番号順）にリストアップして返す。
+        """
+        query = query.strip()
+        if not query:
+            return []
+        
+        matches = [t for t in self.rendered_trains if query in t["train_number"]]
+        # 始発時刻順、同一時刻の場合は列車番号順でソート
+        matches.sort(key=lambda t: (t["sort_key"], t["train_number"]))
+        return matches
+
+    def clear_highlight(self):
+        """現在ハイライトされている列車のハイライトを解除する"""
+        if self.current_highlight_train:
+            t_data = self.current_highlight_train
+            for p_item in t_data.get("path_items", []):
+                p_item.setGraphicsEffect(None)
+                p_item.setZValue(2)
+            
+            text_item = t_data.get("text_item")
+            if text_item:
+                text_item.setPlainText(t_data.get("train_number", ""))
+                text_item.setZValue(3)
+
+            self.current_highlight_train = None
+            self.current_highlight_query = ""
+
+    def highlight_train(self, train_data, query: str):
+        """
+        指定された列車をハイライト表示する。
+        - 列車パスに濃い黄色のドロップシャドウ効果を適用
+        - 列車番号ラベルの一致部分を濃い黄色の背景色でハイライト
+        - ZValueを上げて最前面に表示
+        """
+        self.clear_highlight()
+        if not train_data:
+            return
+
+        self.current_highlight_train = train_data
+        self.current_highlight_query = query
+
+        # パスにドロップシャドウを適用
+        for p_item in train_data.get("path_items", []):
+            shadow = QGraphicsDropShadowEffect()
+            shadow.setColor(QColor("#ffee00"))
+            shadow.setBlurRadius(10)
+            shadow.setOffset(0, 0)
+            p_item.setGraphicsEffect(shadow)
+            p_item.setZValue(10)
+
+        # 列車番号テキストの一致部分をハイライト
+        text_item = train_data.get("text_item")
+        if text_item:
+            num = train_data.get("train_number", "")
+            main_color = train_data.get("main_color", "#333333")
+            if query and query in num:
+                # queryに一致する部分に背景色を設定
+                escaped_num = html.escape(num)
+                escaped_query = html.escape(query)
+                highlighted_html = escaped_num.replace(
+                    escaped_query,
+                    f"<span style='background-color: #ffee00;'>{escaped_query}</span>"
+                )
+                html_text = f"<span style='color: {main_color}; font-size: 12px; font-family: sans-serif;'>{highlighted_html}</span>"
+                text_item.setHtml(html_text)
+            else:
+                text_item.setPlainText(num)
+            text_item.setZValue(11)
 
     def _render_operations(self, stations_data):
         """

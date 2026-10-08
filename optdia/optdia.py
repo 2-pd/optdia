@@ -238,6 +238,7 @@ class MainWindow(QMainWindow):
 
         timetable_search_layout.addStretch(1)
 
+        # 検索ボックス
         self.train_search_edit = QLineEdit()
         self.train_search_edit.setPlaceholderText("列車番号を検索")
         self.train_search_edit.setFixedWidth(160)
@@ -245,6 +246,7 @@ class MainWindow(QMainWindow):
         self.train_search_edit.textChanged.connect(self._on_train_search_text_changed)
         timetable_search_layout.addWidget(self.train_search_edit)
 
+        # 検索にヒットした件数を表示するラベル
         self.train_search_label = QLabel()
         self.train_search_label.setFixedWidth(50)
         self.train_search_label.setProperty("class", "search_label")
@@ -256,6 +258,7 @@ class MainWindow(QMainWindow):
         right_pixmap = left_pixmap.transformed(flip_h_transform)
         right_icon = QIcon(right_pixmap) # 右移動ボタン用のアイコン
 
+        # 右移動ボタン
         self.btn_search_prev = QPushButton()
         self.btn_search_prev.setIcon(right_icon)
         self.btn_search_prev.setFixedWidth(30)
@@ -264,6 +267,7 @@ class MainWindow(QMainWindow):
         self.btn_search_prev.clicked.connect(self._on_search_prev_clicked)
         timetable_search_layout.addWidget(self.btn_search_prev)
 
+        # 左移動ボタン
         self.btn_search_next = QPushButton()
         self.btn_search_next.setIcon(left_icon)
         self.btn_search_next.setFixedWidth(30)
@@ -468,6 +472,38 @@ class MainWindow(QMainWindow):
             self.diagram_height_combo.setCurrentIndex(1) # 標準
         self.diagram_height_combo.currentIndexChanged.connect(self._on_diagram_height_changed)
         diagram_header_layout.addWidget(self.diagram_height_combo)
+
+        # 運行ダイヤグラム用の検索ボックス
+        self.diag_search_edit = QLineEdit()
+        self.diag_search_edit.setPlaceholderText("列車番号を検索")
+        self.diag_search_edit.setFixedWidth(160)
+        self.diag_search_edit.setFixedHeight(30)
+        self.diag_search_edit.textChanged.connect(self._on_diag_search_text_changed)
+        diagram_header_layout.addWidget(self.diag_search_edit)
+
+        # 検索にヒットした件数を表示するラベル
+        self.diag_search_label = QLabel()
+        self.diag_search_label.setFixedWidth(50)
+        self.diag_search_label.setProperty("class", "search_label")
+        diagram_header_layout.addWidget(self.diag_search_label)
+
+        # 右移動ボタン (左右反転アイコン)
+        self.btn_diag_search_prev = QPushButton()
+        self.btn_diag_search_prev.setIcon(right_icon)
+        self.btn_diag_search_prev.setFixedWidth(30)
+        self.btn_diag_search_prev.setFixedHeight(30)
+        self.btn_diag_search_prev.setProperty("class", "borderless_button")
+        self.btn_diag_search_prev.clicked.connect(self._on_diag_search_prev_clicked)
+        diagram_header_layout.addWidget(self.btn_diag_search_prev)
+
+        # 左移動ボタン
+        self.btn_diag_search_next = QPushButton()
+        self.btn_diag_search_next.setIcon(left_icon)
+        self.btn_diag_search_next.setFixedWidth(30)
+        self.btn_diag_search_next.setFixedHeight(30)
+        self.btn_diag_search_next.setProperty("class", "borderless_button")
+        self.btn_diag_search_next.clicked.connect(self._on_diag_search_next_clicked)
+        diagram_header_layout.addWidget(self.btn_diag_search_next)
 
         diagram_area_layout.addWidget(self.diagram_header_widget)
 
@@ -1479,11 +1515,116 @@ class MainWindow(QMainWindow):
         self.diagram_header_view.update_header()
         self.diagram_station_view.update_stations(self.project, stations_data)
 
+        # 運行ダイヤグラムの検索ハイライト状態を更新
+        if hasattr(self, "diag_search_edit"):
+            self._update_diagram_search_state(auto_select_first=False)
+
         if reset_scroll_pos:
             # 4時0分の縦線（4 * 60 * scale_x px）が表示領域の左端になる位置にスクロール
             scroll_pos = int(4 * 60 * scale_x)
             self.diagram_view.horizontalScrollBar().setValue(scroll_pos)
             self.diagram_header_view.horizontalScrollBar().setValue(scroll_pos)
+
+    def _update_diagram_search_state(self, auto_select_first=False):
+        """運行ダイヤグラム検索ボックスの入力状態に基づいてラベル、ボタン状態、ハイライトを更新する"""
+        query = self.diag_search_edit.text().strip()
+        if not query:
+            self.diag_search_label.setText("")
+            self.btn_diag_search_prev.setEnabled(False)
+            self.btn_diag_search_next.setEnabled(False)
+            self.diagram_view.scene.clear_highlight()
+            return
+
+        matches = self.diagram_view.scene.get_matching_trains(query)
+        total = len(matches)
+
+        if total == 0:
+            self.diag_search_label.setText("該当無し")
+            self.diag_search_label.setStyleSheet("color: #cc3333;")
+            self.btn_diag_search_prev.setEnabled(False)
+            self.btn_diag_search_next.setEnabled(False)
+            self.diagram_view.scene.clear_highlight()
+        else:
+            self.btn_diag_search_prev.setEnabled(True)
+            self.btn_diag_search_next.setEnabled(True)
+
+            current_highlight = self.diagram_view.scene.current_highlight_train
+            if auto_select_first:
+                target_train = matches[0]
+                self._select_diagram_train(target_train, query)
+                current_rank = 1
+            else:
+                if current_highlight in matches:
+                    current_rank = matches.index(current_highlight) + 1
+                    # 既に選択中の列車を再ハイライト（更新時）
+                    self._select_diagram_train(current_highlight, query, scroll=False)
+                else:
+                    target_train = matches[0]
+                    self._select_diagram_train(target_train, query)
+                    current_rank = 1
+
+            self.diag_search_label.setText(f"{current_rank}/{total}")
+            self.diag_search_label.setStyleSheet("color: #333333;")
+
+    def _select_diagram_train(self, train_data, query: str, scroll: bool = True):
+        """指定した列車をハイライトし、中央にスクロールする"""
+        self.diagram_view.scene.highlight_train(train_data, query)
+        if scroll and train_data:
+            p0 = train_data.get("p0", (0, 0))
+            # 横スクロール位置を中心付近に合わせる
+            viewport_w = self.diagram_view.viewport().width()
+            target_h_val = int(p0[0] - viewport_w / 2)
+            self.diagram_view.horizontalScrollBar().setValue(max(0, target_h_val))
+            # 縦スクロール位置も合わせる
+            viewport_h = self.diagram_view.viewport().height()
+            target_v_val = int(p0[1] - viewport_h / 2)
+            self.diagram_view.verticalScrollBar().setValue(max(0, target_v_val))
+
+    def _on_diag_search_text_changed(self, text: str):
+        """運行ダイヤグラム検索テキスト変更時の処理"""
+        self._update_diagram_search_state(auto_select_first=True)
+
+    def _on_diag_search_next_clicked(self):
+        """運行ダイヤグラム検索の左移動ボタン（右＝時間進行方向の次へ）クリック時の処理"""
+        query = self.diag_search_edit.text().strip()
+        if not query:
+            return
+        matches = self.diagram_view.scene.get_matching_trains(query)
+        if not matches:
+            return
+
+        current_highlight = self.diagram_view.scene.current_highlight_train
+        if current_highlight in matches:
+            curr_idx = matches.index(current_highlight)
+            target_idx = (curr_idx + 1) % len(matches)
+        else:
+            target_idx = 0
+
+        target_train = matches[target_idx]
+        self._select_diagram_train(target_train, query)
+        self.diag_search_label.setText(f"{target_idx + 1}/{len(matches)}")
+        self.diag_search_label.setStyleSheet("color: #333333;")
+
+    def _on_diag_search_prev_clicked(self):
+        """運行ダイヤグラム検索の右移動ボタン（左＝時間前の列車へ）クリック時の処理"""
+        query = self.diag_search_edit.text().strip()
+        if not query:
+            return
+        matches = self.diagram_view.scene.get_matching_trains(query)
+        if not matches:
+            return
+
+        current_highlight = self.diagram_view.scene.current_highlight_train
+        if current_highlight in matches:
+            curr_idx = matches.index(current_highlight)
+            target_idx = (curr_idx - 1) % len(matches)
+        else:
+            target_idx = len(matches) - 1
+
+        target_train = matches[target_idx]
+        self._select_diagram_train(target_train, query)
+        self.diag_search_label.setText(f"{target_idx + 1}/{len(matches)}")
+        self.diag_search_label.setStyleSheet("color: #333333;")
 
 
 # アプリ起動処理
