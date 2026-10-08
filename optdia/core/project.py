@@ -7,7 +7,7 @@ import gzip
 from PySide6.QtWidgets import QMessageBox
 
 # プロジェクトファイルの仕様バージョン (optdia_project.ts の定義に準拠)
-PROJECT_SCHEMA_VERSION = "2026.09.002"
+PROJECT_SCHEMA_VERSION = "2026.10.001"
 
 
 class SchemaVersionError(Exception):
@@ -120,7 +120,47 @@ def migrate_to_2026_09_002(data: dict) -> dict:
                         del stop["station_id"]
 
     if "metadata" in data:
-        data["metadata"]["project_schema_version"] = PROJECT_SCHEMA_VERSION
+        data["metadata"]["project_schema_version"] = "2026.09.002"
+
+    return data
+
+
+def migrate_to_2026_10_001(data: dict) -> dict:
+    """
+    2026.09.002 の仕様で作成されたプロジェクトデータ辞書を 2026.10.001 の仕様へ移行する。
+    - metadata に railroad_id, timetable_revision_date, timezone, publishers を追加
+    - entities に agencies を追加
+    - optdia_line の station_list を station_entries にリネーム
+    - optdia_line に line_type と agency_ids を追加
+    - optdia_station に latitude と longitude を追加
+    - optdia_line_station_entry に operating_kilometers を追加
+    - metadata.project_schema_version を 2026.10.001 に更新
+    """
+    metadata = data.setdefault("metadata", {})
+    metadata.setdefault("railroad_id", None)
+    metadata.setdefault("timetable_revision_date", None)
+    metadata.setdefault("timezone", "Asia/Tokyo")
+    metadata.setdefault("publishers", [])
+
+    entities = data.setdefault("entities", {})
+    entities.setdefault("agencies", [])
+
+    for line in entities.get("lines", []):
+        # station_list → station_entries へリネーム
+        if "station_list" in line and "station_entries" not in line:
+            line["station_entries"] = line.pop("station_list")
+        # 新規キーのデフォルト値を設定
+        line.setdefault("line_type", "rail")
+        line.setdefault("agency_ids", [])
+        # station_entries 内の各エントリに operating_kilometers を追加
+        for entry in line.get("station_entries", []):
+            entry.setdefault("operating_kilometers", None)
+
+    for station in entities.get("stations", {}).values():
+        station.setdefault("latitude", None)
+        station.setdefault("longitude", None)
+
+    metadata["project_schema_version"] = "2026.10.001"
 
     return data
 
@@ -136,17 +176,23 @@ class OptDiaProject:
         if data is None:
             data = {}
 
-        # 2026.09.002 未満のスキーマバージョンの場合は移行処理を実行
+        # スキーマバージョンに応じた移行処理を順に実行
         file_version = data.get("metadata", {}).get("project_schema_version", "")
         if is_older_schema_version(file_version, "2026.09.002"):
             data = migrate_to_2026_09_002(data)
+        if is_older_schema_version(data.get("metadata", {}).get("project_schema_version", ""), "2026.10.001"):
+            data = migrate_to_2026_10_001(data)
 
         # メタデータの読み込みと最小限の初期値設定
         self.metadata = data.get("metadata", {})
         # 指定されたキーが存在しない場合にデフォルト値をセット
+        self.metadata.setdefault("railroad_id", None)
         self.metadata.setdefault("railroad_name", "")
+        self.metadata.setdefault("timetable_revision_date", None)
         self.metadata.setdefault("description", "")
         self.metadata.setdefault("license_text", "")
+        self.metadata.setdefault("timezone", "Asia/Tokyo")
+        self.metadata.setdefault("publishers", [])
         self.metadata.setdefault("project_schema_version", PROJECT_SCHEMA_VERSION)
 
         entities = data.get("entities", {})
@@ -154,13 +200,16 @@ class OptDiaProject:
         # TS定義で配列かつ内部に個別のIDを持つものを、高速検索用の辞書と順序リストに分割
         # 各エンティティごとに定義された ID キーを指定
 
+        # 鉄道事業者 (agencies: optdia_agency[])
+        self.agencies, self.agencies_order = self._split_collection(entities.get("agencies", []), "agency_id")
+
         # 路線 (lines: optdia_line[])
         self.lines, self.lines_order = self._split_collection(entities.get("lines", []), "line_id")
 
         # station_entry_id から station_id を検索するための連想配列を構築
         self.station_entry_to_station_id = {}
         for line in self.lines.values():
-            for entry in line.get("station_list", []):
+            for entry in line.get("station_entries", []):
                 eid = entry.get("station_entry_id")
                 sid = entry.get("station_id")
                 if eid and sid:
@@ -583,6 +632,7 @@ class OptDiaProject:
         return {
             "metadata": self.metadata,
             "entities": {
+                "agencies": [self.agencies[aid] for aid in self.agencies_order],
                 "lines": [self.lines[lid] for lid in self.lines_order],
                 "stations": stations_export,
                 "routes": routes_export,

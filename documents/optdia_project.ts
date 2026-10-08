@@ -89,8 +89,8 @@ interface optdia_station {
     is_signal_station: boolean; // 信号場か否か
     show_arrival_time: boolean; // 時刻表で着時刻を表示するか否か
     show_track_name: boolean; // 時刻表で発着番線を表示するか否か
-    latitude: number; // 駅の緯度(小数点以下は6桁まで)
-    longitude: number; // 駅の経度(小数点以下は6桁まで)
+    latitude: number | null; // 駅の緯度(小数点以下は6桁まで)
+    longitude: number | null; // 駅の経度(小数点以下は6桁まで)
     tracks: optdia_station_track[]; // 発着番線情報(下記)を表示順に配列で
 }
 
