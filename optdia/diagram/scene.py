@@ -253,9 +253,9 @@ class DiagramScene(QGraphicsScene):
                 if not line:
                     continue
 
-                line_station_list = line.get("station_list", [])
-                line_eids = [s.get("station_entry_id") for s in line_station_list]
-                station_map = {s.get("station_entry_id"): s for s in line_station_list}
+                line_station_entries = line.get("station_entries", [])
+                line_eids = [s.get("station_entry_id") for s in line_station_entries]
+                station_map = {s.get("station_entry_id"): s for s in line_station_entries}
 
                 if start_eid not in line_eids or end_eid not in line_eids:
                     continue
@@ -317,12 +317,12 @@ class DiagramScene(QGraphicsScene):
             if not line:
                 return []
 
-            station_list = line.get("station_list", [])
-            if not station_list:
+            station_entries = line.get("station_entries", [])
+            if not station_entries:
                 return []
 
             stations_data = []
-            for s_entry in station_list:
+            for s_entry in station_entries:
                 eid = s_entry.get("station_entry_id")
                 sid = s_entry.get("station_id")
                 abs_time = s_entry.get("absolute_standard_running_time")

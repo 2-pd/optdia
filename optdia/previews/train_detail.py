@@ -193,7 +193,7 @@ class TrainDetailPreviewDialog(QDialog):
         if not line_id:
             return None, "#333333", ""
         line_data = self.project.lines.get(line_id, {})
-        for entry in line_data.get("station_list", []):
+        for entry in line_data.get("station_entries", []):
             if entry.get("station_entry_id") == station_entry_id:
                 return line_id, line_data.get("line_color", "#333333"), str(entry.get("station_number") or "")
         return line_id, line_data.get("line_color", "#333333"), ""

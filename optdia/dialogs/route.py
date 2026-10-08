@@ -92,7 +92,7 @@ class SelectSegmentDialog(QDialog):
         self.line_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         for lid in self.project.lines_order:
             line = self.project.lines[lid]
-            if len(line.get("station_list", [])) >= 2:
+            if len(line.get("station_entries", [])) >= 2:
                 self.line_combo.addItem(line.get("line_name", lid), lid)
         
         form_layout.addRow("路線:", self.line_combo)
@@ -191,7 +191,7 @@ class SelectSegmentDialog(QDialog):
         if not line_id: return
         
         line_data = self.project.lines.get(line_id)
-        for s_item in line_data.get("station_list", []):
+        for s_item in line_data.get("station_entries", []):
             eid = s_item.get("station_entry_id")
             sid = s_item.get("station_id")
             s_name = self.project.stations.get(sid, {}).get("station_name", sid)
@@ -253,20 +253,20 @@ class SelectSegmentDialog(QDialog):
         if not line_data:
             return []
 
-        station_list = line_data.get("station_list", [])
-        line_entry_ids = [s.get("station_entry_id", s.get("station_id")) for s in station_list]
+        station_entries = line_data.get("station_entries", [])
+        line_entry_ids = [s.get("station_entry_id", s.get("station_id")) for s in station_entries]
 
         try:
             if start_station_entry in line_entry_ids:
                 idx_start = line_entry_ids.index(start_station_entry)
             else:
-                station_ids = [s.get("station_id") for s in station_list]
+                station_ids = [s.get("station_id") for s in station_entries]
                 idx_start = station_ids.index(start_station_entry)
 
             if end_station_entry in line_entry_ids:
                 idx_end = line_entry_ids.index(end_station_entry)
             else:
-                station_ids = [s.get("station_id") for s in station_list]
+                station_ids = [s.get("station_id") for s in station_entries]
                 idx_end = station_ids.index(end_station_entry)
         except ValueError:
             return [] # 路線で駅が見つからない場合
@@ -288,19 +288,19 @@ class SelectSegmentDialog(QDialog):
         line_data = self.project.lines.get(line_id)
         if not line_data:
             return None
-        station_list = line_data.get("station_list", [])
-        line_entry_ids = [s.get("station_entry_id", s.get("station_id")) for s in station_list]
+        station_entries = line_data.get("station_entries", [])
+        line_entry_ids = [s.get("station_entry_id", s.get("station_id")) for s in station_entries]
         try:
             if start_station_entry in line_entry_ids:
                 idx_start = line_entry_ids.index(start_station_entry)
             else:
-                station_ids = [s.get("station_id") for s in station_list]
+                station_ids = [s.get("station_id") for s in station_entries]
                 idx_start = station_ids.index(start_station_entry)
 
             if end_station_entry in line_entry_ids:
                 idx_end = line_entry_ids.index(end_station_entry)
             else:
-                station_ids = [s.get("station_id") for s in station_list]
+                station_ids = [s.get("station_id") for s in station_entries]
                 idx_end = station_ids.index(end_station_entry)
         except ValueError:
             return None
@@ -376,20 +376,20 @@ class SplitSegmentDialog(QDialog):
 
         # 中間駅のリストアップ
         line_data = self.project.lines.get(line_id, {})
-        station_list = line_data.get("station_list", [])
-        entry_ids = [s.get("station_entry_id", s.get("station_id")) for s in station_list]
+        station_entries = line_data.get("station_entries", [])
+        entry_ids = [s.get("station_entry_id", s.get("station_id")) for s in station_entries]
 
         try:
             if start_eid in entry_ids:
                 idx_start = entry_ids.index(start_eid)
             else:
-                station_ids = [s.get("station_id") for s in station_list]
+                station_ids = [s.get("station_id") for s in station_entries]
                 idx_start = station_ids.index(start_eid)
             
             if end_eid in entry_ids:
                 idx_end = entry_ids.index(end_eid)
             else:
-                station_ids = [s.get("station_id") for s in station_list]
+                station_ids = [s.get("station_id") for s in station_entries]
                 idx_end = station_ids.index(end_eid)
         except ValueError:
             self.reject()
@@ -397,9 +397,9 @@ class SplitSegmentDialog(QDialog):
 
         # 順方向か逆方向かでスライスを調整して中間駅を抽出
         if idx_start < idx_end:
-            intermediate_entries = station_list[idx_start + 1 : idx_end]
+            intermediate_entries = station_entries[idx_start + 1 : idx_end]
         else:
-            intermediate_entries = station_list[idx_start - 1 : idx_end : -1]
+            intermediate_entries = station_entries[idx_start - 1 : idx_end : -1]
 
         for s_entry in intermediate_entries:
             eid = s_entry.get("station_entry_id")
@@ -674,20 +674,20 @@ class RouteEditorDialog(QDialog):
         if not line_data:
             return []
 
-        station_list = line_data.get("station_list", [])
-        line_entry_ids = [s.get("station_entry_id", s.get("station_id")) for s in station_list]
+        station_entries = line_data.get("station_entries", [])
+        line_entry_ids = [s.get("station_entry_id", s.get("station_id")) for s in station_entries]
 
         try:
             if start_station_entry in line_entry_ids:
                 idx_start = line_entry_ids.index(start_station_entry)
             else:
-                station_ids = [s.get("station_id") for s in station_list]
+                station_ids = [s.get("station_id") for s in station_entries]
                 idx_start = station_ids.index(start_station_entry)
 
             if end_station_entry in line_entry_ids:
                 idx_end = line_entry_ids.index(end_station_entry)
             else:
-                station_ids = [s.get("station_id") for s in station_list]
+                station_ids = [s.get("station_id") for s in station_entries]
                 idx_end = station_ids.index(end_station_entry)
         except ValueError:
             return [] # 路線で駅が見つからない場合
@@ -731,14 +731,14 @@ class RouteEditorDialog(QDialog):
             end_eid = seg.get("end_station_entry", seg.get("end_station"))
 
             stations_in_this_segment = self._get_stations_in_segment(line_id, start_eid, end_eid)
-            line_station_list = self.project.lines.get(line_id, {}).get("station_list", [])
+            line_station_entries = self.project.lines.get(line_id, {}).get("station_entries", [])
 
             for i, eid in enumerate(stations_in_this_segment):
                 sid = self.project.station_entry_to_station_id.get(eid, eid)
                 station_name = self.project.stations.get(sid, {}).get("station_name", sid)
 
                 # 駅番号を取得して駅名の前に付加
-                ls_item = next((s for s in line_station_list if (s.get("station_entry_id") == eid or s.get("station_id") == sid)), None)
+                ls_item = next((s for s in line_station_entries if (s.get("station_entry_id") == eid or s.get("station_id") == sid)), None)
                 s_num = ls_item.get("station_number") if ls_item else None
                 display_name = f"[{s_num}] {station_name}" if s_num else station_name
 
@@ -976,7 +976,7 @@ class RouteEditorDialog(QDialog):
 
     def _on_add_segment(self):
         """路線の区間追加ダイアログを表示し、データを追加する"""
-        valid_line_ids = [lid for lid in self.project.lines_order if len(self.project.lines[lid].get("station_list", [])) >= 2]
+        valid_line_ids = [lid for lid in self.project.lines_order if len(self.project.lines[lid].get("station_entries", [])) >= 2]
         if not valid_line_ids:
             QMessageBox.warning(self, "情報", "追加可能な路線がありません")
             return
@@ -1122,20 +1122,20 @@ class RouteEditorDialog(QDialog):
         end_eid = segment_data.get("end_station_entry", segment_data.get("end_station"))
         
         line_data = self.project.lines.get(line_id, {})
-        station_list = line_data.get("station_list", [])
-        entry_ids = [s.get("station_entry_id", s.get("station_id")) for s in station_list]
+        station_entries = line_data.get("station_entries", [])
+        entry_ids = [s.get("station_entry_id", s.get("station_id")) for s in station_entries]
         
         try:
             if start_eid in entry_ids:
                 idx_start = entry_ids.index(start_eid)
             else:
-                station_ids = [s.get("station_id") for s in station_list]
+                station_ids = [s.get("station_id") for s in station_entries]
                 idx_start = station_ids.index(start_eid)
 
             if end_eid in entry_ids:
                 idx_end = entry_ids.index(end_eid)
             else:
-                station_ids = [s.get("station_id") for s in station_list]
+                station_ids = [s.get("station_id") for s in station_entries]
                 idx_end = station_ids.index(end_eid)
         except ValueError:
             return

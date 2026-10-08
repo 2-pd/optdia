@@ -180,7 +180,7 @@ class TimetableModel(QAbstractTableModel):
         line_data = self.project.lines.get(line_id)
         if not line_data:
             return []
-        line_station_ids = [s["station_id"] for s in line_data.get("station_list", [])]
+        line_station_ids = [s["station_id"] for s in line_data.get("station_entries", [])]
         try:
             idx_start = line_station_ids.index(start_station_id)
             idx_end = line_station_ids.index(end_station_id)
@@ -276,7 +276,7 @@ class TimetableModel(QAbstractTableModel):
                     end_entry = seg.get("end_station_entry")
 
                     # 路線内での進行方向(inbound/outbound)を判定
-                    line_station_entries = line_data.get("station_list", [])
+                    line_station_entries = line_data.get("station_entries", [])
                     line_station_entry_ids = [s.get("station_entry_id") for s in line_station_entries]
                     try:
                         idx_start = line_station_entry_ids.index(start_entry)

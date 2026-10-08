@@ -476,7 +476,7 @@ class AddStationDialog(QDialog):
         if not line_id:
             return
         line_data = self.project.lines.get(line_id)
-        for station_item in line_data.get("station_list", []):
+        for station_item in line_data.get("station_entries", []):
             sid = station_item.get("station_id")
             s_data = self.project.stations.get(sid)
             name = s_data.get("station_name", sid) if s_data else sid
@@ -1128,18 +1128,18 @@ class LineStationEditorDialog(QDialog):
             return
 
         # 現在の駅データ（辞書のリスト）を取得
-        old_station_list = self.current_selected_line_data.get("station_list", [])
+        old_station_entries = self.current_selected_line_data.get("station_entries", [])
         # IDをキーにした辞書に変換して、既存の属性（駅ナンバリング等）を保持できるようにする
-        station_map = {s["station_entry_id"]: s for s in old_station_list if "station_entry_id" in s}
+        station_map = {s["station_entry_id"]: s for s in old_station_entries if "station_entry_id" in s}
         
-        new_station_list = []
+        new_station_entries = []
         for i in range(self.station_list_widget.count()):
             item = self.station_list_widget.item(i)
             eid = item.data(Qt.UserRole)
             if eid in station_map:
-                new_station_list.append(station_map[eid])
+                new_station_entries.append(station_map[eid])
         
-        self.current_selected_line_data["station_list"] = new_station_list
+        self.current_selected_line_data["station_entries"] = new_station_entries
         if hasattr(self.parent(), "set_modified"):
             self.parent().set_modified(True)
 
@@ -1153,8 +1153,14 @@ class LineStationEditorDialog(QDialog):
             return
 
         self.current_selected_line_id = selected_items[0].data(Qt.UserRole)
+        if self.current_selected_line_id not in self.project.lines:
+            self.current_selected_line_id = None
+            self.current_selected_line_data = None
+            self._set_line_editing_enabled(False)
+            return
+
         self.current_selected_line_data = self.project.lines[self.current_selected_line_id]
-        
+
         # UI更新中のシグナルをブロックして不要なデータ更新を防ぐ
         self.line_name_edit.blockSignals(True)
         self.line_symbol_edit.blockSignals(True)
@@ -1166,7 +1172,7 @@ class LineStationEditorDialog(QDialog):
         self.line_name_edit.setText(line_name)
         self.line_station_group.setTitle(f"{line_name}に関連する駅情報")
         self._update_station_list_label(line_name)
-        
+
         current_color = self.current_selected_line_data.get("line_color", "#333333")
         self.color_picker.set_color(current_color)
 
@@ -1259,7 +1265,7 @@ class LineStationEditorDialog(QDialog):
                     "line_color": "#333333",
                     "line_symbol": None,
                     "inbound_direction_is_forward_direction": True,
-                    "station_list": []
+                    "station_entries": []
                 }
                 self.project.lines_order.append(line_id)
             else:
@@ -1288,8 +1294,8 @@ class LineStationEditorDialog(QDialog):
                 continue
 
             # 路線に含まれる駅をインポート
-            new_station_list = []
-            for entry in src_line.get("station_list", []):
+            new_station_entries = []
+            for entry in src_line.get("station_entries", []):
                 src_station_id = entry.get("station_id")
                 src_station_data = imported_project.stations.get(src_station_id)
 
@@ -1344,16 +1350,16 @@ class LineStationEditorDialog(QDialog):
                         "absolute_standard_running_time": entry.get("absolute_standard_running_time"),
                     }
 
-                new_station_list.append(new_entry)
+                new_station_entries.append(new_entry)
 
             # 路線データをコピーしてプロジェクトに追加
             line_copy = copy.deepcopy(src_line)
-            line_copy["station_list"] = new_station_list
+            line_copy["station_entries"] = new_station_entries
             self.project.lines[line_id] = line_copy
             self.project.lines_order.append(line_id)
 
             # station_entry_to_station_id を更新
-            for entry in new_station_list:
+            for entry in new_station_entries:
                 eid = entry.get("station_entry_id")
                 sid = entry.get("station_id")
                 if eid and sid:
@@ -1362,8 +1368,8 @@ class LineStationEditorDialog(QDialog):
     def _populate_station_list(self, line_data: dict):
         """選択された路線に紐づく駅をリストに表示する"""
         self.station_list_widget.clear()
-        station_list = line_data.get("station_list", [])
-        for station_item in station_list:
+        station_entries = line_data.get("station_entries", [])
+        for station_item in station_entries:
             station_entry_id = station_item.get("station_entry_id")
             # QListWidgetItemの作成とIDの紐付け
             item = QListWidgetItem()
@@ -1397,7 +1403,7 @@ class LineStationEditorDialog(QDialog):
             return
 
         station_entry_id = selected_items[0].data(Qt.UserRole)
-        line_station_item = next((s for s in self.current_selected_line_data.get("station_list", []) 
+        line_station_item = next((s for s in self.current_selected_line_data.get("station_entries", []) 
                                   if s.get("station_entry_id") == station_entry_id), None)
         if not line_station_item:
             self._set_station_editing_enabled(False)
@@ -1517,7 +1523,7 @@ class LineStationEditorDialog(QDialog):
         if not selected_items or not self.current_selected_line_data: return
         station_entry_id = selected_items[0].data(Qt.UserRole)
 
-        line_station_item = next((s for s in self.current_selected_line_data.get("station_list", []) 
+        line_station_item = next((s for s in self.current_selected_line_data.get("station_entries", []) 
                                   if s.get("station_entry_id") == station_entry_id), None)
         if not line_station_item: return
         
@@ -1633,7 +1639,7 @@ class LineStationEditorDialog(QDialog):
 
         # 1. 削除対象の路線に含まれていた駅を特定（後で孤立駅チェックに使用）
         line_data = self.project.lines[line_id]
-        stations_in_line = [s["station_id"] for s in line_data.get("station_list", [])]
+        stations_in_line = [s["station_id"] for s in line_data.get("station_entries", [])]
 
         # 2. 全ての運行系統の区間設定（line_segments）から削除対象路線を削除
         for route in self.project.routes.values():
@@ -1659,7 +1665,7 @@ class LineStationEditorDialog(QDialog):
         for sid in stations_in_line:
             is_used_elsewhere = False
             for other_line in self.project.lines.values():
-                if any(s.get("station_id") == sid for s in other_line.get("station_list", [])):
+                if any(s.get("station_id") == sid for s in other_line.get("station_entries", [])):
                     is_used_elsewhere = True
                     break
             
@@ -1675,7 +1681,7 @@ class LineStationEditorDialog(QDialog):
             self.parent().set_modified(True)
 
     def _on_calc_running_time(self):
-        """この路線の基準運転時分を入力済み時刻表から自動算出してstation_listに反映する"""
+        """この路線の基準運転時分を入力済み時刻表から自動算出してstation_entriesに反映する"""
         if not self.current_selected_line_id:
             return
 
@@ -1685,8 +1691,8 @@ class LineStationEditorDialog(QDialog):
             return
 
         line_name = line_data.get("line_name", line_id)
-        station_list = line_data.get("station_list", [])
-        n = len(station_list)
+        station_entries = line_data.get("station_entries", [])
+        n = len(station_entries)
 
         if n == 0:
             QMessageBox.critical(self, "エラー", "基準運転時分を計算すべき駅が登録されていません")
@@ -1703,7 +1709,7 @@ class LineStationEditorDialog(QDialog):
         if reply != QMessageBox.StandardButton.Ok:
             return
 
-        station_ids = [s["station_id"] for s in station_list]
+        station_ids = [s["station_id"] for s in station_entries]
 
         # この路線に属するsegment_idの集合を収集
         line_segment_ids = set()
@@ -1847,11 +1853,11 @@ class LineStationEditorDialog(QDialog):
 
         # 各駅の absolute_standard_running_time を更新
         # 起点駅(最初の駅)は 0
-        station_list[0]["absolute_standard_running_time"] = 0
+        station_entries[0]["absolute_standard_running_time"] = 0
         cumulative = 0
         for i in range(1, n):
             cumulative += inter_times[i - 1]
-            station_list[i]["absolute_standard_running_time"] = cumulative
+            station_entries[i]["absolute_standard_running_time"] = cumulative
 
         if hasattr(self.parent(), "set_modified"):
             self.parent().set_modified(True)
@@ -1871,7 +1877,7 @@ class LineStationEditorDialog(QDialog):
             return
 
         station_entry_id = selected_items[0].data(Qt.UserRole)
-        line_station_item = next((s for s in self.current_selected_line_data.get("station_list", [])
+        line_station_item = next((s for s in self.current_selected_line_data.get("station_entries", [])
                                   if s.get("station_entry_id") == station_entry_id), None)
         if not line_station_item:
             return
@@ -1912,7 +1918,7 @@ class LineStationEditorDialog(QDialog):
         # 3. 孤立駅（他路線・他エントリでの利用有無）のチェック
         other_using = False
         for lid, line in self.project.lines.items():
-            for s in line.get("station_list", []):
+            for s in line.get("station_entries", []):
                 if s.get("station_entry_id") != station_entry_id and s.get("station_id") == station_id:
                     other_using = True
                     break
@@ -1933,8 +1939,8 @@ class LineStationEditorDialog(QDialog):
 
         # 4. 実際の削除処理
         # A. 路線情報の駅リストから削除
-        self.current_selected_line_data["station_list"] = [
-            s for s in self.current_selected_line_data.get("station_list", [])
+        self.current_selected_line_data["station_entries"] = [
+            s for s in self.current_selected_line_data.get("station_entries", [])
             if s.get("station_entry_id") != station_entry_id
         ]
         if hasattr(self.project, "station_entry_to_station_id") and station_entry_id in self.project.station_entry_to_station_id:
@@ -1994,7 +2000,7 @@ class LineStationEditorDialog(QDialog):
             entry_ids_for_station = {
                 entry.get("station_entry_id")
                 for line in self.project.lines.values()
-                for entry in line.get("station_list", [])
+                for entry in line.get("station_entries", [])
                 if entry.get("station_id") == station_id
             }
             for route in self.project.routes.values():
@@ -2039,7 +2045,7 @@ class LineStationEditorDialog(QDialog):
     def _update_station_list_item_display(self, item, station_entry_id):
         """駅リストの表示文字列とスタイルを最新の状態に更新する"""
         if not self.current_selected_line_data: return
-        line_station_item = next((s for s in self.current_selected_line_data.get("station_list", []) 
+        line_station_item = next((s for s in self.current_selected_line_data.get("station_entries", []) 
                                   if s.get("station_entry_id") == station_entry_id), None)
         if not line_station_item: return
         station_id = line_station_item.get("station_id")
@@ -2125,10 +2131,10 @@ class LineStationEditorDialog(QDialog):
                     inbound_main = tids[-1]
 
             # 選択中の路線の駅リストに追加
-            station_list = self.current_selected_line_data.get("station_list", [])
+            station_entries = self.current_selected_line_data.get("station_entries", [])
             
             station_entry_id = generate_random_id(12)
-            station_list.append({
+            station_entries.append({
                 "station_entry_id": station_entry_id,
                 "station_id": new_station_id,
                 "station_number": None,
@@ -2138,7 +2144,7 @@ class LineStationEditorDialog(QDialog):
             })
             if hasattr(self.project, "station_entry_to_station_id"):
                 self.project.station_entry_to_station_id[station_entry_id] = new_station_id
-            self.current_selected_line_data["station_list"] = station_list
+            self.current_selected_line_data["station_entries"] = station_entries
             
             # UI更新
             self._populate_station_list(self.current_selected_line_data)

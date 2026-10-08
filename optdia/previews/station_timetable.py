@@ -19,7 +19,7 @@ def is_station_in_route(project: OptDiaProject, route_id: str, station_id: str) 
         line = project.lines.get(line_id)
         if not line:
             continue
-        line_entries = line.get("station_list", [])
+        line_entries = line.get("station_entries", [])
         entry_ids = [e.get("station_entry_id") for e in line_entries]
         start_entry = seg.get("start_station_entry")
         end_entry = seg.get("end_station_entry")
@@ -47,7 +47,7 @@ def is_station_in_line(project: OptDiaProject, line_id: str, station_id: str) ->
     line = project.lines.get(line_id)
     if not line:
         return False
-    for entry in line.get("station_list", []):
+    for entry in line.get("station_entries", []):
         if entry.get("station_id") == station_id:
             return True
     return False
@@ -304,7 +304,7 @@ class StationTimetablePreviewDialog(QDialog):
             line = self.project.lines.get(target_id)
             if not line:
                 return []
-            line_entries = line.get("station_list", [])
+            line_entries = line.get("station_entries", [])
             entry_ids = [e.get("station_entry_id") for e in line_entries]
 
             for route in self.project.routes.values():
