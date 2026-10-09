@@ -1417,7 +1417,11 @@ class MainWindow(QMainWindow):
         for ttid in self.project.train_types_order:
             tt = self.project.train_types.get(ttid, {})
             tt_name = tt.get("train_type_name", ttid)
-            self.diagram_type_combo.addItem(tt_name, ttid)
+            t_name = tt.get("train_name")
+            if t_name:
+                self.diagram_type_combo.addItem(f"{tt_name} {t_name}", ttid)
+            else:
+                self.diagram_type_combo.addItem(tt_name, ttid)
 
         # 以前選択していた値があれば再選択
         if current_data is not None:
