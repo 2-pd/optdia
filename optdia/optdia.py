@@ -4,6 +4,7 @@
 import sys
 import os
 import subprocess
+import webbrowser
 from PySide6.QtCore import Qt, QFile, QTextStream, QSize, QTimer
 from PySide6.QtGui import QIcon, QAction, QPixmap, QTransform
 from PySide6.QtWidgets import (
@@ -14,7 +15,7 @@ from PySide6.QtWidgets import (
     QTabBar, QHeaderView, QMenu, QAbstractItemView, QFrame
 )
 import assets_rc
-from version import APP_NAME, __version__
+from version import APP_NAME, __version__, MANUAL_URL
 from core.project import OptDiaProject, load_project, SchemaVersionError
 from core.history_manager import HistoryManager
 from core.settings import AppSettings
@@ -759,6 +760,9 @@ class MainWindow(QMainWindow):
 
         # ヘルプ(H)
         help_menu = menu_bar.addMenu("ヘルプ(&H)")
+        open_manual_action = help_menu.addAction("オンラインマニュアル(&H)")
+        open_manual_action.triggered.connect(lambda: webbrowser.open(MANUAL_URL))
+        help_menu.addSeparator()
         about_action = help_menu.addAction(f"{APP_NAME}について(&A)")
         about_action.triggered.connect(self._on_about)
 
