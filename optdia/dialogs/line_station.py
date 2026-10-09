@@ -3,14 +3,27 @@ import copy
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QDialog, QColorDialog, QVBoxLayout, QHBoxLayout, QPushButton, QMessageBox, QLabel,
+    QDialog, QColorDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QPushButton, QMessageBox, QLabel,
     QLineEdit, QListWidget, QListWidgetItem, QCheckBox, QStackedWidget,
-    QRadioButton, QComboBox, QGroupBox, QFormLayout, QSpinBox, QWidget, QTabWidget,
+    QRadioButton, QComboBox, QGroupBox, QFormLayout, QSpinBox, QDoubleSpinBox, QWidget, QTabWidget,
     QFileDialog, QScrollArea
 )
 from core.project import OptDiaProject, SchemaVersionError, generate_random_id, load_project
 from common.gui_utils import HtmlDelegate, create_color_square_pixmap
 from common.widgets import ColorPickerWidget
+
+
+LINE_TYPES = [
+    ("rail", "普通鉄道"),
+    ("metro", "地下鉄"),
+    ("high_speed_rail", "高速鉄道"),
+    ("tram", "路面電車・ライトレール"),
+    ("agt", "新交通システム"),
+    ("monorail", "モノレール"),
+    ("funicular", "ケーブルカー"),
+    ("bus", "バス・DMV"),
+]
+
 
 # 路線の追加ダイアログ
 class AddLineDialog(QDialog):
@@ -837,24 +850,57 @@ class LineStationEditorDialog(QDialog):
         left_vertical_layout.addWidget(initial_info_label)
 
         # 各種チェックボックス
-        left_vertical_layout.addSpacing(20)
+        left_vertical_layout.addSpacing(15)
+        checkbox_layout = QGridLayout()
         self.is_major_station_checkbox = QCheckBox("主要駅")
         self.is_major_station_checkbox.stateChanged.connect(self._on_station_base_info_changed)
-        left_vertical_layout.addWidget(self.is_major_station_checkbox)
+        checkbox_layout.addWidget(self.is_major_station_checkbox, 0, 0)
         self.is_signal_station_checkbox = QCheckBox("信号場")
         self.is_signal_station_checkbox.stateChanged.connect(self._on_station_base_info_changed)
-        left_vertical_layout.addWidget(self.is_signal_station_checkbox)
+        checkbox_layout.addWidget(self.is_signal_station_checkbox, 1, 0)
         self.show_arrival_time_checkbox = QCheckBox("着時刻を表示")
         self.show_arrival_time_checkbox.stateChanged.connect(self._on_station_base_info_changed)
-        left_vertical_layout.addWidget(self.show_arrival_time_checkbox)
+        checkbox_layout.addWidget(self.show_arrival_time_checkbox, 0, 1)
         self.show_track_name_checkbox = QCheckBox("発着番線を表示")
         self.show_track_name_checkbox.stateChanged.connect(self._on_station_base_info_changed)
-        left_vertical_layout.addWidget(self.show_track_name_checkbox)
+        checkbox_layout.addWidget(self.show_track_name_checkbox, 1, 1)
+        left_vertical_layout.addLayout(checkbox_layout)
         left_vertical_layout.addStretch()
+
+        # 緯度
+        lat_layout = QHBoxLayout()
+        lat_label = QLabel("緯度:")
+        lat_label.setFixedWidth(40)
+        lat_layout.addWidget(lat_label)
+        self.latitude_spin = QDoubleSpinBox()
+        self.latitude_spin.setRange(-90.000001, 90.000000)
+        self.latitude_spin.setDecimals(6)
+        self.latitude_spin.setSingleStep(0.000001)
+        self.latitude_spin.setSpecialValueText("未設定")
+        self.latitude_spin.valueChanged.connect(self._on_station_base_info_changed)
+        lat_layout.addWidget(self.latitude_spin)
+        left_vertical_layout.addLayout(lat_layout)
+
+        # 経度
+        lon_layout = QHBoxLayout()
+        lon_label = QLabel("経度:")
+        lon_label.setFixedWidth(40)
+        lon_layout.addWidget(lon_label)
+        self.longitude_spin = QDoubleSpinBox()
+        self.longitude_spin.setRange(-180.000000, 180.000000)
+        self.longitude_spin.setDecimals(6)
+        self.longitude_spin.setSingleStep(0.000001)
+        self.longitude_spin.setSpecialValueText("未設定")
+        self.longitude_spin.valueChanged.connect(self._on_station_base_info_changed)
+        lon_layout.addWidget(self.longitude_spin)
+        left_vertical_layout.addLayout(lon_layout)
+
         bottom_base_info_layout.addLayout(left_vertical_layout)
+        bottom_base_info_layout.addSpacing(20)
 
         # 2つ目の垂直配置レイアウト
         right_vertical_layout = QVBoxLayout()
+
         right_vertical_layout.addWidget(QLabel("発着番線:"))
         self.track_list_widget = QListWidget()
         self.track_list_widget.setDragDropMode(QListWidget.InternalMove)
@@ -885,12 +931,20 @@ class LineStationEditorDialog(QDialog):
         # フォーム要素を横に並べるためのサブレイアウト
         line_station_forms_layout = QHBoxLayout()
 
-        # 1つ目の垂直レイアウト (駅番号、基準運転時分)
+        # 1つ目の垂直レイアウト (駅番号、キロ程、基準運転時分)
         ls_left_form = QFormLayout()
         self.station_number_edit = QLineEdit()
         self.station_number_edit.setFixedWidth(80)
         self.station_number_edit.textChanged.connect(self._on_line_station_info_changed)
         ls_left_form.addRow("駅番号:", self.station_number_edit)
+        self.operating_kilometers_spin = QDoubleSpinBox()
+        self.operating_kilometers_spin.setRange(-0.1, 999.9)
+        self.operating_kilometers_spin.setDecimals(1)
+        self.operating_kilometers_spin.setSingleStep(0.1)
+        self.operating_kilometers_spin.setSpecialValueText("未設定")
+        self.operating_kilometers_spin.setSuffix(" km")
+        self.operating_kilometers_spin.valueChanged.connect(self._on_line_station_info_changed)
+        ls_left_form.addRow("起点駅からのキロ程:", self.operating_kilometers_spin)
         self.running_time_spin = QSpinBox()
         self.running_time_spin.setRange(-1, 86400)
         self.running_time_spin.setSpecialValueText("未設定")
@@ -898,6 +952,7 @@ class LineStationEditorDialog(QDialog):
         self.running_time_spin.valueChanged.connect(self._on_line_station_info_changed)
         ls_left_form.addRow("起点駅からの基準運転時分:", self.running_time_spin)
         line_station_forms_layout.addLayout(ls_left_form)
+        line_station_forms_layout.addSpacing(20)
 
         # 2つ目の垂直レイアウト (上下本線)
         ls_right_form = QFormLayout()
@@ -972,6 +1027,14 @@ class LineStationEditorDialog(QDialog):
         self.line_name_edit.textChanged.connect(self._on_line_name_changed)
         self.line_info_layout.addWidget(self.line_name_edit)
 
+        # 路線の分類
+        self.line_info_layout.addWidget(QLabel("路線の分類:"))
+        self.line_type_combo = QComboBox()
+        for lt_code, lt_name in LINE_TYPES:
+            self.line_type_combo.addItem(lt_name, lt_code)
+        self.line_type_combo.currentIndexChanged.connect(self._on_line_type_changed)
+        self.line_info_layout.addWidget(self.line_type_combo)
+
         # 路線の色
         self.line_info_layout.addWidget(QLabel("路線の色:"))
         self.color_picker = ColorPickerWidget("#333333")
@@ -1030,6 +1093,7 @@ class LineStationEditorDialog(QDialog):
     def _set_line_editing_enabled(self, enabled: bool):
         """路線情報編集フォームのウィジェットの有効/無効を切り替える"""
         self.line_name_edit.setEnabled(enabled)
+        self.line_type_combo.setEnabled(enabled)
         self.color_picker.setEnabled(enabled)
         self.line_symbol_edit.setEnabled(enabled)
         self.inbound_direction_checkbox.setEnabled(enabled)
@@ -1040,16 +1104,19 @@ class LineStationEditorDialog(QDialog):
         
         if not enabled:
             self.line_name_edit.blockSignals(True)
+            self.line_type_combo.blockSignals(True)
             self.line_symbol_edit.blockSignals(True)
             self.inbound_direction_checkbox.blockSignals(True)
             self.line_id_display.clear()
             self.line_name_edit.clear()
+            self.line_type_combo.setCurrentIndex(0)
             self.color_picker.set_color("#000000")
             self.line_symbol_edit.clear()
             self.station_list_widget.clear()
             self.station_list_label.setText("<b>駅</b>")
             self.inbound_direction_checkbox.setChecked(False)
             self.line_name_edit.blockSignals(False)
+            self.line_type_combo.blockSignals(False)
             self.line_symbol_edit.blockSignals(False)
             self.inbound_direction_checkbox.blockSignals(False)
 
@@ -1060,7 +1127,15 @@ class LineStationEditorDialog(QDialog):
         self.station_name_edit.blockSignals(True)
         self.station_kana_edit.blockSignals(True)
         self.station_number_edit.blockSignals(True)
+        self.operating_kilometers_spin.blockSignals(True)
         self.running_time_spin.blockSignals(True)
+        self.station_initial_edit.blockSignals(True)
+        self.is_major_station_checkbox.blockSignals(True)
+        self.is_signal_station_checkbox.blockSignals(True)
+        self.show_arrival_time_checkbox.blockSignals(True)
+        self.show_track_name_checkbox.blockSignals(True)
+        self.latitude_spin.blockSignals(True)
+        self.longitude_spin.blockSignals(True)
         self.inbound_track_combo.blockSignals(True)
         self.outbound_track_combo.blockSignals(True)
 
@@ -1073,7 +1148,10 @@ class LineStationEditorDialog(QDialog):
             self.is_signal_station_checkbox.setChecked(False)
             self.show_arrival_time_checkbox.setChecked(False)
             self.show_track_name_checkbox.setChecked(False)
+            self.latitude_spin.setValue(-90.000001)
+            self.longitude_spin.setValue(-180.000000)
             self.station_number_edit.clear()
+            self.operating_kilometers_spin.setValue(-0.1)
             self.running_time_spin.setValue(-1)
             self.inbound_track_combo.clear()
             self.outbound_track_combo.clear()
@@ -1081,12 +1159,15 @@ class LineStationEditorDialog(QDialog):
         self.station_name_edit.blockSignals(False)
         self.station_kana_edit.blockSignals(False)
         self.station_number_edit.blockSignals(False)
+        self.operating_kilometers_spin.blockSignals(False)
         self.running_time_spin.blockSignals(False)
         self.station_initial_edit.blockSignals(False)
         self.is_major_station_checkbox.blockSignals(False)
         self.is_signal_station_checkbox.blockSignals(False)
         self.show_arrival_time_checkbox.blockSignals(False)
         self.show_track_name_checkbox.blockSignals(False)
+        self.latitude_spin.blockSignals(False)
+        self.longitude_spin.blockSignals(False)
         self.inbound_track_combo.blockSignals(False)
         self.outbound_track_combo.blockSignals(False)
 
@@ -1163,6 +1244,7 @@ class LineStationEditorDialog(QDialog):
 
         # UI更新中のシグナルをブロックして不要なデータ更新を防ぐ
         self.line_name_edit.blockSignals(True)
+        self.line_type_combo.blockSignals(True)
         self.line_symbol_edit.blockSignals(True)
         self.inbound_direction_checkbox.blockSignals(True)
 
@@ -1172,6 +1254,10 @@ class LineStationEditorDialog(QDialog):
         self.line_name_edit.setText(line_name)
         self.line_station_group.setTitle(f"{line_name}に関連する駅情報")
         self._update_station_list_label(line_name)
+
+        line_type = self.current_selected_line_data.get("line_type", "rail")
+        idx_type = self.line_type_combo.findData(line_type)
+        self.line_type_combo.setCurrentIndex(idx_type if idx_type >= 0 else 0)
 
         current_color = self.current_selected_line_data.get("line_color", "#333333")
         self.color_picker.set_color(current_color)
@@ -1184,6 +1270,7 @@ class LineStationEditorDialog(QDialog):
 
         # シグナルブロックを解除
         self.line_name_edit.blockSignals(False)
+        self.line_type_combo.blockSignals(False)
         self.line_symbol_edit.blockSignals(False)
         self.inbound_direction_checkbox.blockSignals(False)
 
@@ -1205,6 +1292,15 @@ class LineStationEditorDialog(QDialog):
                 color = line_data.get("line_color", "#333333")
                 display_text = f"<font color='{color}'><b>[{symbol}]</b></font> {name}" if symbol else name
                 selected_items[0].setText(display_text)
+
+    def _on_line_type_changed(self, index: int):
+        """路線の分類が変更されたときにプロジェクトデータを更新する"""
+        line_id = self.line_id_display.text()
+        line_data = self.project.lines.get(line_id)
+        if line_data:
+            line_data["line_type"] = self.line_type_combo.currentData()
+            if hasattr(self.parent(), "set_modified"):
+                self.parent().set_modified(True)
 
     def _on_line_symbol_changed(self, text: str):
         """路線記号が変更されたときにプロジェクトデータを更新する"""
@@ -1262,10 +1358,12 @@ class LineStationEditorDialog(QDialog):
                 self.project.lines[line_id] = {
                     "line_id": line_id,
                     "line_name": line_name,
+                    "line_type": "rail",
                     "line_color": "#333333",
                     "line_symbol": None,
                     "inbound_direction_is_forward_direction": True,
-                    "station_entries": []
+                    "station_entries": [],
+                    "agency_ids": []
                 }
                 self.project.lines_order.append(line_id)
             else:
@@ -1316,6 +1414,7 @@ class LineStationEditorDialog(QDialog):
                         "station_entry_id": generate_random_id(12),
                         "station_id": src_station_id,
                         "station_number": entry.get("station_number"),
+                        "operating_kilometers": None,
                         "inbound_main_track": inbound_track,
                         "outbound_main_track": outbound_track,
                         "absolute_standard_running_time": entry.get("absolute_standard_running_time"),
@@ -1345,6 +1444,7 @@ class LineStationEditorDialog(QDialog):
                         "station_entry_id": generate_random_id(12),
                         "station_id": src_station_id,
                         "station_number": entry.get("station_number"),
+                        "operating_kilometers": None,
                         "inbound_main_track": entry.get("inbound_main_track"),
                         "outbound_main_track": entry.get("outbound_main_track"),
                         "absolute_standard_running_time": entry.get("absolute_standard_running_time"),
@@ -1403,8 +1503,7 @@ class LineStationEditorDialog(QDialog):
             return
 
         station_entry_id = selected_items[0].data(Qt.UserRole)
-        line_station_item = next((s for s in self.current_selected_line_data.get("station_entries", []) 
-                                  if s.get("station_entry_id") == station_entry_id), None)
+        line_station_item = next((s for s in self.current_selected_line_data.get("station_entries", []) if s.get("station_entry_id") == station_entry_id), None)
         if not line_station_item:
             self._set_station_editing_enabled(False)
             return
@@ -1424,18 +1523,28 @@ class LineStationEditorDialog(QDialog):
         self.station_name_edit.blockSignals(True)
         self.station_kana_edit.blockSignals(True)
         self.station_number_edit.blockSignals(True)
+        self.operating_kilometers_spin.blockSignals(True)
         self.running_time_spin.blockSignals(True)
         self.station_initial_edit.blockSignals(True)
         self.is_major_station_checkbox.blockSignals(True)
         self.is_signal_station_checkbox.blockSignals(True)
         self.show_arrival_time_checkbox.blockSignals(True)
         self.show_track_name_checkbox.blockSignals(True)
+        self.latitude_spin.blockSignals(True)
+        self.longitude_spin.blockSignals(True)
 
         self.station_name_edit.setText(station_data.get("station_name", ""))
         self.station_kana_edit.setText(station_data.get("station_name_kana", ""))
         self.station_number_edit.setText(line_station_item.get("station_number") or "")
+        km = line_station_item.get("operating_kilometers")
+        self.operating_kilometers_spin.setValue(km if km is not None else -0.1)
         rt = line_station_item.get("absolute_standard_running_time")
         self.running_time_spin.setValue(rt if rt is not None else -1)
+
+        lat = station_data.get("latitude")
+        self.latitude_spin.setValue(lat if lat is not None else -90.000001)
+        lon = station_data.get("longitude")
+        self.longitude_spin.setValue(lon if lon is not None else -180.000000)
 
         # 発着番線コンボボックスの更新
         self.inbound_track_combo.blockSignals(True)
@@ -1474,12 +1583,15 @@ class LineStationEditorDialog(QDialog):
         self.station_name_edit.blockSignals(False)
         self.station_kana_edit.blockSignals(False)
         self.station_number_edit.blockSignals(False)
+        self.operating_kilometers_spin.blockSignals(False)
         self.running_time_spin.blockSignals(False)
         self.station_initial_edit.blockSignals(False)
         self.is_major_station_checkbox.blockSignals(False)
         self.is_signal_station_checkbox.blockSignals(False)
         self.show_arrival_time_checkbox.blockSignals(False)
         self.show_track_name_checkbox.blockSignals(False)
+        self.latitude_spin.blockSignals(False)
+        self.longitude_spin.blockSignals(False)
 
     def _on_station_initial_editing_finished(self):
         # _on_station_base_info_changed が呼ばれるため、ここでは modified フラグは立てない
@@ -1507,6 +1619,11 @@ class LineStationEditorDialog(QDialog):
         station_data["is_signal_station"] = self.is_signal_station_checkbox.isChecked()
         station_data["show_arrival_time"] = self.show_arrival_time_checkbox.isChecked()
         station_data["show_track_name"] = self.show_track_name_checkbox.isChecked()
+
+        lat_val = self.latitude_spin.value()
+        station_data["latitude"] = lat_val if lat_val != -90.000001 else None
+        lon_val = self.longitude_spin.value()
+        station_data["longitude"] = lon_val if lon_val != -180.000000 else None
         
         # リストの表示更新は、該当する項目が選択されている場合のみ行う
         selected_items = self.station_list_widget.selectedItems()
@@ -1529,6 +1646,9 @@ class LineStationEditorDialog(QDialog):
         
         num = self.station_number_edit.text().strip()
         line_station_item["station_number"] = num if num else None
+
+        km_val = self.operating_kilometers_spin.value()
+        line_station_item["operating_kilometers"] = km_val if km_val != -0.1 else None
         
         val = self.running_time_spin.value()
         line_station_item["absolute_standard_running_time"] = val if val != -1 else None
@@ -2096,6 +2216,8 @@ class LineStationEditorDialog(QDialog):
                     "is_signal_station": False,
                     "show_arrival_time": False,
                     "show_track_name": False,
+                    "latitude": None,
+                    "longitude": None,
                     "tracks": {},
                     "tracks_order": []
                 }
@@ -2138,6 +2260,7 @@ class LineStationEditorDialog(QDialog):
                 "station_entry_id": station_entry_id,
                 "station_id": new_station_id,
                 "station_number": None,
+                "operating_kilometers": None,
                 "inbound_main_track": inbound_main,
                 "outbound_main_track": outbound_main,
                 "absolute_standard_running_time": None
