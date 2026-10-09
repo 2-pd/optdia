@@ -1,6 +1,6 @@
 import copy
 from PySide6.QtWidgets import (
-    QGraphicsScene, QGraphicsRectItem, QGraphicsSimpleTextItem, QGraphicsLineItem, QMenu, QDialog, QMessageBox
+    QGraphicsScene, QGraphicsRectItem, QGraphicsSimpleTextItem, QGraphicsTextItem, QGraphicsLineItem, QMenu, QDialog, QMessageBox
 )
 from PySide6.QtGui import QColor, QFont, QPen, QBrush
 from PySide6.QtCore import Qt, QRectF
@@ -1124,8 +1124,11 @@ class TimelineScene(QGraphicsScene):
 
         created_items = []
 
+        # 運用に割り振られている列車の矩形を描画し要素範囲を記録（3つ目の返り値で走行距離合計を取得）
+        train_elems, train_items, total_distance = self._draw_operation_trains(op_id, y_base)
+
         # 出庫・入庫テキストを描画
-        start_end_items = self._draw_operation_start_end(op, y_base)
+        start_end_items = self._draw_operation_start_end(op, y_base, total_distance=total_distance)
         created_items.extend(start_end_items)
 
         # 出庫・入庫時刻が未設定の場合はそれぞれ0分(0時0分)、2160分(36時0分)とみなして範囲を設定
@@ -1135,9 +1138,6 @@ class TimelineScene(QGraphicsScene):
         eff_end = end_m if end_m is not None else 2160
 
         elements = [(eff_start, eff_start)]
-
-        # 運用に割り振られている列車の矩形を描画し要素範囲を記録
-        train_elems, train_items = self._draw_operation_trains(op_id, y_base)
         elements.extend(train_elems)
         created_items.extend(train_items)
 
@@ -1205,7 +1205,7 @@ class TimelineScene(QGraphicsScene):
         st_name = st.get("station_name", "")
         return st_name[0] if st_name else ""
 
-    def _draw_operation_start_end(self, op: dict, y_base: float) -> list:
+    def _draw_operation_start_end(self, op: dict, y_base: float, total_distance: float = None) -> list:
         items = []
         start_time_str = op.get("start_time")
         if start_time_str:
@@ -1215,7 +1215,7 @@ class TimelineScene(QGraphicsScene):
                 font = QFont()
                 font.setPixelSize(16)
                 text_item.setFont(font)
-                text_item.setBrush(QBrush(QColor("#000000")))
+                text_item.setBrush(QBrush(QColor("#333333")))
                 rect = text_item.boundingRect()
                 # テキストの右端が出庫時刻の位置
                 text_item.setPos(start_m * self.scale_x - rect.width(), y_base + self.LABEL_TOP_OFFSET)
@@ -1227,11 +1227,19 @@ class TimelineScene(QGraphicsScene):
         if end_time_str:
             end_m = self._time_to_minutes(end_time_str)
             if end_m is not None:
-                text_item = QGraphicsSimpleTextItem("△")
+                text_item = QGraphicsTextItem()
                 font = QFont()
                 font.setPixelSize(16)
                 text_item.setFont(font)
-                text_item.setBrush(QBrush(QColor("#000000")))
+                text_item.setDefaultTextColor(QColor("#333333"))
+
+                dist_str = f"{total_distance:.1f}" if total_distance is not None else "---.-"
+                html_content = f'△<span style="font-size: 12px;">走行距離</span><b style="font-size: 14px;">{dist_str}km</b>'
+                text_item.setHtml(html_content)
+
+                # QGraphicsTextItem の余白を除去して左端位置を正確に合わせる
+                text_item.document().setDocumentMargin(0)
+
                 # テキストの左端が入庫時刻の位置
                 text_item.setPos(end_m * self.scale_x, y_base + self.LABEL_TOP_OFFSET)
                 text_item.setZValue(2)
@@ -1270,69 +1278,127 @@ class TimelineScene(QGraphicsScene):
         items = []
         matched_trains = []
 
-        for route_id, route in self.project.routes.items():
+        # station_entry_id から operating_kilometers を高速検索する辞書を構築
+        entry_km_map = {}
+        for line in self.project.lines.values():
+            for entry in line.get("station_entries", []):
+                eid = entry.get("station_entry_id")
+                if eid:
+                    entry_km_map[eid] = entry.get("operating_kilometers")
+
+        # OptDiaProject.operation_train_lookup を使用して対象運用の列車を取得
+        lookup_entries = self.project.operation_train_lookup.get(self.diagram_id, {}).get(target_op_id, [])
+
+        for entry in lookup_entries:
+            route_id = entry.get("route_id")
+            direction_str = entry.get("direction")
+            train_id = entry.get("train_id")
+            direction_key = f"{direction_str}_trains"
+
+            route = self.project.routes.get(route_id)
+            if not route:
+                continue
+
             tbd = route.get("trains_by_diagram", {}).get(self.diagram_id, {})
-            for direction in ["inbound_trains", "outbound_trains"]:
-                m_trains = route.get(direction, {})
-                d_trains = tbd.get(direction, {})
-                for train_id, d_train in d_trains.items():
-                    ops = d_train.get("operations", [])
-                    op_ids = [op.get("operation_id") if isinstance(op, dict) else op for op in ops]
-                    if target_op_id in op_ids:
-                        m_train = m_trains.get(train_id)
-                        if not m_train:
-                            continue
-                        stops = m_train.get("stops", [])
-                        valid_times = []
-                        for s in stops:
-                            arr = self._time_to_minutes(s.get("arrival_time"))
-                            dep = self._time_to_minutes(s.get("departure_time"))
-                            if arr is not None:
-                                valid_times.append(arr)
-                            if dep is not None:
-                                valid_times.append(dep)
-                        if not valid_times:
-                            continue
+            d_train = tbd.get(direction_key, {}).get(train_id)
+            m_train = route.get(direction_key, {}).get(train_id)
+            if not d_train or not m_train:
+                continue
 
-                        first_dep = min(valid_times)
-                        last_arr = max(valid_times)
+            ops = d_train.get("operations", [])
+            op_ids = [op.get("operation_id") if isinstance(op, dict) else op for op in ops]
 
-                        first_entry_id = stops[0].get("station_entry_id") if stops else None
-                        last_entry_id = stops[-1].get("station_entry_id") if stops else None
-                        first_station_id = getattr(self.project, "station_entry_to_station_id", {}).get(first_entry_id) or (stops[0].get("station_id") if stops else None)
-                        last_station_id = getattr(self.project, "station_entry_to_station_id", {}).get(last_entry_id) or (stops[-1].get("station_id") if stops else None)
+            stops = m_train.get("stops", [])
+            valid_times = []
+            for s in stops:
+                arr = self._time_to_minutes(s.get("arrival_time"))
+                dep = self._time_to_minutes(s.get("departure_time"))
+                if arr is not None:
+                    valid_times.append(arr)
+                if dep is not None:
+                    valid_times.append(dep)
+            if not valid_times:
+                continue
 
-                        # 始発駅発車時刻文字列 (stops[0]のdeparture_time、なければarrival_time)
-                        first_stop = stops[0] if stops else {}
-                        first_dep_time = first_stop.get("departure_time") or first_stop.get("arrival_time") or ""
-                        # 終着駅到着時刻文字列 (stops[-1]のarrival_time、なければdeparture_time)
-                        last_stop = stops[-1] if stops else {}
-                        last_arr_time = last_stop.get("arrival_time") or last_stop.get("departure_time") or ""
+            first_dep = min(valid_times)
+            last_arr = max(valid_times)
 
-                        def fmt_hhmm(t: str) -> str:
-                            if not t:
-                                return ""
-                            parts = t.split(":")
-                            if len(parts) >= 2:
-                                return f"{parts[0]}:{parts[1]}"
-                            return t
+            first_entry_id = stops[0].get("station_entry_id") if stops else None
+            last_entry_id = stops[-1].get("station_entry_id") if stops else None
+            first_station_id = getattr(self.project, "station_entry_to_station_id", {}).get(first_entry_id) or (stops[0].get("station_id") if stops else None)
+            last_station_id = getattr(self.project, "station_entry_to_station_id", {}).get(last_entry_id) or (stops[-1].get("station_id") if stops else None)
 
-                        matched_trains.append({
-                            "route_id": route_id,
-                            "direction_key": direction,
-                            "train_id": train_id,
-                            "train_number": m_train.get("train_number", ""),
-                            "train_type_id": m_train.get("train_type_id"),
-                            "first_dep": first_dep,
-                            "last_arr": last_arr,
-                            "first_station_id": first_station_id,
-                            "last_station_id": last_station_id,
-                            "all_op_ids": op_ids,
-                            "first_dep_str": fmt_hhmm(first_dep_time),
-                            "last_arr_str": fmt_hhmm(last_arr_time),
-                        })
+            # 始発駅発車時刻文字列 (stops[0]のdeparture_time、なければarrival_time)
+            first_stop = stops[0] if stops else {}
+            first_dep_time = first_stop.get("departure_time") or first_stop.get("arrival_time") or ""
+            # 終着駅到着時刻文字列 (stops[-1]のarrival_time、なければdeparture_time)
+            last_stop = stops[-1] if stops else {}
+            last_arr_time = last_stop.get("arrival_time") or last_stop.get("departure_time") or ""
+
+            def fmt_hhmm(t: str) -> str:
+                if not t:
+                    return ""
+                parts = t.split(":")
+                if len(parts) >= 2:
+                    return f"{parts[0]}:{parts[1]}"
+                return t
+
+            # 列車の走行距離の計算:
+            # その列車の各部分区間ごとの走行距離(それぞれの部分区間で最初の経由駅と最後の経由駅のキロ程の差の絶対値)を合計
+            # 計算に使用する経由駅の中に1つでもキロ程がNoneの駅が含まれていたときはNone
+            # stops 内を経由順に走査し、部分区間 (segment_id) ごとに最初の駅と最後の駅を特定
+            segment_order = []
+            segment_stops = {}
+            for s in stops:
+                seg_id = s.get("segment_id")
+                if seg_id not in segment_stops:
+                    segment_order.append(seg_id)
+                    segment_stops[seg_id] = []
+                segment_stops[seg_id].append(s)
+
+            train_distance = 0.0
+            train_distance_valid = True
+            for seg_id in segment_order:
+                seg_s_list = segment_stops[seg_id]
+                if not seg_s_list:
+                    continue
+                first_seg_entry = seg_s_list[0].get("station_entry_id")
+                last_seg_entry = seg_s_list[-1].get("station_entry_id")
+                first_km = entry_km_map.get(first_seg_entry)
+                last_km = entry_km_map.get(last_seg_entry)
+                if first_km is None or last_km is None:
+                    train_distance_valid = False
+                    break
+                train_distance += abs(float(last_km) - float(first_km))
+
+            if not train_distance_valid:
+                train_distance = None
+
+            matched_trains.append({
+                "route_id": route_id,
+                "direction_key": direction_key,
+                "train_id": train_id,
+                "train_number": m_train.get("train_number", ""),
+                "train_type_id": m_train.get("train_type_id"),
+                "first_dep": first_dep,
+                "last_arr": last_arr,
+                "first_station_id": first_station_id,
+                "last_station_id": last_station_id,
+                "all_op_ids": op_ids,
+                "first_dep_str": fmt_hhmm(first_dep_time),
+                "last_arr_str": fmt_hhmm(last_arr_time),
+                "distance": train_distance,
+            })
 
         matched_trains.sort(key=lambda x: x["first_dep"])
+
+        # matched_trains の列車の走行距離の合計を計算 (1つでもNoneがあればNone)
+        total_distance = 0.0
+        for train in matched_trains:
+            if train["distance"] is None:
+                total_distance = None
+                break
+            total_distance += train["distance"]
 
         prev_last_station_id = None
 
@@ -1403,7 +1469,7 @@ class TimelineScene(QGraphicsScene):
 
             prev_last_station_id = train["last_station_id"]
 
-        return elements, items
+        return elements, items, total_distance
 
 
 
