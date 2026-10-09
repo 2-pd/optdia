@@ -440,15 +440,15 @@ class AddDeadheadDialog(QDialog):
             line_id = seg["line_id"]
             line_data = self.project.lines.get(line_id, {})
             line_name = line_data.get("line_name", line_id)
-            station_list = line_data.get("station_list", [])
-            line_entry_ids = [s.get("station_entry_id") for s in station_list]
+            station_entries = line_data.get("station_entries", [])
+            line_entry_ids = [s.get("station_entry_id") for s in station_entries]
             start_entry = seg.get("start_station_entry")
             end_entry = seg.get("end_station_entry")
             try:
                 idx_start = line_entry_ids.index(start_entry)
                 idx_end = line_entry_ids.index(end_entry)
             except ValueError:
-                line_station_ids = [s.get("station_id") for s in station_list]
+                line_station_ids = [s.get("station_id") for s in station_entries]
                 try:
                     idx_start = line_station_ids.index(start_entry)
                     idx_end = line_station_ids.index(end_entry)
@@ -458,9 +458,9 @@ class AddDeadheadDialog(QDialog):
             seg_line_direction = "outbound" if idx_start <= idx_end else "inbound"
 
             if idx_start <= idx_end:
-                s_entries = station_list[idx_start:idx_end + 1]
+                s_entries = station_entries[idx_start:idx_end + 1]
             else:
-                s_entries = [station_list[i] for i in range(idx_start, idx_end - 1, -1)]
+                s_entries = [station_entries[i] for i in range(idx_start, idx_end - 1, -1)]
 
             for ls_item in s_entries:
                 sid = ls_item.get("station_id")

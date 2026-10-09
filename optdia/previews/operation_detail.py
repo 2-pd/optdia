@@ -74,6 +74,9 @@ class OperationDetailPreviewDialog(QDialog):
             if self.operation_id in diag_ops:
                 self.operation = diag_ops[self.operation_id]
 
+        # 列車と一時入庫の一覧、合計走行距離を取得
+        assigned_trains, total_distance = self._collect_assigned_trains()
+
         op_num = self.operation.get("operation_number", "")
         self.setWindowTitle(f"{op_num} 運用の詳細情報")
 
@@ -97,11 +100,12 @@ class OperationDetailPreviewDialog(QDialog):
         )
         container_layout.addWidget(op_title_label)
 
-        # 所定両数ラベル
+        # 所定両数・走行距離ラベル
         car_count = self.operation.get("car_count", 0)
         min_car_count = self.operation.get("min_car_count", 0)
         max_car_count = self.operation.get("max_car_count", 0)
-        car_label_text = f'{car_count}両 <span style="font-size: 12px;">(最小{min_car_count} 〜 最大{max_car_count}両)</span>'
+        dist_str = f"{total_distance:.1f}" if total_distance is not None else "---.-"
+        car_label_text = f'{car_count}両 <span style="font-size: 12px;">(最小{min_car_count} 〜 最大{max_car_count}両)&nbsp;&nbsp;走行距離</span> {dist_str}km'
         car_label = QLabel(car_label_text)
         car_label.setAlignment(Qt.AlignCenter)
         car_label.setTextFormat(Qt.RichText)
@@ -133,7 +137,6 @@ class OperationDetailPreviewDialog(QDialog):
         down_arrow_label.setProperty("class", "down_arrow")
         container_layout.addWidget(down_arrow_label)
 
-        assigned_trains = self._collect_assigned_trains()
         for train_data in assigned_trains:
             row_label = QLabel(train_data["html_text"])
             row_label.setAlignment(Qt.AlignCenter)
@@ -205,7 +208,7 @@ class OperationDetailPreviewDialog(QDialog):
             return station_name[0]
         return "？"
 
-    def _collect_assigned_trains(self) -> list:
+    def _collect_assigned_trains(self) -> tuple:
         """
         表示対象の車両運用に属する列車を operation_train_lookup を使用して読み込み、
         始発駅発車時刻の早い順にソートする。
@@ -226,7 +229,17 @@ class OperationDetailPreviewDialog(QDialog):
                     break
 
         if not op_id:
-            return train_entries
+            return train_entries, None
+
+        # station_entry_id から operating_kilometers を高速検索する辞書を構築
+        entry_km_map = {}
+        for line in self.project.lines.values():
+            for entry in line.get("station_entries", []):
+                eid = entry.get("station_entry_id")
+                if eid:
+                    entry_km_map[eid] = entry.get("operating_kilometers")
+
+        total_distance = 0.0
 
         # operation_train_lookup から該当する列車リストを取得
         lookup_dict = getattr(self.project, "operation_train_lookup", {})
@@ -260,7 +273,11 @@ class OperationDetailPreviewDialog(QDialog):
             # 運転ダイヤ別列車情報 (subsequent_trains 取得用)
             tbd = route.get("trains_by_diagram", {}).get(self.diagram_id, {})
             d_train = tbd.get(train_key, {}).get(train_id, {})
-            subsequent_trains = d_train.get("subsequent_trains", []) if d_train else []
+            subsequent_train_ids = set()
+            for subsequent_train in (d_train.get("subsequent_trains", []) if d_train else []):
+                subsequent_train_id = subsequent_train.get("train_id")
+                if subsequent_train_id:
+                    subsequent_train_ids.add(subsequent_train_id)
 
             # 列車種別情報
             train_type_id = m_train.get("train_type_id")
@@ -292,13 +309,48 @@ class OperationDetailPreviewDialog(QDialog):
                 "route_id": route_id,
                 "direction": direction,
                 "train_id": train_id,
-                "subsequent_trains": subsequent_trains,
+                "subsequent_train_ids": subsequent_train_ids,
                 "first_st_initial": first_st_initial,
                 "last_st_initial": last_st_initial,
                 "dep_hhmm": dep_hhmm,
                 "arr_hhmm": arr_hhmm,
                 "is_stabling": False,
             })
+
+            if total_distance is not None:
+                # 列車の走行距離の計算:
+                # その列車の各部分区間ごとの走行距離(それぞれの部分区間で最初の経由駅と最後の経由駅のキロ程の差の絶対値)を合計
+                # 計算に使用する経由駅の中に1つでもキロ程がNoneの駅が含まれていたときはNone
+                # stops 内を経由順に走査し、部分区間 (segment_id) ごとに最初の駅と最後の駅を特定
+                segment_order = []
+                segment_stops = {}
+
+                for s in stops:
+                    seg_id = s.get("segment_id")
+                    if seg_id not in segment_stops:
+                        segment_order.append(seg_id)
+                        segment_stops[seg_id] = []
+                    segment_stops[seg_id].append(s)
+
+                train_distance = 0.0
+                train_distance_valid = True
+                for seg_id in segment_order:
+                    seg_s_list = segment_stops[seg_id]
+                    if not seg_s_list:
+                        continue
+                    first_seg_entry = seg_s_list[0].get("station_entry_id")
+                    last_seg_entry = seg_s_list[-1].get("station_entry_id")
+                    first_km = entry_km_map.get(first_seg_entry)
+                    last_km = entry_km_map.get(last_seg_entry)
+                    if first_km is None or last_km is None:
+                        train_distance_valid = False
+                        break
+                    train_distance += abs(float(last_km) - float(first_km))
+
+                if train_distance_valid:
+                    total_distance += train_distance
+                else:
+                    total_distance = None
 
         # 一時入庫イベントを追加
         temporary_stabling_events = self.operation.get("temporary_stabling_events", []) or []
@@ -339,7 +391,7 @@ class OperationDetailPreviewDialog(QDialog):
                 current_group = merged_groups[-1]
                 prev_train = current_group[-1]
 
-                if prev_train["train_type_id"] == train["train_type_id"] and prev_train["train_number"] == train["train_number"]:
+                if prev_train["train_type_id"] == train["train_type_id"] and prev_train["train_number"] == train["train_number"] and train["train_id"] in prev_train["subsequent_train_ids"]:
                     current_group.append(train)
                 else:
                     merged_groups.append([train])
@@ -382,4 +434,4 @@ class OperationDetailPreviewDialog(QDialog):
                 "is_stabling": False,
             })
 
-        return result_trains
+        return result_trains, total_distance
