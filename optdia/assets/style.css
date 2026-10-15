@@ -179,6 +179,11 @@ QGraphicsView {
     font-size: 12px;
 }
 
+.popup_frame {
+    background-color: #f7f7f7;
+    border: 1px solid #cccccc;
+}
+
 .ok_button {
     background-color: #55aaff;
     border-color: #99ccff;

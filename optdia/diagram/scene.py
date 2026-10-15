@@ -126,20 +126,46 @@ class DiagramScene(QGraphicsScene):
             self.scale_x = scale_x
             self.scale_y = scale_y
 
+    def _is_train_visible(self, m_train, d_train) -> bool:
+        """フィルタリング条件に基づいて列車が表示対象かを判定する"""
+        if self.filter_train_type_id is not None:
+            if m_train.get("train_type_id") != self.filter_train_type_id:
+                return False
+        if self.filter_train_type_ids is not None:
+            if m_train.get("train_type_id") not in self.filter_train_type_ids:
+                return False
+        if self.filter_operation_ids is not None:
+            # 列車に設定されている運用IDのいずれかがfilter_operation_idsに含まれているかを判定
+            ops = d_train.get("operations", [])
+            train_op_ids = set()
+            for op_entry in ops:
+                op_id = op_entry.get("operation_id") if isinstance(op_entry, dict) else op_entry
+                if op_id:
+                    train_op_ids.add(op_id)
+            if not (train_op_ids & self.filter_operation_ids):
+                return False
+        return True
+
     def update_diagram(self, project, selected_target: str, route_id: str, diagram_id: str,
-                       filter_train_type_id: str = None):
+            filter_train_type_id: str = None,
+            filter_train_type_ids: set = None,
+            filter_operation_ids: set = None):
         """
         運行ダイヤグラムを更新描画する。
         selected_target: "route" または line_id (str)
         route_id: 運行系統リストで選択中のroute_id
         diagram_id: 運転ダイヤリストで選択中のdiagram_id
-        filter_train_type_id: 表示する列車種別のID。Noneの場合は全種別を表示
+        filter_train_type_id: 表示する列車種別のID。Noneの場合は全種別を表示（後方互換用）
+        filter_train_type_ids: 表示する列車種別IDの集合。Noneの場合は全種別を表示
+        filter_operation_ids: 表示する車両運用IDの集合。Noneの場合は全運用を表示
         """
         self.project = project
         self.selected_target = selected_target
         self.route_id = route_id
         self.diagram_id = diagram_id
         self.filter_train_type_id = filter_train_type_id
+        self.filter_train_type_ids = filter_train_type_ids
+        self.filter_operation_ids = filter_operation_ids
         self.rendered_trains = []
         self.current_highlight_train = None
         self.current_highlight_query = ""
@@ -401,7 +427,8 @@ class DiagramScene(QGraphicsScene):
         else:
             self._render_trains_for_line(stations_data)
 
-        if self.filter_train_type_id is None:
+        # 「全て表示」または「車両運用」フィルタリング時は接続パスおよび運用番号ラベルを描画する
+        if self.filter_train_type_id is None and self.filter_train_type_ids is None:
             self._render_operations(stations_data)
 
     def _render_trains_for_route(self, stations_data):
@@ -422,10 +449,9 @@ class DiagramScene(QGraphicsScene):
                 m_train = m_dict.get(tid)
                 if not m_train:
                     continue
-                # 列車種別フィルタ
-                if self.filter_train_type_id is not None:
-                    if m_train.get("train_type_id") != self.filter_train_type_id:
-                        continue
+                # 列車フィルタ
+                if not self._is_train_visible(m_train, d_train):
+                    continue
                 self._draw_single_train_for_route(m_train, stations_data, route)
 
     def _draw_single_train_for_route(self, train, stations_data, route):
@@ -574,10 +600,9 @@ class DiagramScene(QGraphicsScene):
                     if not m_train:
                         continue
 
-                    # 列車種別フィルタ
-                    if self.filter_train_type_id is not None:
-                        if m_train.get("train_type_id") != self.filter_train_type_id:
-                            continue
+                    # 列車フィルタ
+                    if not self._is_train_visible(m_train, d_train):
+                        continue
 
                     stops = m_train.get("stops", [])
                     subpaths = []
@@ -899,6 +924,9 @@ class DiagramScene(QGraphicsScene):
             if not assigned_list:
                 continue
 
+            if self.filter_operation_ids is not None and op_id not in self.filter_operation_ids:
+                continue
+
             op_info = diag_ops.get(op_id, {})
             op_num = op_info.get("operation_number")
             op_num_str = str(op_num) if op_num is not None else str(op_id)
@@ -1052,10 +1080,9 @@ class DiagramScene(QGraphicsScene):
         if not d_train.get("to_be_saved", True):
             return None
 
-        # 列車種別フィルタ判定
-        if self.filter_train_type_id is not None:
-            if m_train.get("train_type_id") != self.filter_train_type_id:
-                return None
+        # フィルタ判定
+        if not self._is_train_visible(m_train, d_train):
+            return None
 
         stops = m_train.get("stops", [])
         if not stops:

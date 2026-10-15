@@ -47,9 +47,13 @@ class DiagramView(QGraphicsView):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
     def update_diagram(self, project, selected_target: str, route_id: str, diagram_id: str,
-                       filter_train_type_id: str = None):
+            filter_train_type_id: str = None,
+            filter_train_type_ids: set = None,
+            filter_operation_ids: set = None):
         return self.scene.update_diagram(project, selected_target, route_id, diagram_id,
-                                         filter_train_type_id=filter_train_type_id)
+                filter_train_type_id=filter_train_type_id,
+                filter_train_type_ids=filter_train_type_ids,
+                filter_operation_ids=filter_operation_ids)
 
     def wheelEvent(self, event: QWheelEvent):
         # Shiftキーが押されているときは横スクロール
