@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QDialog, QColorDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QPushButton, QMessageBox, QLabel,
     QLineEdit, QListWidget, QListWidgetItem, QCheckBox, QStackedWidget,
     QRadioButton, QComboBox, QGroupBox, QFormLayout, QSpinBox, QDoubleSpinBox, QWidget, QTabWidget,
-    QFileDialog, QScrollArea
+    QFileDialog, QScrollArea, QMenu
 )
 from core.project import OptDiaProject, SchemaVersionError, generate_random_id, load_project
 from common.gui_utils import HtmlDelegate, create_color_square_pixmap
@@ -740,6 +740,8 @@ class LineStationEditorDialog(QDialog):
         self.line_list_widget.setDragDropMode(QListWidget.InternalMove)
         self.line_list_widget.itemSelectionChanged.connect(self._on_line_selected)
         self.line_list_widget.model().rowsMoved.connect(self._on_lines_reordered)
+        self.line_list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.line_list_widget.customContextMenuRequested.connect(self._on_line_list_context_menu)
         left_layout.addWidget(self.line_list_widget)
         
         # 路線追加ボタン
@@ -796,6 +798,8 @@ class LineStationEditorDialog(QDialog):
         self.station_list_widget.setDragDropMode(QListWidget.InternalMove)
         self.station_list_widget.itemSelectionChanged.connect(self._on_station_selected)
         self.station_list_widget.model().rowsMoved.connect(self._on_stations_reordered)
+        self.station_list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.station_list_widget.customContextMenuRequested.connect(self._on_station_list_context_menu)
         station_left_layout.addWidget(self.station_list_widget)
 
         # 駅追加ボタン
@@ -1739,9 +1743,25 @@ class LineStationEditorDialog(QDialog):
             if hasattr(self.parent(), "set_modified"):
                 self.parent().set_modified(True)
 
+    def _on_line_list_context_menu(self, pos):
+        """路線リストを右クリックしたときにコンテキストメニューを表示する"""
+        item = self.line_list_widget.itemAt(pos)
+        if item is None:
+            return
+        line_id = item.data(Qt.UserRole)
+        menu = QMenu(self)
+        delete_action = menu.addAction("この路線を削除")
+        action = menu.exec(self.line_list_widget.viewport().mapToGlobal(pos))
+        if action == delete_action:
+            self._delete_line(line_id)
+
     def _on_delete_line(self):
-        """現在選択中の路線を削除し、関連する運行系統や列車データ、孤立駅をクリーンアップする"""
-        line_id = self.current_selected_line_id
+        """現在選択中の路線を削除する（削除ボタン用）"""
+        if self.current_selected_line_id:
+            self._delete_line(self.current_selected_line_id)
+
+    def _delete_line(self, line_id: str):
+        """指定された路線IDの路線を削除し、関連する運行系統や列車データ、孤立駅をクリーンアップする"""
         if not line_id or line_id not in self.project.lines:
             return
 
@@ -1793,8 +1813,9 @@ class LineStationEditorDialog(QDialog):
                 del self.project.stations[sid]
 
         # 6. UIの更新
-        self.current_selected_line_id = None
-        self.current_selected_line_data = None
+        if self.current_selected_line_id == line_id:
+            self.current_selected_line_id = None
+            self.current_selected_line_data = None
         self._populate_line_list()
         
         if hasattr(self.parent(), "set_modified"):
@@ -1987,8 +2008,58 @@ class LineStationEditorDialog(QDialog):
 
         QMessageBox.information(self, "情報", "基準運転時分の計算が完了しました。")
 
+    def _on_station_list_context_menu(self, pos):
+        """駅リストを右クリックしたときにコンテキストメニューを表示する"""
+        item = self.station_list_widget.itemAt(pos)
+        if item is None:
+            return
+        station_entry_id = item.data(Qt.UserRole)
+        menu = QMenu(self)
+        duplicate_action = menu.addAction("同じ駅を挿入")
+        delete_action = menu.addAction("この駅を削除")
+        action = menu.exec(self.station_list_widget.viewport().mapToGlobal(pos))
+        if action == duplicate_action:
+            self._on_duplicate_station_entry(station_entry_id)
+        elif action == delete_action:
+            self._delete_station(station_entry_id)
+
+    def _on_duplicate_station_entry(self, station_entry_id: str):
+        """指定されたstation_entry_idに対応するoptdia_line_station_entryを複製する（station_entry_idのみ新規生成）"""
+        if not self.current_selected_line_data:
+            return
+
+        station_entries = self.current_selected_line_data.get("station_entries", [])
+        source_entry = next((s for s in station_entries if s.get("station_entry_id") == station_entry_id), None)
+        if not source_entry:
+            return
+
+        # 元のエントリをディープコピーし、station_entry_idのみ新しく生成する
+        new_entry = copy.deepcopy(source_entry)
+        new_entry_id = generate_random_id(12)
+        new_entry["station_entry_id"] = new_entry_id
+
+        # 複製元エントリの直後に挿入する
+        insert_index = next((i for i, s in enumerate(station_entries) if s.get("station_entry_id") == station_entry_id), len(station_entries) - 1)
+        station_entries.insert(insert_index + 1, new_entry)
+
+        # station_entry_to_station_id を更新
+        if hasattr(self.project, "station_entry_to_station_id"):
+            self.project.station_entry_to_station_id[new_entry_id] = new_entry.get("station_id", "")
+
+        # UIの更新
+        self._populate_station_list(self.current_selected_line_data)
+
+        # 複製された駅を選択状態にする
+        for i in range(self.station_list_widget.count()):
+            if self.station_list_widget.item(i).data(Qt.UserRole) == new_entry_id:
+                self.station_list_widget.setCurrentRow(i)
+                break
+
+        if hasattr(self.parent(), "set_modified"):
+            self.parent().set_modified(True)
+
     def _on_delete_station(self):
-        """現在編集中の駅を現在の路線から削除し、必要に応じてプロジェクト全体から削除する"""
+        """現在選択中の駅を削除する（削除ボタン用）"""
         if not self.current_selected_line_id or not self.current_selected_line_data:
             return
 
@@ -1997,6 +2068,13 @@ class LineStationEditorDialog(QDialog):
             return
 
         station_entry_id = selected_items[0].data(Qt.UserRole)
+        self._delete_station(station_entry_id)
+
+    def _delete_station(self, station_entry_id: str):
+        """指定されたstation_entry_idに対応するoptdia_line_station_entryを削除し、必要に応じてプロジェクト全体から削除する"""
+        if not self.current_selected_line_id or not self.current_selected_line_data:
+            return
+
         line_station_item = next((s for s in self.current_selected_line_data.get("station_entries", [])
                                   if s.get("station_entry_id") == station_entry_id), None)
         if not line_station_item:
