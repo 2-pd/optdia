@@ -147,7 +147,12 @@ class TimetableDelegate(QStyledItemDelegate):
 
             painter.save()
             if placeholder_symbol:
-                painter.setPen(Qt.gray)
+                if placeholder_symbol == "ﾚ" and self._should_re_be_red(index):
+                    painter.setPen(QColor("#cc3333"))
+                elif placeholder_symbol == "| |" and self._should_pipe_be_red(index):
+                    painter.setPen(QColor("#cc3333"))
+                else:
+                    painter.setPen(Qt.gray)
                 alignment = Qt.AlignCenter
                 # 番線ボックスの有無にかかわらず、セル本体の中央に描画する
                 painter.drawText(option.rect, alignment, placeholder_symbol)
@@ -459,6 +464,146 @@ class TimetableDelegate(QStyledItemDelegate):
             QTimer.singleShot(0, lambda: view.move_to_next_cell_and_edit(r, c))
             return True
         return super().eventFilter(obj, event)
+
+    def _should_re_be_red(self, index):
+        """「ﾚ」プレースホルダーを赤色で表示すべきかを判定する。
+
+        以下のいずれかに該当する場合にTrueを返す:
+        1. その駅行がセグメント（部分区間）の最初または最後の駅である
+        2. 列車において、時刻が設定されたセグメントが連続していない場合（飛ばされたセグメントの先頭・末尾駅）
+
+        注: 条件2の対象（飛ばされたセグメントの先頭・末尾駅）は必ず is_segment_start/end が
+        Trueになるため、条件1で包含される。
+        """
+        model = index.model()
+        row, col = index.row(), index.column()
+        num_headers = len(model.row_headers)
+        row_idx = row - num_headers
+        if not (0 <= row_idx < len(model.station_rows)):
+            return False
+
+        row_def = model.station_rows[row_idx]
+        stop_idx = row_def["stop_idx"]
+        config = model.full_stop_configs[stop_idx]
+
+        # 条件1: セグメントの最初または最後の駅（条件2も包含する）
+        # セグメント境界の駅（is_segment_start/end）の「ﾚ」はすべて赤色で表示する。
+        # これは要件1「部分区間の最初または最後の駅」と
+        # 要件2「飛ばされた部分区間の最初・最後の駅」の両方を満たす。
+        return bool(config.get("is_segment_start") or config.get("is_segment_end"))
+
+    def _should_pipe_be_red(self, index):
+        """「| |」プレースホルダーを赤色で表示すべきかを判定する。
+
+        以下の条件をすべて満たす場合にTrueを返す:
+        1. その駅行がセグメント（部分区間）の最初または最後の駅である
+        2. そのセグメントが「飛ばされたセグメント」である（時刻設定済みセグメントの間に位置し、自身は時刻なし）
+        3. そのセグメントの両端の駅が、ともに時刻設定済みセグメントの境界駅である
+           （片方でも時刻設定済みセグメントと共通でない駅（例: B〜XのXや、Y〜CのY）は対象外）
+        """
+        model = index.model()
+        row, col = index.row(), index.column()
+        num_headers = len(model.row_headers)
+        row_idx = row - num_headers
+        if not (0 <= row_idx < len(model.station_rows)):
+            return False
+
+        row_def = model.station_rows[row_idx]
+        stop_idx = row_def["stop_idx"]
+        config = model.full_stop_configs[stop_idx]
+
+        # 条件1: セグメント境界の駅でなければ対象外
+        if not (config.get("is_segment_start") or config.get("is_segment_end")):
+            return False
+
+        train_id = model.train_ids[col]
+        route = model.project.routes.get(model.route_id)
+        if not route:
+            return False
+        train_key = "inbound_trains" if model.direction == "inbound" else "outbound_trains"
+        m_train = route.get(train_key, {}).get(train_id)
+        if not m_train:
+            return False
+
+        stops = m_train.get("stops", [])
+        timed_indices = {s["stop_idx"] for s in stops if s.get("arrival_time") or s.get("departure_time")}
+        if not timed_indices:
+            return False
+
+        # 時刻が設定されたセグメントのIDセットを収集
+        segments_with_time = set()
+        for t_idx in timed_indices:
+            if t_idx < len(model.full_stop_configs):
+                segments_with_time.add(model.full_stop_configs[t_idx]["segment_id"])
+
+        # 時刻設定済みセグメントが1つ以下なら対象外（連続しない複数のセグメントが必要）
+        if len(segments_with_time) <= 1:
+            return False
+
+        # 全セグメントIDを出現順のリストとして取得
+        all_segment_ids_ordered = []
+        seen_segs = set()
+        for cfg in model.full_stop_configs:
+            seg_id = cfg["segment_id"]
+            if seg_id not in seen_segs:
+                all_segment_ids_ordered.append(seg_id)
+                seen_segs.add(seg_id)
+
+        # 時刻設定済みセグメントの順序上の位置を取得
+        timed_seg_positions = sorted(
+            all_segment_ids_ordered.index(sid) for sid in segments_with_time
+            if sid in all_segment_ids_ordered
+        )
+
+        # すべて連続していれば飛ばされたセグメントは存在しない
+        if timed_seg_positions[-1] - timed_seg_positions[0] + 1 == len(timed_seg_positions):
+            return False
+
+        # 時刻設定済みセグメントの境界駅の station_id セットを収集
+        # 異なる路線では同じ駅でも station_entry_id が異なるため、station_id で比較する
+        timed_boundary_station_ids = set()
+        for cfg in model.full_stop_configs:
+            if cfg["segment_id"] in segments_with_time:
+                if cfg.get("is_segment_start") or cfg.get("is_segment_end"):
+                    sid = cfg.get("station_id")
+                    if sid:
+                        timed_boundary_station_ids.add(sid)
+
+        # 飛ばされたセグメントのIDセットを特定
+        first_pos = timed_seg_positions[0]
+        last_pos = timed_seg_positions[-1]
+        skipped_seg_ids = {
+            all_segment_ids_ordered[i]
+            for i in range(first_pos, last_pos + 1)
+            if all_segment_ids_ordered[i] not in segments_with_time
+        }
+
+        if not skipped_seg_ids:
+            return False
+
+        # 条件2: 現在の駅が飛ばされたセグメントに属しているか
+        current_seg_id = config["segment_id"]
+        if current_seg_id not in skipped_seg_ids:
+            return False
+
+        # 条件3: 現在の飛ばされたセグメントの両端の駅が、
+        #         ともに時刻設定済みセグメントの境界駅であるかを確認
+        #         station_id で比較する（異なる路線では station_entry_id が異なるため）
+        seg_start_station_id = None
+        seg_end_station_id = None
+        for cfg in model.full_stop_configs:
+            if cfg["segment_id"] == current_seg_id:
+                if cfg.get("is_segment_start"):
+                    seg_start_station_id = cfg.get("station_id")
+                if cfg.get("is_segment_end"):
+                    seg_end_station_id = cfg.get("station_id")
+
+        if seg_start_station_id not in timed_boundary_station_ids:
+            return False
+        if seg_end_station_id not in timed_boundary_station_ids:
+            return False
+
+        return True
 
     def _get_placeholder_symbol(self, index):
         model = index.model()
