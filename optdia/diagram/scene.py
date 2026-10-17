@@ -118,6 +118,7 @@ class DiagramScene(QGraphicsScene):
         self.scale_x = scale_x
         self.scale_y = scale_y
         self.rendered_trains = []
+        self.stations_data = []
         self.current_highlight_train = None
         self.current_highlight_query = ""
 
@@ -178,6 +179,7 @@ class DiagramScene(QGraphicsScene):
 
         # 1. 表示対象の駅リストを構築
         stations_data = self._collect_station_positions()
+        self.stations_data = stations_data
 
         # エラー（基準運転時分の設定されていない駅がある場合、または駅が存在しない等）の判定
         if stations_data is None:
