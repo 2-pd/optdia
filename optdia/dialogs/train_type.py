@@ -140,7 +140,7 @@ class TrainTypeEditorDialog(QDialog):
         self.tt_form_layout.addRow("種別の基本色:", self.tt_main_color_picker)
         
         # 時刻表背景色
-        self.tt_bg_color_picker = ColorPickerWidget("#ffffff")
+        self.tt_bg_color_picker = ColorPickerWidget("#ffffff", False)
         self.tt_bg_color_picker.colorChanged.connect(self._on_tt_bg_color_changed)
         self.tt_form_layout.addRow("時刻表での背景色:", self.tt_bg_color_picker)
         

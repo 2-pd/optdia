@@ -744,7 +744,7 @@ class DiagramEditorDialog(QDialog):
         # 背景色
         edit_form_layout.addSpacing(10)
         edit_form_layout.addWidget(QLabel("背景色:"))
-        self.background_color_picker = ColorPickerWidget("#cccccc")
+        self.background_color_picker = ColorPickerWidget("#cccccc", False)
         self.background_color_picker.colorChanged.connect(self._on_background_color_changed)
         edit_form_layout.addWidget(self.background_color_picker)
 

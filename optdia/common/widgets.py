@@ -26,16 +26,17 @@ class ClickableColorLabel(QLabel):
 class ColorPickerWidget(QWidget):
     colorChanged = Signal(str)
 
-    def __init__(self, default_color: str = "#333333", parent=None):
+    def __init__(self, default_color: str = "#333333", target_is_foreground: bool = True, parent=None):
         super().__init__(parent)
         self._current_color = default_color
+        self._target_is_foreground = target_is_foreground
         self._app_settings = AppSettings()
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(6)
 
-        # 上部: 30pxの正方形ピクスマップと色コードボタン
+        # 上部: 30pxの正方形ピクスマップと色コードボタン、警告ラベル
         top_layout = QHBoxLayout()
         top_layout.setContentsMargins(0, 0, 0, 0)
         top_layout.setSpacing(6)
@@ -49,6 +50,10 @@ class ColorPickerWidget(QWidget):
         self.color_button = QPushButton(self._current_color)
         self.color_button.clicked.connect(self._open_color_dialog)
         top_layout.addWidget(self.color_button)
+
+        self.warning_label = QLabel()
+        self.warning_label.setStyleSheet("color: #cc6600;")
+        top_layout.addWidget(self.warning_label)
         top_layout.addStretch()
 
         main_layout.addLayout(top_layout)
@@ -91,11 +96,51 @@ class ColorPickerWidget(QWidget):
         super().setEnabled(enabled)
         self.color_square.setEnabled(enabled)
         self.color_button.setEnabled(enabled)
+        self.warning_label.setEnabled(enabled)
         self.history_frame.setEnabled(enabled)
 
     def _update_display(self, color_hex: str):
         self.color_button.setText(color_hex)
         self.color_square.setPixmap(create_color_square_pixmap(color_hex, size=30))
+        self._update_warning(color_hex)
+
+    def _calculate_relative_luminance(self, color: QColor) -> float:
+        """リニアRGBから計算される相対輝度を算出 (WCAG 2.x準拠)"""
+        def channel_luminance(c_val: int) -> float:
+            c = c_val / 255.0
+            return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+        r = channel_luminance(color.red())
+        g = channel_luminance(color.green())
+        b = channel_luminance(color.blue())
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+    def _update_warning(self, color_hex: str):
+        color = QColor(color_hex)
+        if not color.isValid():
+            self.warning_label.setText("")
+            return
+
+        rel_lum = self._calculate_relative_luminance(color)
+        warning_text = ""
+
+        # ハレーション判定: HSVで彩度が85%以上かつ相対輝度が0.2以上
+        hsv_saturation = color.hsvSaturationF()
+        if hsv_saturation >= 0.85 and rel_lum >= 0.2:
+            warning_text = "【注意】選択中の色は彩度が高すぎます"
+        else:
+            if self._target_is_foreground:
+                # 白とのコントラスト比: (1.0 + 0.05) / (L + 0.05)
+                contrast_with_white = (1.0 + 0.05) / (rel_lum + 0.05)
+                if contrast_with_white < 3.0:
+                    warning_text = "【注意】選択中の色は明度が高すぎます"
+            else:
+                # 黒とのコントラスト比: (L + 0.05) / (0.0 + 0.05)
+                contrast_with_black = (rel_lum + 0.05) / 0.05
+                if contrast_with_black < 3.0:
+                    warning_text = "【注意】選択中の色は明度が低すぎます"
+
+        self.warning_label.setText(warning_text)
 
     def _open_color_dialog(self):
         if not self.isEnabled():

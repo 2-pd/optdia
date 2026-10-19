@@ -276,7 +276,7 @@ class VehicleOperationEditorDialog(QDialog):
         # 表示色の選択ボタン
         color_layout = QHBoxLayout()
         color_layout.addWidget(QLabel("表示色:"))
-        self.op_color_picker = ColorPickerWidget("#ffffff")
+        self.op_color_picker = ColorPickerWidget("#ffffff", False)
         self.op_color_picker.colorChanged.connect(self._on_op_color_changed)
         color_layout.addWidget(self.op_color_picker)
         color_layout.addStretch()
@@ -387,7 +387,7 @@ class VehicleOperationEditorDialog(QDialog):
         # 運用グループの表示色
         tab_group_layout.addSpacing(10)
         tab_group_layout.addWidget(QLabel("運用グループの表示色:"))
-        self.group_color_picker = ColorPickerWidget("#ffffff")
+        self.group_color_picker = ColorPickerWidget("#ffffff", False)
         self.group_color_picker.colorChanged.connect(self._on_group_color_changed)
         tab_group_layout.addWidget(self.group_color_picker)
 
