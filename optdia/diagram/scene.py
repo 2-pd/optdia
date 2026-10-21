@@ -127,6 +127,103 @@ class DiagramScene(QGraphicsScene):
             self.scale_x = scale_x
             self.scale_y = scale_y
 
+    def get_total_time(self, project=None, selected_target=None, route_id=None) -> float | None:
+        """
+        現在の表示対象（または指定された対象）の起点から終点までの合計基準運転時分（秒）を計算して返す。
+        駅が2つ未満の場合や基準時分が設定されていない場合は None を返す。
+        """
+        proj = project if project is not None else self.project
+        target = selected_target if selected_target is not None else self.selected_target
+        r_id = route_id if route_id is not None else self.route_id
+
+        if not proj:
+            return None
+
+        if target == "route":
+            if not r_id or r_id not in proj.routes:
+                return None
+            route = proj.routes[r_id]
+            segments = route.get("line_segments", [])
+            if not segments:
+                return None
+
+            accumulated_time = 0.0
+            station_count = 0
+
+            for seg in segments:
+                line_id = seg.get("line_id")
+                start_eid = seg.get("start_station_entry", seg.get("start_station"))
+                end_eid = seg.get("end_station_entry", seg.get("end_station"))
+
+                line = proj.lines.get(line_id)
+                if not line:
+                    continue
+
+                line_station_entries = line.get("station_entries", [])
+                line_eids = [s.get("station_entry_id") for s in line_station_entries]
+                station_map = {s.get("station_entry_id"): s for s in line_station_entries}
+
+                if start_eid not in line_eids or end_eid not in line_eids:
+                    continue
+
+                idx_start = line_eids.index(start_eid)
+                idx_end = line_eids.index(end_eid)
+
+                if idx_start <= idx_end:
+                    seg_eids = line_eids[idx_start:idx_end + 1]
+                else:
+                    seg_eids = line_eids[idx_start:idx_end - 1:-1] if idx_end > 0 else line_eids[idx_start::-1]
+
+                start_st_info = station_map.get(start_eid)
+                if not start_st_info or start_st_info.get("absolute_standard_running_time") is None:
+                    return None
+                start_abs_time = start_st_info.get("absolute_standard_running_time")
+
+                end_st_info = station_map.get(end_eid)
+                if not end_st_info or end_st_info.get("absolute_standard_running_time") is None:
+                    return None
+                end_abs_time = end_st_info.get("absolute_standard_running_time")
+
+                station_count += len(seg_eids)
+                accumulated_time += abs(end_abs_time - start_abs_time)
+
+            if station_count < 2 or accumulated_time <= 0:
+                return None
+            return accumulated_time
+        else:
+            line = proj.lines.get(target)
+            if not line:
+                return None
+            station_entries = line.get("station_entries", [])
+            if len(station_entries) < 2:
+                return None
+
+            start_abs_time = station_entries[0].get("absolute_standard_running_time")
+            end_abs_time = station_entries[-1].get("absolute_standard_running_time")
+            if start_abs_time is None or end_abs_time is None:
+                return None
+
+            total_diff = abs(end_abs_time - start_abs_time)
+            if total_diff <= 0:
+                return None
+            return float(total_diff)
+
+    def calculate_auto_scale_y(self, viewport_height: int, project=None, selected_target=None, route_id=None) -> float | None:
+        """
+        ビューの表示高さ（viewport_height）にシーンの上下サイズ（max_y + 40）がちょうど収まるような scale_y の値を計算して返す。
+        """
+        total_time = self.get_total_time(project, selected_target, route_id)
+        if total_time is None or total_time <= 0:
+            return None
+
+        # シーン全体の高さ: scene_h = max_y + 40 = 40 + total_time * scale_y + 40 = total_time * scale_y + 80
+        # viewport_height に収まるためには: total_time * scale_y + 80 = viewport_height
+        available_height = viewport_height - 80.0
+        if available_height <= 0:
+            return 1.0 / 6.0  # 画面が極端に小さい場合のフォールバック値
+
+        return available_height / total_time
+
     def _is_train_visible(self, m_train, d_train) -> bool:
         """フィルタリング条件に基づいて列車が表示対象かを判定する"""
         if self.filter_train_type_id is not None:

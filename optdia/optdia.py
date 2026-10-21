@@ -1558,6 +1558,7 @@ class MainWindow(QMainWindow):
 
         self.diagram_height_combo = QComboBox()
         self.diagram_height_combo.setFixedHeight(28)
+        self.diagram_height_combo.addItem("自動", "auto")
         self.diagram_height_combo.addItem("狭め", "narrow")
         self.diagram_height_combo.addItem("標準", "standard")
         self.diagram_height_combo.addItem("やや広め", "slightly_wide")
@@ -1568,7 +1569,8 @@ class MainWindow(QMainWindow):
         if idx_dh >= 0:
             self.diagram_height_combo.setCurrentIndex(idx_dh)
         else:
-            self.diagram_height_combo.setCurrentIndex(1) # 標準
+            idx_standard = self.diagram_height_combo.findData("standard")
+            self.diagram_height_combo.setCurrentIndex(idx_standard if idx_standard >= 0 else 0) # デフォルトは「自動」
         self.diagram_height_combo.currentIndexChanged.connect(self._on_diagram_height_changed)
         frame_layout.addWidget(self.diagram_height_combo)
 
@@ -1731,9 +1733,25 @@ class MainWindow(QMainWindow):
         }
         return mapping.get(key, 6.0)
 
-    def _get_diagram_scale_y(self) -> float:
+    def _get_diagram_scale_y(self, selected_target=None, route_id=None) -> float:
         """選択中のダイヤグラム表示高さに応じたスケール値 (px/秒) を返す"""
         key = self.diagram_height_combo.currentData() if hasattr(self, "diagram_height_combo") else "standard"
+        if key == "auto":
+            # ビューの表示高さにシーンの上下サイズがちょうど収まる倍率を計算
+            if hasattr(self, "diagram_view") and hasattr(self.diagram_view, "scene"):
+                viewport_h = self.diagram_view.viewport().height()
+                # 初期化直後などでビューポートの高さがまだ確定していない場合のフォールバック
+                if viewport_h <= 0:
+                    viewport_h = self.diagram_view.height()
+                target = selected_target or (self.diagram_line_combo.currentData() if hasattr(self, "diagram_line_combo") else "route") or "route"
+                if route_id is None and hasattr(self, "route_list_widget"):
+                    item = self.route_list_widget.currentItem()
+                    route_id = item.data(Qt.UserRole) if item else None
+                auto_scale = self.diagram_view.scene.calculate_auto_scale_y(viewport_h, self.project, target, route_id)
+                if auto_scale is not None and auto_scale > 0:
+                    return auto_scale
+            return 1.0 / 3.0
+
         mapping = {
             "narrow": 1.0 / 6.0,
             "standard": 1.0 / 3.0,
@@ -1800,7 +1818,7 @@ class MainWindow(QMainWindow):
                 filter_operation_ids = set()
 
         scale_x = self._get_diagram_scale_x()
-        scale_y = self._get_diagram_scale_y()
+        scale_y = self._get_diagram_scale_y(selected_target=selected_target, route_id=route_id)
 
         self.diagram_view.scene.set_scales(scale_x, scale_y)
         self.diagram_header_view.scene.set_scale_x(scale_x)

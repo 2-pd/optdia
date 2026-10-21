@@ -57,6 +57,14 @@ class DiagramView(QGraphicsView):
                 filter_train_type_ids=filter_train_type_ids,
                 filter_operation_ids=filter_operation_ids)
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        main_win = self.window()
+        if hasattr(main_win, "diagram_height_combo"):
+            if main_win.diagram_height_combo.currentData() == "auto":
+                if hasattr(main_win, "_update_diagram_view"):
+                    main_win._update_diagram_view()
+
     def wheelEvent(self, event: QWheelEvent):
         # Shiftキーが押されているときは横スクロール
         if event.modifiers() == Qt.KeyboardModifier.ShiftModifier:
