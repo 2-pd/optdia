@@ -1,8 +1,9 @@
+import copy
 from PySide6.QtWidgets import QGraphicsView, QMenu, QMessageBox, QGraphicsPathItem
 from PySide6.QtCore import Qt, QRectF
 from PySide6.QtGui import QPainter, QWheelEvent
 from .scene import DiagramScene, DiagramHeaderScene, DiagramStationScene
-from .dialogs import AddTrainDialog
+from .dialogs import AddTrainDialog, delete_train
 
 # 運行ダイヤグラムの上部ビュー（時刻ヘッダー）
 class DiagramHeaderView(QGraphicsView):
@@ -74,15 +75,24 @@ class DiagramView(QGraphicsView):
 
     def contextMenuEvent(self, event):
         scene_pos = self.mapToScene(event.pos())
-        
+
         # クリック位置の周辺に列車のパスが存在するか判定
         # 半径4pxの矩形領域内にあるQGraphicsPathItemを探索
         rect = QRectF(scene_pos.x() - 4.0, scene_pos.y() - 4.0, 8.0, 8.0)
         items = [i for i in self.scene.items(rect) if isinstance(i, QGraphicsPathItem)]
-        
+
         if items:
-            # 列車のパスが存在する場合はコンテキストメニューを表示しない
-            super().contextMenuEvent(event)
+            # 列車のパスが存在する場合はパス上専用のコンテキストメニューを表示
+            # クリック位置に最も近い列車を特定する
+            train_data = self._find_train_by_path_items(items)
+            menu = QMenu(self)
+            add_train_action = menu.addAction("ここに列車を追加")
+            delete_train_action = menu.addAction("この列車を削除")
+            selected_action = menu.exec(event.globalPos())
+            if selected_action == add_train_action:
+                self._handle_add_train_action(scene_pos)
+            elif selected_action == delete_train_action and train_data is not None:
+                self._handle_delete_train_action(train_data)
             return
 
         menu = QMenu(self)
@@ -91,6 +101,18 @@ class DiagramView(QGraphicsView):
 
         if selected_action == add_train_action:
             self._handle_add_train_action(scene_pos)
+
+    def _find_train_by_path_items(self, path_items):
+        """
+        path_itemsのリストから、rendered_trainsリスト内で対応する列車データを返す。
+        対応する列車が見つからない場合はNoneを返す。
+        """
+        path_item_set = set(id(item) for item in path_items)
+        for train_data in self.scene.rendered_trains:
+            for p_item in train_data.get("path_items", []):
+                if id(p_item) in path_item_set:
+                    return train_data
+        return None
 
     def _handle_add_train_action(self, scene_pos):
         # メインウィンドウを探索
@@ -150,6 +172,25 @@ class DiagramView(QGraphicsView):
 
         if dlg.exec():
             # プロジェクトの変更フラグを設定し、ビューを再描画
+            if hasattr(main_win, "set_modified"):
+                main_win.set_modified(True)
+            if hasattr(main_win, "_update_diagram_view"):
+                main_win._update_diagram_view()
+            if hasattr(main_win, "timetable_model"):
+                main_win.timetable_model.update_data(
+                    main_win.timetable_model.route_id,
+                    main_win.timetable_model.diagram_id,
+                    main_win.timetable_model.direction
+                )
+
+    def _handle_delete_train_action(self, train_data):
+        """
+        ダイヤグラム上の列車パスを右クリックして「この列車を削除」を選択したときの処理。
+        """
+        if delete_train(self, train_data):
+            # ビューの更新
+            main_win = self.window()
+
             if hasattr(main_win, "set_modified"):
                 main_win.set_modified(True)
             if hasattr(main_win, "_update_diagram_view"):

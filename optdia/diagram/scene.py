@@ -444,7 +444,10 @@ class DiagramScene(QGraphicsScene):
         m_inbound = route.get("inbound_trains", {})
         m_outbound = route.get("outbound_trains", {})
 
-        for d_dict, m_dict in [(d_outbound, m_outbound), (d_inbound, m_inbound)]:
+        for d_dict, m_dict, direction in [
+            (d_outbound, m_outbound, "outbound"),
+            (d_inbound, m_inbound, "inbound"),
+        ]:
             for tid, d_train in d_dict.items():
                 if not d_train.get("to_be_saved", True):
                     continue
@@ -454,9 +457,9 @@ class DiagramScene(QGraphicsScene):
                 # 列車フィルタ
                 if not self._is_train_visible(m_train, d_train):
                     continue
-                self._draw_single_train_for_route(m_train, stations_data, route)
+                self._draw_single_train_for_route(m_train, stations_data, route, tid, direction, self.route_id)
 
-    def _draw_single_train_for_route(self, train, stations_data, route):
+    def _draw_single_train_for_route(self, train, stations_data, route, train_id: str, direction: str, route_id: str):
         stops = train.get("stops", [])
         if not stops:
             return
@@ -563,6 +566,9 @@ class DiagramScene(QGraphicsScene):
         main_color = tt.get("main_color", "#333333") if tt else "#333333"
 
         self.rendered_trains.append({
+            "train_id": train_id,
+            "direction": direction,
+            "route_id": route_id,
             "train_number": str(train.get("train_number", "")),
             "sort_key": sort_key,
             "path_items": path_items,
@@ -594,7 +600,10 @@ class DiagramScene(QGraphicsScene):
             m_inbound = route.get("inbound_trains", {})
             m_outbound = route.get("outbound_trains", {})
 
-            for d_dict, m_dict in [(d_outbound, m_outbound), (d_inbound, m_inbound)]:
+            for d_dict, m_dict, direction in [
+                (d_outbound, m_outbound, "outbound"),
+                (d_inbound, m_inbound, "inbound"),
+            ]:
                 for tid, d_train in d_dict.items():
                     if not d_train.get("to_be_saved", True):
                         continue
@@ -678,6 +687,9 @@ class DiagramScene(QGraphicsScene):
                     main_color = tt.get("main_color", "#333333") if tt else "#333333"
 
                     self.rendered_trains.append({
+                        "train_id": tid,
+                        "direction": direction,
+                        "route_id": rid,
                         "train_number": str(m_train.get("train_number", "")),
                         "sort_key": sort_key,
                         "path_items": path_items,

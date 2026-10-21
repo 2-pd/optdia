@@ -870,3 +870,152 @@ class AddTrainDialog(QDialog):
             self.history_manager.push_events([ev])
 
         self.accept()
+
+
+def delete_train(parent_view, train_data):
+    """
+    ダイヤグラム上の列車を削除する
+    """
+    from core.events import RemoveTrainEvent, RemoveTrainDiagramEvent
+
+    main_win = parent_view.window()
+    project = getattr(main_win, "project", parent_view.scene.project)
+    diagram_id = getattr(parent_view.scene, "diagram_id", None)
+    history_manager = getattr(main_win, "history_manager", None)
+
+    if not project or not diagram_id:
+        return False
+
+    # rendered_trains に格納済みの識別情報を使用
+    train_id = train_data.get("train_id")
+    direction = train_data.get("direction")
+    route_id = train_data.get("route_id")
+    train_number = train_data.get("train_number") or "(番号なし)"
+
+    if not train_id or not direction or not route_id:
+        return False
+
+    route = project.routes.get(route_id)
+    if not route:
+        return False
+
+    train_key = "inbound_trains" if direction == "inbound" else "outbound_trains"
+    order_key = f"{train_key}_order"
+    tbd = route.get("trains_by_diagram", {}).get(diagram_id, {})
+    d_trains = tbd.get(train_key, {})
+    order = tbd.get(order_key, [])
+    m_trains = route.get(train_key, {})
+
+    m_train = m_trains.get(train_id)
+    d_train = d_trains.get(train_id)
+    if not m_train or not d_train:
+        return False
+
+    # 削除確認ダイアログ
+    reply = QMessageBox.question(
+        parent_view,
+        "列車の削除",
+        f"列車 {train_number} を削除しますか？",
+        QMessageBox.Yes | QMessageBox.No,
+        QMessageBox.No
+    )
+    if reply != QMessageBox.Yes:
+        return False
+
+    # 複数ダイヤで運転されている列車があるか確認
+    actual_diagram_ids = []
+    for did in project.diagrams_order:
+        tbd_for_did = route.get("trains_by_diagram", {}).get(did, {})
+        if train_id in tbd_for_did.get(train_key, {}):
+            actual_diagram_ids.append(did)
+
+    delete_from_all_diagrams = False
+    if len(actual_diagram_ids) > 1:
+        reply2 = QMessageBox.question(
+            parent_view,
+            "他の運転ダイヤからの削除",
+            "他の運転ダイヤからも列車を削除しますか？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if reply2 == QMessageBox.Yes:
+            delete_from_all_diagrams = True
+
+    events_to_push = []
+
+    if delete_from_all_diagrams:
+        # 全運転ダイヤおよび運行系統マスタから削除 -> RemoveTrainEvent
+        if hasattr(project, "remove_all_train_links"):
+            project.remove_all_train_links(route_id, direction, train_id)
+        d_trains_by_diagram = {}
+        for did in actual_diagram_ids:
+            tbd_for_did = route.get("trains_by_diagram", {}).get(did, {})
+            d_train_dict = tbd_for_did.get(train_key, {})
+            d_order_list = tbd_for_did.get(order_key, [])
+            if train_id in d_train_dict:
+                d_idx = d_order_list.index(train_id) if train_id in d_order_list else len(d_order_list) - 1
+                d_trains_by_diagram[did] = (d_idx, copy.deepcopy(d_train_dict[train_id]))
+                if train_id in d_order_list:
+                    d_order_list.remove(train_id)
+                del d_train_dict[train_id]
+
+                # 削除する列車に担当運用が設定されていた場合、operation_train_lookup を更新する
+                ops = d_trains_by_diagram[did][1].get("operations", [])
+                if ops and hasattr(project, "update_operation_train_lookup"):
+                    project.update_operation_train_lookup(
+                        did, route_id, direction, train_id,
+                        ops, []
+                    )
+
+        m_train_snapshot = copy.deepcopy(m_train)
+        if train_id in m_trains:
+            del m_trains[train_id]
+
+        ev = RemoveTrainEvent(route_id, direction, train_id, d_trains_by_diagram, m_train_snapshot)
+        events_to_push.append(ev)
+    else:
+        # 現在の運転ダイヤからのみ削除
+        if len(actual_diagram_ids) <= 1:
+            # 登録が1つのみ -> RemoveTrainEvent（マスタからも削除）
+            if hasattr(project, "remove_all_train_links"):
+                project.remove_all_train_links(route_id, direction, train_id)
+            old_idx = order.index(train_id) if train_id in order else 0
+            d_trains_by_diagram = {diagram_id: (old_idx, copy.deepcopy(d_train))}
+            if train_id in order:
+                order.remove(train_id)
+            if train_id in d_trains:
+                del d_trains[train_id]
+            m_train_snapshot = copy.deepcopy(m_train)
+            if train_id in m_trains:
+                del m_trains[train_id]
+
+            # 削除する列車に担当運用が設定されていた場合、operation_train_lookup を更新する
+            ops = d_trains_by_diagram[diagram_id][1].get("operations", [])
+            if ops and hasattr(project, "update_operation_train_lookup"):
+                project.update_operation_train_lookup(
+                    diagram_id, route_id, direction, train_id,
+                    ops, []
+                )
+
+            ev = RemoveTrainEvent(route_id, direction, train_id, d_trains_by_diagram, m_train_snapshot)
+            events_to_push.append(ev)
+        else:
+            # 複数ダイヤに登録済み -> 現在のダイヤからのみ削除（RemoveTrainDiagramEvent）
+            old_idx = order.index(train_id) if train_id in order else 0
+            old_d_train = copy.deepcopy(d_train)
+            if train_id in order:
+                order.remove(train_id)
+            if train_id in d_trains:
+                del d_trains[train_id]
+            if "_diagram_ids" in m_train and diagram_id in m_train["_diagram_ids"]:
+                m_train["_diagram_ids"].remove(diagram_id)
+            if hasattr(project, "remove_subsequent_link"):
+                for sub in old_d_train.get("subsequent_trains", []):
+                    project.remove_subsequent_link(route_id, direction, train_id, sub)
+            ev = RemoveTrainDiagramEvent(route_id, direction, train_id, diagram_id, old_idx, old_d_train)
+            events_to_push.append(ev)
+
+    if history_manager and events_to_push:
+        history_manager.push_events(events_to_push)
+
+    return True
