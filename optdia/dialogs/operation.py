@@ -2,7 +2,7 @@ from PySide6.QtCore import Qt, QByteArray, QDataStream, QIODevice
 from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QDialog, QHBoxLayout, QVBoxLayout, QLabel, QListWidget, QListWidgetItem, QStackedWidget, QTabWidget, QWidget, QPushButton, QLineEdit, QColorDialog,
-    QGroupBox, QSpinBox, QPlainTextEdit, QFormLayout, QScrollArea, QAbstractItemView, QMessageBox
+    QGroupBox, QSpinBox, QPlainTextEdit, QFormLayout, QScrollArea, QAbstractItemView, QMessageBox, QMenu
 )
 from core.project import OptDiaProject, generate_random_id
 from common.gui_utils import create_color_square_pixmap
@@ -88,10 +88,22 @@ class OperationGroupListWidget(QListWidget):
         # 内部で運用グループ自体のドラッグアンドドロップ入れ替えを行う場合はスーパークラスの処理
         super().dropEvent(event)
 
+    def contextMenuEvent(self, event):
+        item = self.itemAt(event.pos())
+        if item is None:
+            return
+        self.setCurrentItem(item)
+        menu = QMenu(self)
+        action = menu.addAction("この運用グループを削除")
+        selected = menu.exec(event.globalPos())
+        if selected == action:
+            self.dialog._on_delete_operation_group()
+
 class OperationListWidget(QListWidget):
     """運用のカスタムMIMEデータをサポートする運用リストウィジェット"""
-    def __init__(self, parent=None):
+    def __init__(self, parent_dialog, parent=None):
         super().__init__(parent)
+        self.dialog = parent_dialog
 
     def mimeData(self, items):
         mime_data = super().mimeData(items)
@@ -103,6 +115,17 @@ class OperationListWidget(QListWidget):
                 stream.writeQString(op_id)
                 mime_data.setData("application/x-optdia-op-id", encoded_data)
         return mime_data
+
+    def contextMenuEvent(self, event):
+        item = self.itemAt(event.pos())
+        if item is None:
+            return
+        self.setCurrentItem(item)
+        menu = QMenu(self)
+        action = menu.addAction("この運用を削除")
+        selected = menu.exec(event.globalPos())
+        if selected == action:
+            self.dialog._on_delete_operation()
 
 # 車両運用情報編集ダイアログ
 class VehicleOperationEditorDialog(QDialog):
@@ -166,7 +189,7 @@ class VehicleOperationEditorDialog(QDialog):
             if initial_group_id and og_id == initial_group_id:
                 initial_row = idx
 
-        # 「運用グループのリスト」の下にスペースを設けて、そこに「運用グループの追加」というボタンを追加
+        # 「運用グループの追加」ボタン
         self.add_group_button = QPushButton("運用グループの追加")
         self.add_group_button.clicked.connect(self._on_add_operation_group)
         left_layout.addWidget(self.add_group_button)
@@ -206,7 +229,8 @@ class VehicleOperationEditorDialog(QDialog):
         op_header_label = QLabel("<b>運用</b>")
         left_op_layout.addWidget(op_header_label)
 
-        self.op_list = OperationListWidget()
+        # 車両運用のリスト
+        self.op_list = OperationListWidget(self)
         self.op_list.setDragEnabled(True)
         self.op_list.setDragDropMode(QListWidget.DragDrop)
         self.op_list.setDefaultDropAction(Qt.MoveAction)
