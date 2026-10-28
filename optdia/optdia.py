@@ -177,6 +177,8 @@ class MainWindow(QMainWindow):
         self.route_list_widget.setDragDropMode(QListWidget.InternalMove)
         self.route_list_widget.model().rowsMoved.connect(self._on_routes_reordered)
         self.route_list_widget.itemSelectionChanged.connect(lambda: self._on_timetable_settings_changed(reset_scroll_pos=False))
+        self.route_list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.route_list_widget.customContextMenuRequested.connect(self._on_route_list_context_menu)
         route_layout.addWidget(self.route_list_widget)
 
         # サイドバーの残りスペースを2等分するため、stretch=1 を指定
@@ -204,6 +206,8 @@ class MainWindow(QMainWindow):
         self.diagram_list_widget.setDragDropMode(QListWidget.InternalMove)
         self.diagram_list_widget.model().rowsMoved.connect(self._on_diagrams_reordered)
         self.diagram_list_widget.itemSelectionChanged.connect(self._on_diagram_selected_in_main_window)
+        self.diagram_list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.diagram_list_widget.customContextMenuRequested.connect(self._on_diagram_list_context_menu)
         diagram_layout.addWidget(self.diagram_list_widget)
 
         # サイドバーの残りスペースを2等分するため、stretch=1 を指定
@@ -992,6 +996,30 @@ class MainWindow(QMainWindow):
         dialog = TrainTypeEditorDialog(self, self.project)
         dialog.exec()
         self._on_timetable_settings_changed()
+
+    def _on_route_list_context_menu(self, pos: QPoint):
+        """運行系統リストの右クリックメニューを表示する"""
+        item = self.route_list_widget.itemAt(pos)
+        if item is None:
+            return
+        self.route_list_widget.setCurrentItem(item)
+        menu = QMenu(self)
+        edit_action = menu.addAction("この運行系統を編集")
+        action = menu.exec(self.route_list_widget.viewport().mapToGlobal(pos))
+        if action == edit_action:
+            self._on_edit_routes()
+
+    def _on_diagram_list_context_menu(self, pos: QPoint):
+        """運転ダイヤリストの右クリックメニューを表示する"""
+        item = self.diagram_list_widget.itemAt(pos)
+        if item is None:
+            return
+        self.diagram_list_widget.setCurrentItem(item)
+        menu = QMenu(self)
+        edit_action = menu.addAction("この運転ダイヤを編集")
+        action = menu.exec(self.diagram_list_widget.viewport().mapToGlobal(pos))
+        if action == edit_action:
+            self._on_edit_diagrams()
 
     def _on_edit_routes(self):
         """運行系統編集ウィンドウを表示する"""
