@@ -1,0 +1,1146 @@
+/*
+このファイルはoptdia_project.tsから生成されたものです。
+
+仕様バージョン 2026.11.001
+*/
+
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "optdia_project",
+  "description": "optdiaファイルの基底となるオブジェクト",
+  "type": "object",
+  "properties": {
+    "metadata": {
+      "description": "プロジェクトファイルのメタデータ",
+      "$ref": "#/$defs/optdia_project_metadata"
+    },
+    "entities": {
+      "description": "プロジェクトのコンテンツ本体",
+      "$ref": "#/$defs/optdia_project_entities"
+    }
+  },
+  "required": [
+    "metadata",
+    "entities"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "optdia_project_metadata": {
+      "type": "object",
+      "description": "プロジェクトファイルのメタデータを格納するオブジェクト",
+      "properties": {
+        "railroad_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "路線系統ID(未入力の場合はnull)"
+        },
+        "railroad_name": {
+          "type": "string",
+          "description": "路線系統名"
+        },
+        "timetable_revision_date": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date",
+          "description": "ダイヤ改正日(YYYY-MM-DD形式、未入力の場合はnull)"
+        },
+        "description": {
+          "type": "string",
+          "description": "路線系統についての説明文"
+        },
+        "license_text": {
+          "type": "string",
+          "description": "プロジェクトファイルのライセンス文"
+        },
+        "timezone": {
+          "type": "string",
+          "default": "Asia/Tokyo",
+          "description": "プロジェクトファイルで使用される時刻のタイムゾーンのIANA time zone identifier (デフォルト値は Asia/Tokyo)"
+        },
+        "publishers": {
+          "type": "array",
+          "description": "プロジェクトファイルの作成者情報を表示順に配列で",
+          "items": {
+            "$ref": "#/$defs/optdia_publisher"
+          }
+        },
+        "project_schema_version": {
+          "type": "string",
+          "description": "プロジェクトファイルの仕様バージョン"
+        }
+      },
+      "required": [
+        "railroad_id",
+        "railroad_name",
+        "timetable_revision_date",
+        "description",
+        "license_text",
+        "timezone",
+        "publishers",
+        "project_schema_version"
+      ],
+      "additionalProperties": false
+    },
+    "optdia_publisher": {
+      "type": "object",
+      "description": "プロジェクトファイルの作成者情報を格納するオブジェクト",
+      "properties": {
+        "publisher_name": {
+          "type": "string",
+          "description": "プロジェクトファイルの作成者名"
+        },
+        "publisher_url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uri",
+          "description": "プロジェクトファイルの作成者情報を閲覧できるURL"
+        }
+      },
+      "required": [
+        "publisher_name",
+        "publisher_url"
+      ],
+      "additionalProperties": false
+    },
+    "optdia_project_entities": {
+      "type": "object",
+      "description": "プロジェクトのコンテンツ本体を格納するオブジェクト",
+      "properties": {
+        "agencies": {
+          "type": "array",
+          "description": "鉄道事業者の情報を表示順に配列で",
+          "items": {
+            "$ref": "#/$defs/optdia_agency"
+          }
+        },
+        "lines": {
+          "type": "array",
+          "description": "各路線の情報を表示順に配列で",
+          "items": {
+            "$ref": "#/$defs/optdia_line"
+          }
+        },
+        "stations": {
+          "description": "各駅の情報を連想配列で",
+          "$ref": "#/$defs/optdia_station_dict"
+        },
+        "routes": {
+          "type": "array",
+          "description": "運行系統情報を表示順に配列で",
+          "items": {
+            "$ref": "#/$defs/optdia_route"
+          }
+        },
+        "train_types": {
+          "type": "array",
+          "description": "各列車種別の情報を表示順に配列で",
+          "items": {
+            "$ref": "#/$defs/optdia_train_type"
+          }
+        },
+        "diagrams": {
+          "type": "array",
+          "description": "運転ダイヤ情報を表示順に配列で",
+          "items": {
+            "$ref": "#/$defs/optdia_diagram"
+          }
+        },
+        "calendar_periods": {
+          "type": "array",
+          "description": "期間別の運行区分情報を期間の開始日の順に配列で",
+          "items": {
+            "$ref": "#/$defs/optdia_calendar_period"
+          }
+        },
+        "date_exceptions": {
+          "description": "例外の運行日情報を連想配列で",
+          "$ref": "#/$defs/optdia_date_exceptions"
+        }
+      },
+      "required": [
+        "agencies",
+        "lines",
+        "stations",
+        "routes",
+        "train_types",
+        "diagrams",
+        "calendar_periods",
+        "date_exceptions"
+      ],
+      "additionalProperties": false
+    },
+    "optdia_agency": {
+      "type": "object",
+      "description": "鉄道事業者の情報を格納するオブジェクト",
+      "properties": {
+        "agency_id": {
+          "type": "string",
+          "description": "事業者ID"
+        },
+        "agency_name": {
+          "type": "string",
+          "description": "事業者名"
+        },
+        "agency_short_name": {
+          "type": "string",
+          "description": "事業者名の省略表記"
+        },
+        "agency_url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "事業者公式サイトのURL"
+        }
+      },
+      "required": [
+        "agency_id",
+        "agency_name",
+        "agency_short_name",
+        "agency_url"
+      ],
+      "additionalProperties": false
+    },
+    "optdia_line": {
+      "type": "object",
+      "description": "路線情報を格納するオブジェクト",
+      "properties": {
+        "line_id": {
+          "type": "string",
+          "description": "路線ID"
+        },
+        "line_name": {
+          "type": "string",
+          "description": "路線名"
+        },
+        "line_type": {
+          "type": "string",
+          "enum": [
+            "rail",
+            "metro",
+            "high_speed_rail",
+            "tram",
+            "agt",
+            "monorail",
+            "funicular",
+            "bus"
+          ],
+          "description": "路線の分類(普通鉄道、地下鉄、高速鉄道、路面電車・ライトレール、新交通システム、モノレール、ケーブルカー、バス・DMV)"
+        },
+        "line_color": {
+          "type": "string",
+          "default": "#333333",
+          "description": "路線の色(デフォルト値は #333333)"
+        },
+        "line_symbol": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "路線記号等(1〜2文字の英数字または1文字のマルチバイト文字)"
+        },
+        "inbound_direction_is_forward_direction": {
+          "type": "boolean",
+          "description": "編成の前位向きと列車の上り向きが一致するか否か"
+        },
+        "clockwise_is_inbound": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "環状路線で上り列車が時計回り運転となるか否か(環状路線でない場合はnull)"
+        },
+        "station_entries": {
+          "type": "array",
+          "description": "路線に駅を紐付ける情報を起点側の駅のものから順に配列で",
+          "items": {
+            "$ref": "#/$defs/optdia_line_station_entry"
+          }
+        },
+        "agency_ids": {
+          "type": "array",
+          "description": "路線を管轄する鉄道事業者の事業者IDを表示順に配列で",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "line_id",
+        "line_name",
+        "line_type",
+        "line_color",
+        "line_symbol",
+        "inbound_direction_is_forward_direction",
+        "clockwise_is_inbound",
+        "station_entries",
+        "agency_ids"
+      ],
+      "additionalProperties": false
+    },
+    "optdia_station_dict": {
+      "type": "object",
+      "description": "駅IDと駅情報のペアを格納するオブジェクト",
+      "additionalProperties": {
+        "$ref": "#/$defs/optdia_station"
+      }
+    },
+    "optdia_station": {
+      "type": "object",
+      "description": "駅情報を格納するオブジェクト",
+      "properties": {
+        "station_name": {
+          "type": "string",
+          "description": "駅名"
+        },
+        "station_name_kana": {
+          "type": "string",
+          "description": "駅名のひらがな表記"
+        },
+        "station_initial": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "駅名の1文字表記(使用しない場合はnull)"
+        },
+        "is_major_station": {
+          "type": "boolean",
+          "description": "主要駅か否か"
+        },
+        "is_signal_station": {
+          "type": "boolean",
+          "description": "信号場か否か"
+        },
+        "show_arrival_time": {
+          "type": "boolean",
+          "description": "時刻表で着時刻を表示するか否か"
+        },
+        "show_track_name": {
+          "type": "boolean",
+          "description": "時刻表で発着番線を表示するか否か"
+        },
+        "latitude": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "駅の緯度(小数点以下は6桁まで)"
+        },
+        "longitude": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "駅の経度(小数点以下は6桁まで)"
+        },
+        "destination_code": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "列車番号の自動生成に使用する行き先コード"
+        },
+        "tracks": {
+          "type": "array",
+          "description": "発着番線情報を表示順に配列で",
+          "items": {
+            "$ref": "#/$defs/optdia_station_track"
+          }
+        }
+      },
+      "required": [
+        "station_name",
+        "station_name_kana",
+        "station_initial",
+        "is_major_station",
+        "is_signal_station",
+        "show_arrival_time",
+        "show_track_name",
+        "latitude",
+        "longitude",
+        "destination_code",
+        "tracks"
+      ],
+      "additionalProperties": false
+    },
+    "optdia_station_track": {
+      "type": "object",
+      "description": "発着番線情報を格納するオブジェクト",
+      "properties": {
+        "track_id": {
+          "type": "string",
+          "description": "発着番線ID(異なる駅との重複は制限されない)"
+        },
+        "track_name": {
+          "type": "string",
+          "description": "発着番線名(アルファベット等も使用可能)"
+        },
+        "track_short_name": {
+          "type": "string",
+          "description": "発着番線名の省略表記"
+        }
+      },
+      "required": [
+        "track_id",
+        "track_name",
+        "track_short_name"
+      ],
+      "additionalProperties": false
+    },
+    "optdia_line_station_entry": {
+      "type": "object",
+      "description": "路線に駅情報を紐付けるためのオブジェクト",
+      "properties": {
+        "station_entry_id": {
+          "type": "string",
+          "description": "路線-駅対応ID(ランダムな英数字12文字)"
+        },
+        "station_id": {
+          "type": "string",
+          "description": "駅ID"
+        },
+        "station_number": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "駅番号"
+        },
+        "operating_kilometers": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "起点からのキロ程(小数点以下1桁、未入力の場合はnull)"
+        },
+        "inbound_main_track": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "上り本線の発着番線ID"
+        },
+        "outbound_main_track": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "下り本線の発着番線ID"
+        },
+        "absolute_standard_running_time": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "起点駅からの基準運転時分(秒単位、未入力の場合はnull)"
+        }
+      },
+      "required": [
+        "station_entry_id",
+        "station_id",
+        "station_number",
+        "operating_kilometers",
+        "inbound_main_track",
+        "outbound_main_track",
+        "absolute_standard_running_time"
+      ],
+      "additionalProperties": false
+    },
+    "optdia_route": {
+      "type": "object",
+      "description": "運行系統情報を格納するオブジェクト",
+      "properties": {
+        "route_id": {
+          "type": "string",
+          "description": "運行系統ID"
+        },
+        "route_name": {
+          "type": "string",
+          "description": "運行系統名"
+        },
+        "line_segments": {
+          "type": "array",
+          "description": "路線の部分区間を下り列車の経由順に配列で",
+          "items": {
+            "$ref": "#/$defs/optdia_line_segment"
+          }
+        },
+        "inbound_trains": {
+          "description": "上り列車情報を連想配列で",
+          "$ref": "#/$defs/optdia_train_dict"
+        },
+        "outbound_trains": {
+          "description": "下り列車情報(基本構造は上り列車と同じ)を連想配列で",
+          "$ref": "#/$defs/optdia_train_dict"
+        },
+        "trains_by_diagram": {
+          "description": "ダイヤ別の上下列車情報",
+          "$ref": "#/$defs/optdia_route_diagram_dict"
+        }
+      },
+      "required": [
+        "route_id",
+        "route_name",
+        "line_segments",
+        "inbound_trains",
+        "outbound_trains",
+        "trains_by_diagram"
+      ],
+      "additionalProperties": false
+    },
+    "optdia_line_segment": {
+      "type": "object",
+      "description": "路線の部分区間情報を格納するオブジェクト",
+      "properties": {
+        "segment_id": {
+          "type": "string",
+          "description": "部分区間ID(ランダムな英数字12文字)"
+        },
+        "line_id": {
+          "type": "string",
+          "description": "路線ID"
+        },
+        "start_station_entry": {
+          "type": "string",
+          "description": "区間の始点となる駅の路線-駅対応ID"
+        },
+        "end_station_entry": {
+          "type": "string",
+          "description": "区間の終点となる駅の路線-駅対応ID(始点と終点の位置関係が路線情報での駅の順序と逆の場合は、路線が逆向きで経路に配置されていることを意味する)"
+        }
+      },
+      "required": [
+        "segment_id",
+        "line_id",
+        "start_station_entry",
+        "end_station_entry"
+      ],
+      "additionalProperties": false
+    },
+    "optdia_train_dict": {
+      "type": "object",
+      "description": "列車IDと列車情報のペアを格納するオブジェクト",
+      "additionalProperties": {
+        "$ref": "#/$defs/optdia_train"
+      }
+    },
+    "optdia_route_diagram_dict": {
+      "type": "object",
+      "description": "運転ダイヤIDとそのダイヤで運転される列車の情報のペアを格納するオブジェクト",
+      "additionalProperties": {
+        "$ref": "#/$defs/optdia_route_diagram_trains"
+      }
+    },
+    "optdia_route_diagram_trains": {
+      "type": "object",
+      "description": "運行系統・運転ダイヤ別の上下列車情報を格納するオブジェクト",
+      "properties": {
+        "inbound_trains": {
+          "type": "array",
+          "description": "上り列車の情報を表示順に配列で",
+          "items": {
+            "$ref": "#/$defs/optdia_diagram_train"
+          }
+        },
+        "outbound_trains": {
+          "type": "array",
+          "description": "下り列車の情報(個々のオブジェクトの構造は上り列車と同じ)を表示順に配列で",
+          "items": {
+            "$ref": "#/$defs/optdia_diagram_train"
+          }
+        }
+      },
+      "required": [
+        "inbound_trains",
+        "outbound_trains"
+      ],
+      "additionalProperties": false
+    },
+    "optdia_train_type": {
+      "type": "object",
+      "description": "列車種別情報を格納するオブジェクト",
+      "properties": {
+        "train_type_id": {
+          "type": "string",
+          "description": "列車種別ID(ランダムな英数字12文字)"
+        },
+        "train_type_name": {
+          "type": "string",
+          "description": "列車種別名"
+        },
+        "train_type_short_name": {
+          "type": "string",
+          "description": "列車種別の短縮名"
+        },
+        "train_name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "列車愛称"
+        },
+        "is_in_service": {
+          "type": "boolean",
+          "description": "営業列車の種別か否か"
+        },
+        "main_color": {
+          "type": "string",
+          "default": "#333333",
+          "description": "列車種別の基本色(デフォルト値は #333333)"
+        },
+        "background_color": {
+          "type": "string",
+          "default": "#ffffff",
+          "description": "時刻表での列車種別の背景色(デフォルト値は #ffffff)"
+        },
+        "line_weight": {
+          "type": "string",
+          "enum": [
+            "thin",
+            "normal",
+            "bold"
+          ],
+          "description": "ダイヤグラムでの線の太さ(細、標準、太)"
+        },
+        "line_style": {
+          "type": "string",
+          "enum": [
+            "solid",
+            "dashed",
+            "dotted"
+          ],
+          "description": "ダイヤグラムでの線スタイル(実線、破線、点線)"
+        },
+        "train_type_code": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "列車番号の自動生成に使用する列車種別コード"
+        }
+      },
+      "required": [
+        "train_type_id",
+        "train_type_name",
+        "train_type_short_name",
+        "train_name",
+        "is_in_service",
+        "main_color",
+        "background_color",
+        "line_weight",
+        "line_style",
+        "train_type_code"
+      ],
+      "additionalProperties": false
+    },
+    "optdia_diagram": {
+      "type": "object",
+      "description": "運転ダイヤ情報を格納するオブジェクト",
+      "properties": {
+        "diagram_id": {
+          "type": "string",
+          "description": "運転ダイヤID"
+        },
+        "diagram_name": {
+          "type": "string",
+          "description": "運転ダイヤ名"
+        },
+        "diagram_initial": {
+          "type": "string",
+          "description": "運転ダイヤ名の1文字表記"
+        },
+        "background_color": {
+          "type": "string",
+          "default": "#cccccc",
+          "description": "駅時刻表等での運転ダイヤの背景色(デフォルト値は #cccccc)"
+        },
+        "operations": {
+          "description": "各車両運用の情報を連想配列で",
+          "$ref": "#/$defs/optdia_operation_dict"
+        },
+        "operation_groups": {
+          "type": "array",
+          "description": "各車両運用グループの情報を表示順に配列で",
+          "items": {
+            "$ref": "#/$defs/optdia_operation_group"
+          }
+        }
+      },
+      "required": [
+        "diagram_id",
+        "diagram_name",
+        "diagram_initial",
+        "background_color",
+        "operations",
+        "operation_groups"
+      ],
+      "additionalProperties": false
+    },
+    "optdia_train": {
+      "type": "object",
+      "description": "列車情報を格納するオブジェクト",
+      "properties": {
+        "train_number": {
+          "type": "string",
+          "description": "列車番号(アルファベット等も使用可能)"
+        },
+        "train_type_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "列車種別ID"
+        },
+        "named_train_number": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "列車の号数"
+        },
+        "note": {
+          "type": "string",
+          "description": "備考"
+        },
+        "stops": {
+          "type": "array",
+          "description": "経由駅情報を経由順に配列で",
+          "items": {
+            "$ref": "#/$defs/optdia_train_stop"
+          }
+        }
+      },
+      "required": [
+        "train_number",
+        "train_type_id",
+        "named_train_number",
+        "note",
+        "stops"
+      ],
+      "additionalProperties": false
+    },
+    "optdia_diagram_train": {
+      "type": "object",
+      "description": "運転ダイヤ別の列車情報を格納するオブジェクト",
+      "properties": {
+        "train_id": {
+          "type": "string",
+          "description": "列車ID"
+        },
+        "operations": {
+          "type": "array",
+          "description": "列車の担当運用情報を前位側(方反でない場合を基準とする)から順に配列で",
+          "items": {
+            "$ref": "#/$defs/optdia_train_operation"
+          }
+        },
+        "car_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "両数(nullの場合は担当運用の所定両数の合計値が指定されたものとみなす)"
+        },
+        "destination": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "行き先表示(nullの場合は終着駅の駅名が指定されたものとみなす)"
+        },
+        "subsequent_trains": {
+          "type": "array",
+          "description": "連続する列車の識別情報",
+          "items": {
+            "$ref": "#/$defs/optdia_subsequent_train_identifier"
+          }
+        }
+      },
+      "required": [
+        "train_id",
+        "operations",
+        "car_count",
+        "destination",
+        "subsequent_trains"
+      ],
+      "additionalProperties": false
+    },
+    "optdia_subsequent_train_identifier": {
+      "type": "object",
+      "description": "連続する列車の識別情報",
+      "properties": {
+        "route_id": {
+          "type": "string",
+          "description": "運行系統ID"
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "inbound",
+            "outbound"
+          ],
+          "description": "方向(上りまたは下り)"
+        },
+        "train_id": {
+          "type": "string",
+          "description": "列車ID"
+        }
+      },
+      "required": [
+        "route_id",
+        "direction",
+        "train_id"
+      ],
+      "additionalProperties": false
+    },
+    "optdia_train_stop": {
+      "type": "object",
+      "description": "列車の経由駅情報",
+      "properties": {
+        "segment_id": {
+          "type": "string",
+          "description": "部分区間ID"
+        },
+        "station_entry_id": {
+          "type": "string",
+          "description": "路線-駅対応ID"
+        },
+        "track_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "発着番線ID"
+        },
+        "arrival_time": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9][0-9]:[0-5][0-9]:[0-5][0-9]$",
+          "description": "到着時刻(hh:mm:ss形式)"
+        },
+        "departure_time": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9][0-9]:[0-5][0-9]:[0-5][0-9]$",
+          "description": "発車時刻(hh:mm:ss形式)"
+        },
+        "stop_type": {
+          "type": "integer",
+          "enum": [
+            1,
+            0,
+            -1
+          ],
+          "description": "客扱い情報(1:停車、0:通過、-1運転停車)"
+        }
+      },
+      "required": [
+        "segment_id",
+        "station_entry_id",
+        "track_id",
+        "arrival_time",
+        "departure_time",
+        "stop_type"
+      ],
+      "additionalProperties": false
+    },
+    "optdia_operation_dict": {
+      "type": "object",
+      "description": "車両運用IDと車両運用情報のペアを格納するオブジェクト",
+      "additionalProperties": {
+        "$ref": "#/$defs/optdia_operation"
+      }
+    },
+    "optdia_operation": {
+      "type": "object",
+      "description": "車両運用情報を格納するオブジェクト",
+      "properties": {
+        "operation_number": {
+          "type": "string",
+          "description": "運用番号(アルファベットや漢字等も使用可能)"
+        },
+        "car_count": {
+          "type": "integer",
+          "description": "運用の所定両数"
+        },
+        "min_car_count": {
+          "type": "integer",
+          "description": "運用に充当可能な最低の編成両数"
+        },
+        "max_car_count": {
+          "type": "integer",
+          "description": "運用に充当可能な最大の編成両数"
+        },
+        "main_color": {
+          "type": "string",
+          "default": "#ffffff",
+          "description": "運用の表示色(デフォルト値は #ffffff)"
+        },
+        "start_location": {
+          "type": "string",
+          "description": "運用の出庫場所名"
+        },
+        "start_track": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "運用の出庫場所の発着番線等(発着番線等が規定されていない場合はnull)"
+        },
+        "start_time": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9][0-9]:[0-5][0-9]:[0-5][0-9]$",
+          "description": "運用の出庫時間(hh:mm:ss形式、出庫しない場合や未設定の場合はnull)"
+        },
+        "end_location": {
+          "type": "string",
+          "description": "運用の入庫場所名"
+        },
+        "end_track": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "運用の入庫場所の発着番線等(発着番線等が規定されていない場合はnull)"
+        },
+        "end_time": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9][0-9]:[0-5][0-9]:[0-5][0-9]$",
+          "description": "運用の入庫時間(hh:mm:ss形式、入庫しない場合や未設定の場合はnull)"
+        },
+        "note": {
+          "type": "string",
+          "description": "備考"
+        },
+        "temporary_stabling_events": {
+          "type": "array",
+          "description": "一時入庫の情報を時系列順に配列で",
+          "items": {
+            "$ref": "#/$defs/optdia_temporary_stabling_event"
+          }
+        }
+      },
+      "required": [
+        "operation_number",
+        "car_count",
+        "min_car_count",
+        "max_car_count",
+        "main_color",
+        "start_location",
+        "start_track",
+        "start_time",
+        "end_location",
+        "end_track",
+        "end_time",
+        "note",
+        "temporary_stabling_events"
+      ],
+      "additionalProperties": false
+    },
+    "optdia_temporary_stabling_event": {
+      "type": "object",
+      "description": "一時入庫の情報",
+      "properties": {
+        "stabled_location": {
+          "type": "string",
+          "description": "入庫場所名"
+        },
+        "start_time": {
+          "type": "string",
+          "pattern": "^[0-9][0-9]:[0-5][0-9]:[0-5][0-9]$",
+          "description": "入庫時刻(hh:mm:ss形式)"
+        },
+        "end_time": {
+          "type": "string",
+          "pattern": "^[0-9][0-9]:[0-5][0-9]:[0-5][0-9]$",
+          "description": "出庫時刻(hh:mm:ss形式)"
+        },
+        "formations_can_changed": {
+          "type": "boolean",
+          "description": "編成が変更される可能性があるか否か"
+        },
+        "note": {
+          "type": "string",
+          "description": "備考"
+        }
+      },
+      "required": [
+        "stabled_location",
+        "start_time",
+        "end_time",
+        "formations_can_changed",
+        "note"
+      ],
+      "additionalProperties": false
+    },
+    "optdia_train_operation": {
+      "type": "object",
+      "description": "列車の担当運用を格納するオブジェクト",
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "description": "車両運用ID"
+        },
+        "formation_is_reversed": {
+          "type": "boolean",
+          "description": "方反(編成の向きが逆転している状態)か否か"
+        }
+      },
+      "required": [
+        "operation_id",
+        "formation_is_reversed"
+      ],
+      "additionalProperties": false
+    },
+    "optdia_operation_group": {
+      "type": "object",
+      "description": "車両運用グループの情報を格納するオブジェクト",
+      "properties": {
+        "operation_group_id": {
+          "type": "string",
+          "description": "運用グループID(ランダムな英数字12文字)"
+        },
+        "operation_group_name": {
+          "type": "string",
+          "description": "運用グループ名"
+        },
+        "main_color": {
+          "type": "string",
+          "default": "#ffffff",
+          "description": "運用グループの表示色(デフォルト値は #ffffff)"
+        },
+        "operation_group_code": {
+          "type": ["string", "null"],
+          "description": "列車番号の自動生成に使用する運用グループコード"
+        },
+        "operations": {
+          "type": "array",
+          "description": "グループに属する車両運用のIDを表示順に配列で",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "operation_group_id",
+        "operation_group_name",
+        "main_color",
+        "operation_group_code",
+        "operations"
+      ],
+      "additionalProperties": false
+    },
+    "optdia_calendar_period": {
+      "type": "object",
+      "description": "期間別の運行区分情報を格納するためのオブジェクト",
+      "properties": {
+        "start_date": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date",
+          "description": "期間の開始日(YYYY-MM-DD形式、未定義の場合はnull)"
+        },
+        "end_date": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date",
+          "description": "期間の終了日(YYYY-MM-DD形式、無期限の場合はnull)"
+        },
+        "sunday": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "日曜に施行される運転ダイヤのID(未定義の場合はnull)"
+        },
+        "monday": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "月曜に施行される運転ダイヤのID(未定義の場合はnull)"
+        },
+        "tuesday": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "火曜に施行される運転ダイヤのID(未定義の場合はnull)"
+        },
+        "wednesday": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "水曜に施行される運転ダイヤのID(未定義の場合はnull)"
+        },
+        "thursday": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "木曜に施行される運転ダイヤのID(未定義の場合はnull)"
+        },
+        "friday": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "金曜に施行される運転ダイヤのID(未定義の場合はnull)"
+        },
+        "saturday": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "土曜に施行される運転ダイヤのID(未定義の場合はnull)"
+        }
+      },
+      "required": [
+        "start_date",
+        "end_date",
+        "sunday",
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday"
+      ],
+      "additionalProperties": false
+    },
+    "date_exceptions": {
+      "type": "object",
+      "description": "例外の運行日情報(例外のダイヤが施行される日付とその日の運転ダイヤのIDのペア)を格納するオブジェクト",
+      "additionalProperties": {
+        "type": "string",
+        "description": "運転ダイヤID"
+      },
+      "propertyNames": {
+        "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+        "description": "キーはYYYY-MM-DD形式の日付"
+      }
+    }
+  }
+}
