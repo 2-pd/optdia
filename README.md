@@ -23,7 +23,7 @@ assets.qrcに記載されているアイコンやスタイルシートなどの�
 ※このコマンドを実行するには、事前に端末へpyside6-toolsパッケージをインストールしておく必要があります。
 
 ```
-pyside6-rcc -compress-algo zlib assets.qrc -o assets_rc.py
+pyside6-rcc --compress-algo zlib assets.qrc -o assets_rc.py
 ```
 
 
@@ -46,6 +46,13 @@ python -m PyInstaller --noconsole --onedir ./optdia.py --icon ./assets/app_icon.
 
 - MyAppVersion ・・・ OptDia本体のバージョン番号を設定してください。
 - WorkDir ・・・ optdia.issがあるフォルダの絶対パスを指定してください。
+
+
+## プロジェクトファイルの仕様について
+プロジェクトファイル(拡張子が.optdiaまたは.optd)はJSONデータであり、記述されるべきオブジェクトの仕様は、documentsフォルダ内のoptdia_project.tsでTypeScriptの文法に従って定義されています。  
+LLMを使用してOptDiaプロジェクトファイルに対応したアプリケーションを開発する場合は、プロジェクトファイル読み書き処理の生成時にoptdia_project.tsをプロンプトに添付してください。  
+  
+また、同フォルダのoptdia_project.jsoncにはoptdia_project.tsから生成したJSON Schema形式の仕様定義が記載されています。
 
 
 ## ライセンス
