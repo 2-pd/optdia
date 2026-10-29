@@ -1155,6 +1155,30 @@ class MainWindow(QMainWindow):
             self.timetable_view.setCurrentIndex(idx)
             self.timetable_view.scrollTo(idx, QAbstractItemView.PositionAtCenter)
 
+    def edit_train_in_timetable(self, route_id: str, direction: str, train_id: str):
+        """指定された列車を時刻表で編集するためにタブを切り替え、該当列車の列車番号セルを選択する"""
+        # 1. 運行系統の選択を切り替え（該当の route_id があれば）
+        if route_id and hasattr(self, "route_list_widget"):
+            for i in range(self.route_list_widget.count()):
+                item = self.route_list_widget.item(i)
+                if item and item.data(Qt.UserRole) == route_id:
+                    self.route_list_widget.setCurrentRow(i)
+                    break
+
+        # 2. 上り/下りに応じてタブを切り替え
+        # 0: 下り時刻表, 1: 上り時刻表
+        tab_index = 1 if direction == "inbound" else 0
+        if self.main_tab_bar.currentIndex() != tab_index:
+            self.main_tab_bar.setCurrentIndex(tab_index)
+        else:
+            # 既に該当タブが開かれている場合でも、運行系統やデータの更新を確実に行う
+            self._on_timetable_settings_changed()
+
+        # 3. 時刻表モデル内の列車列を探して選択
+        if train_id in self.timetable_model.train_ids:
+            col = self.timetable_model.train_ids.index(train_id)
+            self._select_train_column(col)
+
     def _on_train_search_text_changed(self, text: str):
         """列車番号検索テキストが変更されたときの処理"""
         self._update_train_search_state(auto_select_first=True)

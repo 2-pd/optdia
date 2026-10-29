@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt, QRectF
 from PySide6.QtGui import QPainter, QWheelEvent
 from .scene import DiagramScene, DiagramHeaderScene, DiagramStationScene
 from .dialogs import AddTrainDialog, delete_train
+from previews.train_detail import TrainDetailPreviewDialog
 
 # 運行ダイヤグラムの上部ビュー（時刻ヘッダー）
 class DiagramHeaderView(QGraphicsView):
@@ -81,6 +82,16 @@ class DiagramView(QGraphicsView):
             # Shiftが押されていないときは通常の上下スクロール
             super().wheelEvent(event)
 
+    def mouseDoubleClickEvent(self, event):
+        super().mouseDoubleClickEvent(event)
+        scene_pos = self.mapToScene(event.pos())
+        rect = QRectF(scene_pos.x() - 4.0, scene_pos.y() - 4.0, 8.0, 8.0)
+        items = [i for i in self.scene.items(rect) if isinstance(i, QGraphicsPathItem)]
+        if items:
+            train_data = self._find_train_by_path_items(items)
+            if train_data:
+                self._handle_train_detail_action(train_data)
+
     def contextMenuEvent(self, event):
         scene_pos = self.mapToScene(event.pos())
 
@@ -94,10 +105,16 @@ class DiagramView(QGraphicsView):
             # クリック位置に最も近い列車を特定する
             train_data = self._find_train_by_path_items(items)
             menu = QMenu(self)
+            train_detail_action = menu.addAction("列車の詳細")
+            edit_train_action = menu.addAction("この列車を時刻表で編集")
             add_train_action = menu.addAction("ここに列車を追加")
             delete_train_action = menu.addAction("この列車を削除")
             selected_action = menu.exec(event.globalPos())
-            if selected_action == add_train_action:
+            if selected_action == train_detail_action and train_data is not None:
+                self._handle_train_detail_action(train_data)
+            elif selected_action == edit_train_action and train_data is not None:
+                self._handle_edit_train_action(train_data)
+            elif selected_action == add_train_action:
                 self._handle_add_train_action(scene_pos)
             elif selected_action == delete_train_action and train_data is not None:
                 self._handle_delete_train_action(train_data)
@@ -121,6 +138,26 @@ class DiagramView(QGraphicsView):
                 if id(p_item) in path_item_set:
                     return train_data
         return None
+
+    def _handle_train_detail_action(self, train_data):
+        parent_widget = self.window()
+        project = getattr(self.scene, "project", None)
+        if parent_widget and hasattr(parent_widget, "project"):
+            project = parent_widget.project
+        route_id = train_data.get("route_id")
+        direction = train_data.get("direction")
+        train_id = train_data.get("train_id")
+        if project and route_id and direction and train_id:
+            dialog = TrainDetailPreviewDialog(parent_widget, project, route_id, direction, train_id)
+            dialog.exec()
+
+    def _handle_edit_train_action(self, train_data):
+        main_win = self.window()
+        if main_win and hasattr(main_win, "edit_train_in_timetable"):
+            route_id = train_data.get("route_id")
+            direction = train_data.get("direction")
+            train_id = train_data.get("train_id")
+            main_win.edit_train_in_timetable(route_id, direction, train_id)
 
     def _handle_add_train_action(self, scene_pos):
         # メインウィンドウを探索
