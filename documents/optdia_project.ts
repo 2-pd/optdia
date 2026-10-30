@@ -92,7 +92,7 @@ interface optdia_station {
     show_track_name: boolean; // 時刻表で発着番線を表示するか否か
     latitude: number | null; // 駅の緯度(小数点以下は6桁まで)
     longitude: number | null; // 駅の経度(小数点以下は6桁まで)
-    destination_code: string | null; // 列車番号の自動生成に使用する行き先コード
+    station_code: string | null; // 列車番号の自動生成に使用する駅コード
     tracks: optdia_station_track[]; // 発着番線情報(下記)を表示順に配列で
 }
 

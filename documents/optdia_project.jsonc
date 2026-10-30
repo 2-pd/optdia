@@ -340,12 +340,12 @@
           ],
           "description": "駅の経度(小数点以下は6桁まで)"
         },
-        "destination_code": {
+        "station_code": {
           "type": [
             "string",
             "null"
           ],
-          "description": "列車番号の自動生成に使用する行き先コード"
+          "description": "列車番号の自動生成に使用する駅コード"
         },
         "tracks": {
           "type": "array",
@@ -365,7 +365,7 @@
         "show_track_name",
         "latitude",
         "longitude",
-        "destination_code",
+        "station_code",
         "tracks"
       ],
       "additionalProperties": false

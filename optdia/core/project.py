@@ -7,7 +7,7 @@ import gzip
 from PySide6.QtWidgets import QMessageBox
 
 # プロジェクトファイルの仕様バージョン (optdia_project.ts の定義に準拠)
-PROJECT_SCHEMA_VERSION = "2026.10.001"
+PROJECT_SCHEMA_VERSION = "2026.11.001"
 
 
 class SchemaVersionError(Exception):
@@ -165,6 +165,35 @@ def migrate_to_2026_10_001(data: dict) -> dict:
     return data
 
 
+def migrate_to_2026_11_001(data: dict) -> dict:
+    """
+    2026.10.001 の仕様で作成されたプロジェクトデータ辞書を 2026.11.001 の仕様へ移行する。
+    - optdia_line に clockwise_is_inbound を追加 (デフォルト値: null)
+    - optdia_station に station_code を追加 (デフォルト値: null)
+    - optdia_train_type に train_type_code を追加 (デフォルト値: null)
+    - optdia_operation_group に operation_group_code を追加 (デフォルト値: null)
+    - metadata.project_schema_version を 2026.11.001 に更新
+    """
+    entities = data.setdefault("entities", {})
+
+    for line in entities.get("lines", []):
+        line.setdefault("clockwise_is_inbound", None)
+
+    for station in entities.get("stations", {}).values():
+        station.setdefault("station_code", None)
+
+    for train_type in entities.get("train_types", []):
+        train_type.setdefault("train_type_code", None)
+
+    for diagram in entities.get("diagrams", []):
+        for operation_group in diagram.get("operation_groups", []):
+            operation_group.setdefault("operation_group_code", None)
+
+    data.setdefault("metadata", {})["project_schema_version"] = "2026.11.001"
+
+    return data
+
+
 class OptDiaProject:
     """
     optdia_project.ts の定義に基づくプロジェクトデータ管理クラス。
@@ -182,6 +211,8 @@ class OptDiaProject:
             data = migrate_to_2026_09_002(data)
         if is_older_schema_version(data.get("metadata", {}).get("project_schema_version", ""), "2026.10.001"):
             data = migrate_to_2026_10_001(data)
+        if is_older_schema_version(data.get("metadata", {}).get("project_schema_version", ""), "2026.11.001"):
+            data = migrate_to_2026_11_001(data)
 
         # メタデータの読み込みと最小限の初期値設定
         self.metadata = data.get("metadata", {})
