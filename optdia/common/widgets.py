@@ -1,8 +1,8 @@
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QPixmap, QIcon, QTransform
+from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtGui import QColor, QPainter, QPen, QPixmap, QIcon, QTransform, QFont
 from PySide6.QtWidgets import (
     QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
-    QFrame, QColorDialog
+    QFrame, QColorDialog, QToolTip
 )
 from core.settings import AppSettings
 from common.gui_utils import create_color_square_pixmap
@@ -325,3 +325,53 @@ class AccordionWidget(QWidget):
 
     def is_expanded(self) -> bool:
         return self._is_expanded
+
+
+# ヘルプ文付きラベル
+class HelpLabel(QLabel):
+    """
+    QLabelを継承し、右上に小さな「？」を灰色(#888888)の太字で表示し、
+    マウスホバーしたときにヘルプ文をツールチップで表示するカスタムウィジェット
+    """
+    def __init__(self, text: str = "", help_text: str = "", parent=None):
+        super().__init__(text, parent)
+        self._help_text = help_text
+        if help_text:
+            self.setToolTip(help_text)
+
+        self.setContentsMargins(0, 0, 8, 0)
+    def setHelpText(self, help_text: str):
+        self._help_text = help_text
+        self.setToolTip(help_text)
+
+    def helpText(self) -> str:
+        return self._help_text
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        badge_font = QFont(self.font())
+        badge_font.setBold(True)
+        badge_font.setPixelSize(10)
+        painter.setFont(badge_font)
+        painter.setPen(QColor("#888888"))
+
+        fm = painter.fontMetrics()
+        char_w = fm.horizontalAdvance("?")
+        char_h = fm.ascent()
+        x = max(0, self.width() - char_w - 1)
+        y = char_h + 1
+        painter.drawText(x, y, "?")
+        painter.end()
+
+    def mouseReleaseEvent(self, event):
+        # 左クリックされた場合にツールチップを強制表示
+        if event.button() == Qt.MouseButton.LeftButton:
+            # ボタンを離した際、マウスがまだこのラベルの上にある場合のみ実行
+            if self.rect().contains(event.position().toPoint()):
+                global_pos = event.globalPosition().toPoint()
+                QTimer.singleShot(
+                    50, QToolTip.showText(global_pos, self._help_text, self, self.rect())
+                )
+
+        super().mouseReleaseEvent(event)
