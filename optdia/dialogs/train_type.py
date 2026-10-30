@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
 )
 from core.project import OptDiaProject, generate_random_id
 from common.gui_utils import HtmlDelegate, create_color_square_pixmap
-from common.widgets import LineSampleWidget, ColorPickerWidget
+from common.widgets import LineSampleWidget, ColorPickerWidget, HelpLabel
 
 # 列車種別の追加ダイアログ
 class AddTrainTypeDialog(QDialog):
@@ -66,15 +66,15 @@ class TrainTypeEditorDialog(QDialog):
         super().__init__(parent)
         self.project = project
         self.setWindowTitle("種別情報")
-        self.setFixedSize(720, 540)
+        self.setFixedSize(720, 640)
 
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # 左側の垂直レイアウト (幅180px固定)
+        # 左側の垂直レイアウト (幅200px固定)
         left_panel = QWidget()
-        left_panel.setFixedWidth(180)
+        left_panel.setFixedWidth(200)
         left_panel.setProperty("class", "dialog_sidebar")
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(10, 10, 10, 10)
@@ -147,11 +147,21 @@ class TrainTypeEditorDialog(QDialog):
         self.tt_bg_color_picker.colorChanged.connect(self._on_tt_bg_color_changed)
         self.tt_form_layout.addRow("時刻表での背景色:", self.tt_bg_color_picker)
 
-        # 運行ダイヤグラムでの表示の設定
         spacer_tt_3 = QWidget()
         spacer_tt_3.setFixedHeight(10)
         self.tt_form_layout.addRow(spacer_tt_3)
 
+        # 列車種別コード
+        self.tt_type_code_edit = QLineEdit()
+        self.tt_type_code_edit.setFixedWidth(60)
+        self.tt_type_code_edit.textChanged.connect(self._on_train_type_form_changed)
+        self.tt_form_layout.addRow(HelpLabel("列車種別コード:", "列車種別コードは列車番号の自動生成のみに使用されます"), self.tt_type_code_edit)
+
+        spacer_tt_4 = QWidget()
+        spacer_tt_4.setFixedHeight(20)
+        self.tt_form_layout.addRow(spacer_tt_4)
+
+        # 運行ダイヤグラムでの表示の設定
         tt_diagram_label = QLabel("<b>ダイヤグラムでの表示</b>")
         tt_diagram_label.setStyleSheet("font-size: 14px;")
         self.tt_form_layout.addRow(tt_diagram_label)
@@ -254,6 +264,7 @@ class TrainTypeEditorDialog(QDialog):
         self.tt_in_service_check.blockSignals(True)
         self.tt_weight_combo.blockSignals(True)
         self.tt_style_combo.blockSignals(True)
+        self.tt_type_code_edit.blockSignals(True)
         self.duplicate_tt_button.setEnabled(True)
         self.delete_tt_button.setEnabled(True)
 
@@ -267,6 +278,8 @@ class TrainTypeEditorDialog(QDialog):
 
         bg_color = tt_data.get("background_color", "#ffffff")
         self.tt_bg_color_picker.set_color(bg_color)
+
+        self.tt_type_code_edit.setText(tt_data.get("train_type_code") or "")
 
         weight = tt_data.get("line_weight", "normal")
         idx_w = self.tt_weight_combo.findData(weight)
@@ -282,6 +295,7 @@ class TrainTypeEditorDialog(QDialog):
         self.tt_in_service_check.blockSignals(False)
         self.tt_weight_combo.blockSignals(False)
         self.tt_style_combo.blockSignals(False)
+        self.tt_type_code_edit.blockSignals(False)
         self.duplicate_tt_button.setEnabled(True)
         self.delete_tt_button.setEnabled(True)
 
@@ -302,6 +316,8 @@ class TrainTypeEditorDialog(QDialog):
         tt_data["is_in_service"] = self.tt_in_service_check.isChecked()
         tt_data["line_weight"] = self.tt_weight_combo.currentData()
         tt_data["line_style"] = self.tt_style_combo.currentData()
+        type_code = self.tt_type_code_edit.text().strip()
+        tt_data["train_type_code"] = type_code if type_code else None
 
         self._update_line_sample()
 
@@ -379,7 +395,8 @@ class TrainTypeEditorDialog(QDialog):
                 "main_color": "#333333",
                 "background_color": "#ffffff",
                 "line_weight": "normal",
-                "line_style": "solid"
+                "line_style": "solid",
+                "train_type_code": None
             }
 
             self.project.train_types[new_id] = new_type
