@@ -504,7 +504,8 @@ def import_timetable_from_csv(parent_window):
                         "main_color": "#333333",
                         "background_color": "#ffffff",
                         "line_weight": "normal",
-                        "line_style": "solid"
+                        "line_style": "solid",
+                        "train_type_code": None
                     }
                     project.train_types[new_tt_id] = new_type
                     project.train_types_order.append(new_tt_id)
@@ -608,6 +609,7 @@ def import_timetable_from_csv(parent_window):
                                     "operation_group_id": new_og_id,
                                     "operation_group_name": "インポートされた運用",
                                     "main_color": "#ffffff",
+                                    "operation_group_code": None,
                                     "operations": []
                                 }
                                 op_groups[new_og_id] = new_group

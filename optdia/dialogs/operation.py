@@ -415,6 +415,14 @@ class VehicleOperationEditorDialog(QDialog):
         self.group_color_picker.colorChanged.connect(self._on_group_color_changed)
         tab_group_layout.addWidget(self.group_color_picker)
 
+        # 運用グループコード
+        tab_group_layout.addSpacing(10)
+        tab_group_layout.addWidget(QLabel("運用グループコード:"))
+        self.group_code_edit = QLineEdit()
+        self.group_code_edit.setFixedWidth(80)
+        self.group_code_edit.textChanged.connect(self._on_group_code_changed)
+        tab_group_layout.addWidget(self.group_code_edit)
+
         tab_group_layout.addStretch()
 
         # 「この運用グループを削除」ボタン (右寄せ)
@@ -469,6 +477,7 @@ class VehicleOperationEditorDialog(QDialog):
             "operation_group_id": new_id,
             "operation_group_name": "新しい運用グループ",
             "main_color": "#ffffff",
+            "operation_group_code": None,
             "operations": []
         }
         operation_groups[new_id] = new_group
@@ -513,6 +522,10 @@ class VehicleOperationEditorDialog(QDialog):
 
         main_color = og.get("main_color", "#ffffff")
         self.group_color_picker.set_color(main_color)
+
+        self.group_code_edit.blockSignals(True)
+        self.group_code_edit.setText(og.get("operation_group_code") or "")
+        self.group_code_edit.blockSignals(False)
 
         # 運用のクリアと読み込み
         self.op_list.blockSignals(True)
@@ -1038,6 +1051,22 @@ class VehicleOperationEditorDialog(QDialog):
 
         og["main_color"] = new_color_hex
         selected_items[0].setBackground(QColor(new_color_hex))
+
+        if hasattr(self.parent(), "set_modified"):
+            self.parent().set_modified(True)
+
+    def _on_group_code_changed(self, text: str):
+        selected_items = self.group_list.selectedItems()
+        if not selected_items:
+            return
+        og_id = selected_items[0].data(Qt.UserRole)
+        diagram = self.project.diagrams.get(self.diagram_id, {})
+        operation_groups = diagram.get("operation_groups", {})
+        og = operation_groups.get(og_id)
+        if not og:
+            return
+
+        og["operation_group_code"] = text.strip() if text.strip() else None
 
         if hasattr(self.parent(), "set_modified"):
             self.parent().set_modified(True)
