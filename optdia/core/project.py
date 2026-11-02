@@ -170,7 +170,10 @@ def migrate_to_2026_11_001(data: dict) -> dict:
     2026.10.001 の仕様で作成されたプロジェクトデータ辞書を 2026.11.001 の仕様へ移行する。
     - optdia_line に clockwise_is_inbound を追加 (デフォルト値: null)
     - optdia_station に station_code を追加 (デフォルト値: null)
+    - optdia_station に show_track_allocation_chart を追加 (デフォルト値: False)
+    - optdia_station_track に available_for_passengers を追加 (デフォルト値: 所属駅の is_signal_station が True なら False、False なら True)
     - optdia_train_type に train_type_code を追加 (デフォルト値: null)
+    - optdia_operation に shunting_operations を追加 (デフォルト値: [])
     - optdia_operation_group に operation_group_code を追加 (デフォルト値: null)
     - metadata.project_schema_version を 2026.11.001 に更新
     """
@@ -181,11 +184,16 @@ def migrate_to_2026_11_001(data: dict) -> dict:
 
     for station in entities.get("stations", {}).values():
         station.setdefault("station_code", None)
+        station.setdefault("show_track_allocation_chart", False)
+        for track in station.get("tracks", []):
+            track.setdefault("available_for_passengers", not station.get("is_signal_station", False))
 
     for train_type in entities.get("train_types", []):
         train_type.setdefault("train_type_code", None)
 
     for diagram in entities.get("diagrams", []):
+        for operation in diagram.get("operations", {}).values():
+            operation.setdefault("shunting_operations", [])
         for operation_group in diagram.get("operation_groups", []):
             operation_group.setdefault("operation_group_code", None)
 

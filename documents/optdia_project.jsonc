@@ -326,6 +326,10 @@
           "type": "boolean",
           "description": "時刻表で発着番線を表示するか否か"
         },
+        "show_track_allocation_chart": {
+          "type": "boolean",
+          "description": "運行ダイヤグラムで発着番線占有状況を表示するか否か"
+        },
         "latitude": {
           "type": [
             "number",
@@ -363,6 +367,7 @@
         "is_signal_station",
         "show_arrival_time",
         "show_track_name",
+        "show_track_allocation_chart",
         "latitude",
         "longitude",
         "station_code",
@@ -385,12 +390,17 @@
         "track_short_name": {
           "type": "string",
           "description": "発着番線名の省略表記"
+        },
+        "available_for_passengers": {
+          "type": "boolean",
+          "description": "旅客の乗降が可能か否か"
         }
       },
       "required": [
         "track_id",
         "track_name",
-        "track_short_name"
+        "track_short_name",
+        "available_for_passengers"
       ],
       "additionalProperties": false
     },
@@ -935,6 +945,13 @@
           "items": {
             "$ref": "#/$defs/optdia_temporary_stabling_event"
           }
+        },
+        "shunting_operations": {
+          "type": "array",
+          "description": "駅構内入換の情報を時系列順に配列で",
+          "items": {
+            "$ref": "#/$defs/optdia_shunting_operation"
+          }
         }
       },
       "required": [
@@ -950,7 +967,8 @@
         "end_track",
         "end_time",
         "note",
-        "temporary_stabling_events"
+        "temporary_stabling_events",
+        "shunting_operations"
       ],
       "additionalProperties": false
     },
@@ -986,6 +1004,47 @@
         "start_time",
         "end_time",
         "formations_can_changed",
+        "note"
+      ],
+      "additionalProperties": false
+    },
+    "shunting_operations": {
+      "type": "object",
+      "description": "駅構内入換の情報",
+      "properties": {
+        "station_id": {
+          "type": "string",
+          "description": "駅ID"
+        },
+        "shunting_time": {
+          "type": "string",
+          "pattern": "^[0-9][0-9]:[0-5][0-9]:[0-5][0-9]$",
+          "description": "入庫時刻(hh:mm:ss形式)"
+        },
+        "origin_track": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "移動元番線の発着番線ID"
+        },
+        "destination_track": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "移動先番線の発着番線ID"
+        },
+        "note": {
+          "type": "string",
+          "description": "備考"
+        }
+      },
+      "required": [
+        "station_id",
+        "shunting_time",
+        "origin_track",
+        "destination_track",
         "note"
       ],
       "additionalProperties": false

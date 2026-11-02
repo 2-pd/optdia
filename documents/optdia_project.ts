@@ -90,6 +90,7 @@ interface optdia_station {
     is_signal_station: boolean; // 信号場か否か
     show_arrival_time: boolean; // 時刻表で着時刻を表示するか否か
     show_track_name: boolean; // 時刻表で発着番線を表示するか否か
+    show_track_allocation_chart: boolean; // 運行ダイヤグラムで発着番線占有状況を表示するか否か
     latitude: number | null; // 駅の緯度(小数点以下は6桁まで)
     longitude: number | null; // 駅の経度(小数点以下は6桁まで)
     station_code: string | null; // 列車番号の自動生成に使用する駅コード
@@ -102,6 +103,7 @@ interface optdia_station_track {
     track_id: string; // 発着番線ID(異なる駅との重複は制限されない)
     track_name: string; // 発着番線名(アルファベット等も使用可能)
     track_short_name: string; // 発着番線名の省略表記
+    available_for_passengers: boolean; // 旅客の乗降が可能か否か
 }
 
 
@@ -242,6 +244,7 @@ interface optdia_operation {
     end_time: string | null; // 運用の入庫時間(hh:mm:ss形式、入庫しない場合や未設定の場合はnull)
     note: string; // 備考
     temporary_stabling_events: optdia_temporary_stabling_event[]; // 一時入庫の情報(下記)を時系列順に配列で
+    shunting_operations: optdia_shunting_operation[]; // 駅構内入換の情報(下記)を時系列順に配列で
 }
 
 
@@ -251,6 +254,16 @@ interface optdia_temporary_stabling_event {
     start_time: string; // 入庫時刻(hh:mm:ss形式)
     end_time: string; // 出庫時刻(hh:mm:ss形式)
     formations_can_changed: boolean; // 編成が変更される可能性があるか否か
+    note: string; // 備考
+}
+
+
+// 駅構内入換の情報
+interface optdia_shunting_operation {
+    station_id: string; // 駅ID
+    shunting_time: string; // 入換時刻(hh:mm:ss形式)
+    origin_track: string | null; // 移動元番線の発着番線ID
+    destination_track: string | null; // 移動先番線の発着番線ID
     note: string; // 備考
 }
 
