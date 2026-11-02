@@ -5,7 +5,7 @@ import sys
 import os
 import subprocess
 import webbrowser
-from PySide6.QtCore import Qt, QFile, QTextStream, QSize, QTimer, QPoint, QRect
+from PySide6.QtCore import Qt, QFile, QTextStream, QSize, QTimer, QPoint, QRect, QModelIndex
 from PySide6.QtGui import QIcon, QAction, QPixmap, QTransform, QCursor
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QStyleFactory,
@@ -34,6 +34,7 @@ from dialogs.about import AboutDialog
 from timetable.model import TimetableModel
 from timetable.view import TimetableView, TimetableVerticalHeader
 from timetable.delegate import TimetableDelegate
+from timetable.dialogs import AutoGenerateTrainNumberDialog
 from timeline.view import TimelineView, TimelineHeaderView
 from diagram.view import DiagramView, DiagramHeaderView, DiagramStationView
 
@@ -775,6 +776,11 @@ class MainWindow(QMainWindow):
         self.adjust_later_action.setChecked(self.app_settings.load_adjust_later_enabled())
         self.adjust_later_action.triggered.connect(self._on_adjust_later_triggered)
         edit_menu.addAction(self.adjust_later_action)
+        edit_menu.addSeparator()
+
+        # 「列車番号の自動生成」
+        self.auto_generate_train_number_action = edit_menu.addAction("列車番号の自動生成")
+        self.auto_generate_train_number_action.triggered.connect(self._on_auto_generate_train_number)
 
         # 設定(S)
         settings_menu = menu_bar.addMenu("設定(&S)")
@@ -816,6 +822,43 @@ class MainWindow(QMainWindow):
         """「発着時刻の変更時に後の駅の発着時刻も増減」チェックボックスのトリガーハンドラ"""
         self.timetable_model.set_adjust_later_enabled(checked)
         self.app_settings.save_adjust_later_enabled(checked)
+
+    def _on_auto_generate_train_number(self):
+        """「列車番号の自動生成」アクションのハンドラ"""
+        # メインウィンドウで時刻表テーブルが表示されているか判定
+        is_timetable_visible = (
+            self.right_stack.currentIndex() == 0 and
+            self.timetable_content_stack.currentIndex() == 0 and
+            self.main_tab_bar.currentIndex() in (0, 1)
+        )
+        if not is_timetable_visible:
+            QMessageBox.critical(self, "エラー", "この機能は時刻表の編集中にのみ使用可能です")
+            return
+
+        route_item = self.route_list_widget.currentItem()
+        diagram_item = self.diagram_list_widget.currentItem()
+        route_id = route_item.data(Qt.UserRole) if route_item else None
+        diagram_id = diagram_item.data(Qt.UserRole) if diagram_item else None
+
+        if not route_id or not diagram_id:
+            QMessageBox.critical(self, "エラー", "この機能は時刻表の編集中にのみ使用可能です")
+            return
+
+        def on_completed(events):
+            if events:
+                self.set_modified(True)
+                self.timetable_model.update_data(self.timetable_model.route_id, self.timetable_model.diagram_id, self.timetable_model.direction)
+                self.timetable_model.dataChanged.emit(QModelIndex(), QModelIndex(), [])
+
+        dialog = AutoGenerateTrainNumberDialog(
+            self,
+            self.project,
+            route_id,
+            diagram_id,
+            history_manager=self.history_manager,
+            on_completed=on_completed
+        )
+        dialog.exec()
 
     def _update_recent_files_menu(self):
         """最近開いたプロジェクトメニューを更新する"""

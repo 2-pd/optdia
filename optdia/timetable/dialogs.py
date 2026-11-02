@@ -1883,3 +1883,395 @@ def delete_trains(parent_view, model, cols: List[int]):
 def delete_train(parent_view, model, col: int):
     delete_trains(parent_view, model, [col])
 
+
+class AutoGenerateTrainNumberDialog(QDialog):
+    """列車番号の自動生成ダイアログ"""
+    def __init__(self, parent, project: OptDiaProject, route_id: str, diagram_id: str, history_manager=None, on_completed=None):
+        super().__init__(parent)
+        self.project = project
+        self.route_id = route_id
+        self.diagram_id = diagram_id
+        self.history_manager = history_manager
+        self.on_completed = on_completed
+
+        self.setWindowTitle("列車番号の自動生成")
+        self.setFixedSize(540, 640)
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(15, 15, 15, 15)
+        main_layout.setSpacing(8)
+
+        # 1. 上り列車番号の付番規則:
+        main_layout.addWidget(QLabel("上り列車番号の付番規則:"))
+        self.inbound_pattern_edit = QLineEdit()
+        self.inbound_pattern_edit.setText("{s}{hh}{mm}{d}")
+        main_layout.addWidget(self.inbound_pattern_edit)
+
+        # 2. 下り列車番号の付番規則:
+        main_layout.addWidget(QLabel("下り列車番号の付番規則:"))
+        self.outbound_pattern_edit = QLineEdit()
+        self.outbound_pattern_edit.setText("{s}{hh}{mm}{d}")
+        main_layout.addWidget(self.outbound_pattern_edit)
+
+        # 3. 対象列車:
+        main_layout.addWidget(QLabel("対象列車:"))
+        self.target_trains_combo = QComboBox()
+        self.target_trains_combo.addItem("全ての列車", "all")
+        self.target_trains_combo.addItem("営業列車", "service")
+        self.target_trains_combo.addItem("営業列車以外", "non_service")
+        main_layout.addWidget(self.target_trains_combo)
+
+        main_layout.addSpacing(10)
+
+        # 4. 既に入力されている列車番号も新しい列車番号で上書き
+        self.overwrite_check = QCheckBox("既に入力されている列車番号も新しい列車番号で上書き")
+        main_layout.addWidget(self.overwrite_check)
+
+        main_layout.addSpacing(10)
+
+        # 5. 付番規則で使用可能な変数についての説明
+        desc_text = (
+            "<b>【付番規則で使用可能な変数】</b><br><br>"
+            "&nbsp;&nbsp;{t} : 列車種別コード<br>"
+            "&nbsp;&nbsp;{n} : 列車の号数(ゼロ埋めなし)<br>"
+            "&nbsp;&nbsp;{nn} : 列車の号数(2桁となるようゼロ埋め)<br>"
+            "&nbsp;&nbsp;{g} : 運用グループコード<br>"
+            "&nbsp;&nbsp;{o} : 運用番号<br>"
+            "&nbsp;&nbsp;{o-1} : 運用番号から1を引いた値<br>"
+            "&nbsp;&nbsp;{s} : 始発駅の駅コード<br>"
+            "&nbsp;&nbsp;{d} : 終着駅の駅コード<br>"
+            "&nbsp;&nbsp;{h} : 時(ゼロ埋めなし)<br>"
+            "&nbsp;&nbsp;{hh} : 時(ゼロ埋め有り)<br>"
+            "&nbsp;&nbsp;{m} : 分(ゼロ埋めなし)<br>"
+            "&nbsp;&nbsp;{mm} : 分(ゼロ埋め有り)<br>"
+            "&nbsp;&nbsp;{i} : 始発時刻順に1から付番されるカウンター(ゼロ埋めなし)<br>"
+            "&nbsp;&nbsp;{i0} : 始発時刻順に0から付番される偶数のみのカウンター(ゼロ埋めなし)<br>"
+            "&nbsp;&nbsp;{i1} : 始発時刻順に1から付番される奇数のみのカウンター(ゼロ埋めなし)<br>"
+            "&nbsp;&nbsp;{i2} : 始発時刻順に2から付番される偶数のみのカウンター(ゼロ埋めなし)<br>"
+            "&nbsp;&nbsp;{ii} : 始発時刻順に1から付番されるカウンター(2桁となるようゼロ埋め)<br>"
+            "&nbsp;&nbsp;{ii0} : 始発時刻順に0から付番される偶数のみのカウンター(2桁となるようゼロ埋め)<br>"
+            "&nbsp;&nbsp;{ii1} : 始発時刻順に1から付番される奇数のみのカウンター(2桁となるようゼロ埋め)<br>"
+            "&nbsp;&nbsp;{ii2} : 始発時刻順に2から付番される偶数のみのカウンター(2桁となるようゼロ埋め)<br>"
+            "&nbsp;&nbsp;{c} : 始発時刻順に毎時1から付番されるカウンター(ゼロ埋めなし)<br>"
+            "&nbsp;&nbsp;{c0} : 始発時刻順に毎時0から付番される偶数のみのカウンター(ゼロ埋めなし)<br>"
+            "&nbsp;&nbsp;{c1} : 始発時刻順に毎時1から付番される奇数のみのカウンター(ゼロ埋めなし)<br>"
+            "&nbsp;&nbsp;{c2} : 始発時刻順に毎時2から付番される偶数のみのカウンター(ゼロ埋めなし)<br>"
+            "&nbsp;&nbsp;{cc} : 始発時刻順に毎時1から付番されるカウンター(2桁となるようゼロ埋め)<br>"
+            "&nbsp;&nbsp;{cc0} : 始発時刻順に毎時0から付番される偶数のみのカウンター(2桁となるようゼロ埋め)<br>"
+            "&nbsp;&nbsp;{cc1} : 始発時刻順に毎時1から付番される奇数のみのカウンター(2桁となるようゼロ埋め)<br>"
+            "&nbsp;&nbsp;{cc2} : 始発時刻順に毎時2から付番される偶数のみのカウンター(2桁となるようゼロ埋め)<br>"
+            "&nbsp;&nbsp;{a} : 同じ列車番号が複数存在する場合、始発時刻順にaからアルファベットを付与"
+        )
+        desc_label = QLabel(desc_text)
+        desc_label.setProperty("class", "informational_text")
+        desc_label.setWordWrap(True)
+        desc_label.setAlignment(Qt.AlignTop)
+
+        desc_scroll = QScrollArea()
+        desc_scroll.setWidget(desc_label)
+        desc_scroll.setWidgetResizable(True)
+        desc_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        desc_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        desc_scroll.setFixedHeight(320)
+        desc_scroll.setProperty("class", "scroll_content")
+        main_layout.addWidget(desc_scroll)
+
+        main_layout.addStretch()
+
+        # 6. OK and キャンセル ボタン
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        self.ok_btn = QPushButton("OK")
+        self.ok_btn.setProperty("class", "ok_button")
+        self.cancel_btn = QPushButton("キャンセル")
+        btn_layout.addWidget(self.ok_btn)
+        btn_layout.addWidget(self.cancel_btn)
+        main_layout.addLayout(btn_layout)
+
+        self.ok_btn.clicked.connect(self._on_ok_clicked)
+        self.cancel_btn.clicked.connect(self.reject)
+
+    def _get_first_timed_stop(self, m_train):
+        for stop in m_train.get("stops", []):
+            if stop.get("departure_time") or stop.get("arrival_time"):
+                return stop
+        return None
+
+    def _get_last_timed_stop(self, m_train):
+        timed_stops = [s for s in m_train.get("stops", []) if s.get("arrival_time") or s.get("departure_time")]
+        return timed_stops[-1] if timed_stops else None
+
+    def _get_first_departure_seconds(self, m_train):
+        first_stop = self._get_first_timed_stop(m_train)
+        if not first_stop:
+            return None
+        dep_str = first_stop.get("departure_time") or first_stop.get("arrival_time")
+        return _time_to_seconds(dep_str)
+
+    def _get_station_code(self, stop):
+        if not stop:
+            return ""
+        station_entry_id = stop.get("station_entry_id")
+        sid = getattr(self.project, "station_entry_to_station_id", {}).get(station_entry_id, stop.get("station_id"))
+        station_data = self.project.stations.get(sid, {})
+        return station_data.get("station_code") or ""
+
+    def _get_operation_group_and_op(self, d_train):
+        diagram_data = self.project.diagrams.get(self.diagram_id, {})
+        operations_dict = diagram_data.get("operations", {})
+        operation_groups = diagram_data.get("operation_groups", {})
+
+        ops = d_train.get("operations", [])
+        if not ops:
+            return "", ""
+        first_op = ops[0]
+        op_id = first_op.get("operation_id") if isinstance(first_op, dict) else first_op
+        if not op_id:
+            return "", ""
+
+        op_data = operations_dict.get(op_id, {})
+        op_number = op_data.get("operation_number") or ""
+
+        group_code = ""
+        for og_id, og in operation_groups.items():
+            if op_id in og.get("operations", []):
+                group_code = og.get("operation_group_code") or ""
+                break
+
+        return group_code, op_number
+
+    def _decrement_operation_number(self, op_num_str):
+        if not op_num_str:
+            return ""
+        if op_num_str.isdigit():
+            val = int(op_num_str) - 1
+            if val < 0:
+                val = 0
+            return str(val).zfill(len(op_num_str))
+        return op_num_str
+
+    def _number_to_alpha(self, n: int) -> str:
+        res = ""
+        while n >= 0:
+            res = chr(ord('a') + (n % 26)) + res
+            n = (n // 26) - 1
+        return res
+
+    def _generate_for_direction(self, direction: str, pattern: str, target_type: str, overwrite: bool):
+        route = self.project.routes.get(self.route_id, {})
+        train_key = "inbound_trains" if direction == "inbound" else "outbound_trains"
+        order_key = f"{train_key}_order"
+
+        tbd = route.get("trains_by_diagram", {}).get(self.diagram_id, {})
+        d_trains = tbd.get(train_key, {})
+        m_trains = route.get(train_key, {})
+        order = tbd.get(order_key, [])
+
+        train_records = []
+        for tid in order:
+            d_train = d_trains.get(tid)
+            m_train = m_trains.get(tid)
+            if not d_train or not m_train:
+                continue
+
+            # フィルタリング
+            tt_id = m_train.get("train_type_id")
+            tt_data = self.project.train_types.get(tt_id, {}) if tt_id else {}
+            is_in_service = tt_data.get("is_in_service", True)
+
+            if target_type == "service" and not is_in_service:
+                continue
+            if target_type == "non_service" and is_in_service:
+                continue
+
+            current_num = m_train.get("train_number") or ""
+            if not overwrite and current_num != "":
+                continue
+
+            dep_sec = self._get_first_departure_seconds(m_train)
+            train_records.append({
+                "tid": tid,
+                "d_train": d_train,
+                "m_train": m_train,
+                "dep_sec": dep_sec if dep_sec is not None else float("inf"),
+                "first_stop": self._get_first_timed_stop(m_train),
+                "last_stop": self._get_last_timed_stop(m_train),
+                "tt_data": tt_data,
+                "current_num": current_num
+            })
+
+        # 始発時刻順にソート（同刻時はorder内順序を維持）
+        train_records.sort(key=lambda r: r["dep_sec"])
+
+        # カウンターの計算
+        for idx, rec in enumerate(train_records):
+            rec["i"] = str(idx + 1)
+            rec["i0"] = str(idx * 2)
+            rec["i1"] = str(idx * 2 + 1)
+            rec["i2"] = str(2 + idx * 2)
+            rec["ii"] = str(idx + 1).zfill(2)
+            rec["ii0"] = str(idx * 2).zfill(2)
+            rec["ii1"] = str(idx * 2 + 1).zfill(2)
+            rec["ii2"] = str(2 + idx * 2).zfill(2)
+
+        # 毎時カウンターの計算
+        hourly_groups = {}
+        for rec in train_records:
+            sec = rec["dep_sec"]
+            hour_bucket = (sec // 3600) if sec != float("inf") else -1
+            hourly_groups.setdefault(hour_bucket, []).append(rec)
+
+        for bucket, recs in hourly_groups.items():
+            for idx, rec in enumerate(recs):
+                rec["c"] = str(idx + 1)
+                rec["c0"] = str(idx * 2)
+                rec["c1"] = str(idx * 2 + 1)
+                rec["c2"] = str(2 + idx * 2)
+                rec["cc"] = str(idx + 1).zfill(2)
+                rec["cc0"] = str(idx * 2).zfill(2)
+                rec["cc1"] = str(idx * 2 + 1).zfill(2)
+                rec["cc2"] = str(2 + idx * 2).zfill(2)
+
+        # 各列車の変数を解決して仮列車番号を生成
+        for rec in train_records:
+            m_train = rec["m_train"]
+            d_train = rec["d_train"]
+            tt_data = rec["tt_data"]
+            first_stop = rec["first_stop"]
+            last_stop = rec["last_stop"]
+
+            # {t}
+            t_val = tt_data.get("train_type_code") or ""
+
+            # {n}, {nn}
+            named_num = m_train.get("named_train_number")
+            n_val = str(named_num) if named_num is not None else ""
+            nn_val = str(named_num).zfill(2) if named_num is not None else ""
+
+            # {g}, {o}, {o-1}
+            g_val, o_val = self._get_operation_group_and_op(d_train)
+            o_minus_1_val = self._decrement_operation_number(o_val)
+
+            # {s}, {d}
+            s_val = self._get_station_code(first_stop)
+            d_val = self._get_station_code(last_stop)
+
+            # {h}, {hh}, {m}, {mm}
+            dep_sec = rec["dep_sec"]
+            if dep_sec != float("inf"):
+                hh_int = dep_sec // 3600
+                mm_int = (dep_sec % 3600) // 60
+                h_val = str(hh_int)
+                hh_val = str(hh_int).zfill(2)
+                m_val = str(mm_int)
+                mm_val = str(mm_int).zfill(2)
+            else:
+                h_val = ""
+                hh_val = ""
+                m_val = ""
+                mm_val = ""
+
+            var_map = {
+                "{t}": t_val,
+                "{n}": n_val,
+                "{nn}": nn_val,
+                "{g}": g_val,
+                "{o}": o_val,
+                "{o-1}": o_minus_1_val,
+                "{s}": s_val,
+                "{d}": d_val,
+                "{h}": h_val,
+                "{hh}": hh_val,
+                "{m}": m_val,
+                "{mm}": mm_val,
+                "{i}": rec["i"],
+                "{i0}": rec["i0"],
+                "{i1}": rec["i1"],
+                "{i2}": rec["i2"],
+                "{ii}": rec["ii"],
+                "{ii0}": rec["ii0"],
+                "{ii1}": rec["ii1"],
+                "{ii2}": rec["ii2"],
+                "{c}": rec["c"],
+                "{c0}": rec["c0"],
+                "{c1}": rec["c1"],
+                "{c2}": rec["c2"],
+                "{cc}": rec["cc"],
+                "{cc0}": rec["cc0"],
+                "{cc1}": rec["cc1"],
+                "{cc2}": rec["cc2"],
+            }
+
+            tokens = re.split(r"(\{[^{}]+\})", pattern)
+            res_parts = []
+            for token in tokens:
+                if token in var_map:
+                    res_parts.append(var_map[token])
+                else:
+                    res_parts.append(token)
+            rec["base_generated"] = "".join(res_parts)
+
+        # {a} の解決（または同一列車番号の重複解決）
+        uses_a_token = "{a}" in pattern
+
+        # base_generated ごとにグルーピング（すでに始発時刻順に並んでいる）
+        base_groups = {}
+        for rec in train_records:
+            base_groups.setdefault(rec["base_generated"], []).append(rec)
+
+        final_results = []
+        for base_num, group in base_groups.items():
+            if uses_a_token:
+                if len(group) == 1:
+                    final_num = base_num.replace("{a}", "")
+                    final_results.append((group[0]["tid"], group[0]["current_num"], final_num))
+                else:
+                    for idx, rec in enumerate(group):
+                        alpha = self._number_to_alpha(idx)
+                        final_num = base_num.replace("{a}", alpha)
+                        final_results.append((rec["tid"], rec["current_num"], final_num))
+            else:
+                for rec in group:
+                    final_results.append((rec["tid"], rec["current_num"], base_num))
+
+        return final_results
+
+    def _on_ok_clicked(self):
+        from core.events import ChangeTrainNumberEvent
+
+        inbound_pattern = self.inbound_pattern_edit.text()
+        outbound_pattern = self.outbound_pattern_edit.text()
+        target_type = self.target_trains_combo.currentData()
+        overwrite = self.overwrite_check.isChecked()
+
+        inbound_results = self._generate_for_direction("inbound", inbound_pattern, target_type, overwrite)
+        outbound_results = self._generate_for_direction("outbound", outbound_pattern, target_type, overwrite)
+
+        events_to_push = []
+        route = self.project.routes.get(self.route_id, {})
+
+        for tid, old_num, new_num in inbound_results:
+            if old_num != new_num:
+                m_train = route.get("inbound_trains", {}).get(tid)
+                if m_train is not None:
+                    m_train["train_number"] = new_num
+                    events_to_push.append(ChangeTrainNumberEvent(self.route_id, "inbound", tid, old_num, new_num))
+
+        for tid, old_num, new_num in outbound_results:
+            if old_num != new_num:
+                m_train = route.get("outbound_trains", {}).get(tid)
+                if m_train is not None:
+                    m_train["train_number"] = new_num
+                    events_to_push.append(ChangeTrainNumberEvent(self.route_id, "outbound", tid, old_num, new_num))
+
+        if self.history_manager and events_to_push:
+            self.history_manager.push_events(events_to_push)
+
+        if callable(self.on_completed):
+            self.on_completed(events_to_push)
+
+        self.accept()
+
+        QMessageBox.information(self.parent() or self, "完了", "列車番号の自動生成が完了しました")
+
+
