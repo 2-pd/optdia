@@ -563,6 +563,14 @@ class AddTrackDialog(QDialog):
         self.short_number_edit.editingFinished.connect(self._on_short_number_editing_finished)
         layout.addWidget(self.short_number_edit)
 
+        layout.addSpacing(10)
+
+        # 旅客の乗降が可能チェックボックス
+        self.available_for_passengers_checkbox = QCheckBox("旅客の乗降が可能")
+        is_signal = station_data.get("is_signal_station", False)
+        self.available_for_passengers_checkbox.setChecked(not is_signal)
+        layout.addWidget(self.available_for_passengers_checkbox)
+
         layout.addStretch()
 
         # ボタンエリア
@@ -644,7 +652,7 @@ class AddTrackDialog(QDialog):
 
 # 発着番線の編集ダイアログ
 class EditTrackDialog(QDialog):
-    def __init__(self, parent, track_id: str, track_name: str, track_short_name: str):
+    def __init__(self, parent, track_id: str, track_name: str, track_short_name: str, available_for_passengers: bool = True):
         super().__init__(parent)
         self.setWindowTitle("発着番線の編集")
         self.setFixedSize(400, 280)
@@ -667,6 +675,13 @@ class EditTrackDialog(QDialog):
         self.short_number_edit = QLineEdit(track_short_name)
         self.short_number_edit.editingFinished.connect(self._on_short_number_editing_finished)
         layout.addWidget(self.short_number_edit)
+
+        layout.addSpacing(10)
+
+        # 旅客の乗降が可能チェックボックス
+        self.available_for_passengers_checkbox = QCheckBox("旅客の乗降が可能")
+        self.available_for_passengers_checkbox.setChecked(available_for_passengers)
+        layout.addWidget(self.available_for_passengers_checkbox)
 
         layout.addStretch()
 
@@ -865,8 +880,11 @@ class LineStationEditorDialog(QDialog):
         self.is_major_station_checkbox.stateChanged.connect(self._on_station_base_info_changed)
         checkbox_layout.addWidget(self.is_major_station_checkbox, 0, 0)
         self.is_signal_station_checkbox = QCheckBox("信号場")
-        self.is_signal_station_checkbox.stateChanged.connect(self._on_station_base_info_changed)
+        self.is_signal_station_checkbox.stateChanged.connect(self._on_is_signal_station_changed)
         checkbox_layout.addWidget(self.is_signal_station_checkbox, 1, 0)
+        self.show_track_allocation_chart_checkbox = QCheckBox("ダイヤグラムで発着番線占有状況を表示")
+        self.show_track_allocation_chart_checkbox.stateChanged.connect(self._on_station_base_info_changed)
+        checkbox_layout.addWidget(self.show_track_allocation_chart_checkbox, 2, 0, 1, 2)
         self.show_arrival_time_checkbox = QCheckBox("着時刻を表示")
         self.show_arrival_time_checkbox.stateChanged.connect(self._on_station_base_info_changed)
         checkbox_layout.addWidget(self.show_arrival_time_checkbox, 0, 1)
@@ -1156,6 +1174,7 @@ class LineStationEditorDialog(QDialog):
         self.is_signal_station_checkbox.blockSignals(True)
         self.show_arrival_time_checkbox.blockSignals(True)
         self.show_track_name_checkbox.blockSignals(True)
+        self.show_track_allocation_chart_checkbox.blockSignals(True)
         self.latitude_spin.blockSignals(True)
         self.longitude_spin.blockSignals(True)
         self.inbound_track_combo.blockSignals(True)
@@ -1171,6 +1190,7 @@ class LineStationEditorDialog(QDialog):
             self.is_signal_station_checkbox.setChecked(False)
             self.show_arrival_time_checkbox.setChecked(False)
             self.show_track_name_checkbox.setChecked(False)
+            self.show_track_allocation_chart_checkbox.setChecked(False)
             self.latitude_spin.setValue(-90.000001)
             self.longitude_spin.setValue(-180.000000)
             self.station_number_edit.clear()
@@ -1190,6 +1210,7 @@ class LineStationEditorDialog(QDialog):
         self.is_signal_station_checkbox.blockSignals(False)
         self.show_arrival_time_checkbox.blockSignals(False)
         self.show_track_name_checkbox.blockSignals(False)
+        self.show_track_allocation_chart_checkbox.blockSignals(False)
         self.latitude_spin.blockSignals(False)
         self.longitude_spin.blockSignals(False)
         self.inbound_track_combo.blockSignals(False)
@@ -1570,6 +1591,7 @@ class LineStationEditorDialog(QDialog):
         self.is_signal_station_checkbox.blockSignals(True)
         self.show_arrival_time_checkbox.blockSignals(True)
         self.show_track_name_checkbox.blockSignals(True)
+        self.show_track_allocation_chart_checkbox.blockSignals(True)
         self.latitude_spin.blockSignals(True)
         self.longitude_spin.blockSignals(True)
 
@@ -1618,6 +1640,7 @@ class LineStationEditorDialog(QDialog):
         self.is_signal_station_checkbox.setChecked(station_data.get("is_signal_station", False))
         self.show_arrival_time_checkbox.setChecked(station_data.get("show_arrival_time", False))
         self.show_track_name_checkbox.setChecked(station_data.get("show_track_name", False))
+        self.show_track_allocation_chart_checkbox.setChecked(station_data.get("show_track_allocation_chart", False))
 
         self._populate_track_list(station_data)
 
@@ -1632,6 +1655,7 @@ class LineStationEditorDialog(QDialog):
         self.is_signal_station_checkbox.blockSignals(False)
         self.show_arrival_time_checkbox.blockSignals(False)
         self.show_track_name_checkbox.blockSignals(False)
+        self.show_track_allocation_chart_checkbox.blockSignals(False)
         self.latitude_spin.blockSignals(False)
         self.longitude_spin.blockSignals(False)
 
@@ -1663,6 +1687,7 @@ class LineStationEditorDialog(QDialog):
         station_data["is_signal_station"] = self.is_signal_station_checkbox.isChecked()
         station_data["show_arrival_time"] = self.show_arrival_time_checkbox.isChecked()
         station_data["show_track_name"] = self.show_track_name_checkbox.isChecked()
+        station_data["show_track_allocation_chart"] = self.show_track_allocation_chart_checkbox.isChecked()
 
         lat_val = self.latitude_spin.value()
         station_data["latitude"] = lat_val if lat_val != -90.000001 else None
@@ -1677,6 +1702,33 @@ class LineStationEditorDialog(QDialog):
 
         if hasattr(self.parent(), "set_modified"):
             self.parent().set_modified(True)
+
+    def _on_is_signal_station_changed(self, state: int):
+        """「信号場」チェックボックスの状態が変更されたとき、確認ダイアログを表示してからプロジェクトデータを更新する"""
+        is_checked = self.is_signal_station_checkbox.isChecked()
+        # チェックを行う操作（通常駅 → 信号場）のときだけ確認を行う
+        if is_checked:
+            station_id = self.station_id_edit.text()
+            station_data = self.project.stations.get(station_id) if station_id else None
+            if station_data:
+                tracks = station_data.get("tracks", {})
+                tracks_order = station_data.get("tracks_order", [])
+                has_any_track = len(tracks_order) > 0
+                if has_any_track:
+                    reply = QMessageBox.question(
+                        self,
+                        "確認",
+                        "この駅の発着番線を全て旅客の乗降が不可能として設定しますか？",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.No
+                    )
+                    if reply == QMessageBox.StandardButton.Yes:
+                        for tid in tracks_order:
+                            track = tracks.get(tid)
+                            if track is not None:
+                                track["available_for_passengers"] = False
+                        self._populate_track_list(station_data)
+        self._on_station_base_info_changed()
 
     def _on_line_station_info_changed(self):
         """特定の路線に関連する駅情報が変更されたとき、プロジェクトデータを更新する"""
@@ -1718,6 +1770,9 @@ class LineStationEditorDialog(QDialog):
                 display_name = f"{track_name} ({short_name})" if short_name else track_name
                 item = QListWidgetItem(display_name)
                 item.setData(Qt.UserRole, tid)
+                # available_for_passengers が False の発着番線は灰色文字で表示
+                if not track.get("available_for_passengers", True):
+                    item.setForeground(Qt.gray)
                 self.track_list_widget.addItem(item)
 
     def _on_add_track(self):
@@ -1741,7 +1796,8 @@ class LineStationEditorDialog(QDialog):
             station_data["tracks"][track_id] = {
                 "track_id": track_id,
                 "track_name": track_name,
-                "track_short_name": track_short_name
+                "track_short_name": track_short_name,
+                "available_for_passengers": dialog.available_for_passengers_checkbox.isChecked()
             }
             station_data["tracks_order"].append(track_id)
 
@@ -1768,10 +1824,12 @@ class LineStationEditorDialog(QDialog):
 
         dialog = EditTrackDialog(self, track_id, 
                                  track_data.get("track_name", ""), 
-                                 track_data.get("track_short_name", ""))
+                                 track_data.get("track_short_name", ""),
+                                 track_data.get("available_for_passengers", True))
         if dialog.exec() == QDialog.Accepted:
             track_data["track_name"] = dialog.number_edit.text().strip()
             track_data["track_short_name"] = dialog.short_number_edit.text().strip()
+            track_data["available_for_passengers"] = dialog.available_for_passengers_checkbox.isChecked()
             
             self._populate_track_list(station_data)
             self._on_station_selected()
@@ -2337,6 +2395,7 @@ class LineStationEditorDialog(QDialog):
                     "is_signal_station": False,
                     "show_arrival_time": False,
                     "show_track_name": False,
+                    "show_track_allocation_chart": False,
                     "latitude": None,
                     "longitude": None,
                     "tracks": {},
@@ -2354,7 +2413,8 @@ class LineStationEditorDialog(QDialog):
                             self.project.stations[station_id]["tracks"][tid] = {
                                 "track_id": tid,
                                 "track_name": f"{i}{suffix}",
-                                "track_short_name": str(i)
+                                "track_short_name": str(i),
+                                "available_for_passengers": True
                             }
                             self.project.stations[station_id]["tracks_order"].append(tid)
 

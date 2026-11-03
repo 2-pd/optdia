@@ -589,7 +589,8 @@ def import_timetable_from_csv(parent_window):
                                 "end_track": None,
                                 "end_time": None,
                                 "note": "",
-                                "temporary_stabling_events": []
+                                "temporary_stabling_events": [],
+                                "shunting_operations": []
                             }
                             ops_dict[new_op_id] = new_op
                             found_op_id = new_op_id

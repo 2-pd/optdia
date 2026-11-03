@@ -988,7 +988,8 @@ class VehicleOperationEditorDialog(QDialog):
             "end_track": None,
             "end_time": None,
             "note": "",
-            "temporary_stabling_events": []
+            "temporary_stabling_events": [],
+            "shunting_operations": []
         }
 
         operations[new_op_id] = new_op
