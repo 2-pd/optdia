@@ -3,7 +3,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QWidget, QListWidget, QListWidgetItem,
-    QStackedWidget
+    QStackedWidget, QMessageBox, QMenu
 )
 from core.project import OptDiaProject
 
@@ -150,6 +150,8 @@ class AgencyEditorDialog(QDialog):
         self.agency_list_widget.setDragDropMode(QListWidget.InternalMove)
         self.agency_list_widget.model().rowsMoved.connect(self._on_agencies_reordered)
         self.agency_list_widget.itemSelectionChanged.connect(self._on_agency_selected)
+        self.agency_list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.agency_list_widget.customContextMenuRequested.connect(self._on_agency_list_context_menu)
         left_layout.addWidget(self.agency_list_widget)
 
         # 「鉄道事業者の追加」ボタン
@@ -225,6 +227,7 @@ class AgencyEditorDialog(QDialog):
         bottom_layout.addStretch()
         self.delete_agency_button = QPushButton("この事業者を削除")
         self.delete_agency_button.setProperty("class", "delete_button")
+        self.delete_agency_button.clicked.connect(self._on_delete_agency)
         bottom_layout.addWidget(self.delete_agency_button)
         edit_form_layout.addLayout(bottom_layout)
 
@@ -378,6 +381,61 @@ class AgencyEditorDialog(QDialog):
             new_order.append(item.data(Qt.UserRole))
 
         self.project.agencies_order = new_order
+        self._set_modified()
+
+    def _on_agency_list_context_menu(self, pos):
+        """鉄道事業者リストの項目を右クリックしたときのコンテキストメニューを表示する"""
+        item = self.agency_list_widget.itemAt(pos)
+        if item is None:
+            return
+
+        agency_id = item.data(Qt.UserRole)
+        menu = QMenu(self)
+        delete_action = menu.addAction("この事業者を削除")
+        action = menu.exec(self.agency_list_widget.viewport().mapToGlobal(pos))
+        if action == delete_action:
+            self._delete_agency(agency_id)
+
+    def _on_delete_agency(self):
+        """現在編集中の鉄道事業者を削除する（フォーム上の削除ボタン押下時）"""
+        if self._current_agency_id:
+            self._delete_agency(self._current_agency_id)
+
+    def _delete_agency(self, agency_id: str):
+        """確認ダイアログを表示し、指定された鉄道事業者情報を削除する"""
+        if not agency_id or agency_id not in self.project.agencies:
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "鉄道事業者の削除",
+            "この鉄道事業者の情報を削除しますか？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # 1. プロジェクトデータから該当鉄道事業者を削除
+        del self.project.agencies[agency_id]
+        if agency_id in self.project.agencies_order:
+            self.project.agencies_order.remove(agency_id)
+
+        # 2. 全ての路線情報を走査し、削除対象の事業者IDを除去
+        for line in self.project.lines.values():
+            agency_ids = line.get("agency_ids", [])
+            if agency_id in agency_ids:
+                line["agency_ids"] = [aid for aid in agency_ids if aid != agency_id]
+
+        # 3. リストの再構築
+        self._populate_agency_list()
+
+        # 削除後に項目が存在する場合は先頭を選択
+        if self.agency_list_widget.count() > 0:
+            self.agency_list_widget.setCurrentRow(0)
+        else:
+            self._update_stack_view()
+
         self._set_modified()
 
     def _set_modified(self):
