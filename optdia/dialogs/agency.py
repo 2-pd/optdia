@@ -24,12 +24,95 @@ def validate_agency_url(url_str: str) -> tuple[bool, str]:
     # 空ホスト名（https:// や http:// 単体）も除外
     pattern = r"^https?://[a-zA-Z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+$"
     if not re.match(pattern, url_str):
-        return False, "【注意】URLに使用できない文字が含まれています"
+        return False, "【注意】URLに使用できない記号または文字が含まれています"
 
     if url_str in ("https://", "http://"):
         return False, "【注意】URLのホスト名が指定されていません"
 
     return True, ""
+
+
+class AddAgencyDialog(QDialog):
+    """
+    鉄道事業者の追加ダイアログ
+    """
+    def __init__(self, parent, project: OptDiaProject):
+        super().__init__(parent)
+        self.project = project
+
+        self.setWindowTitle("鉄道事業者の追加")
+        self.setFixedSize(400, 280)
+
+        layout = QVBoxLayout(self)
+
+        # 1. 「事業者ID:」ラベル
+        layout.addWidget(QLabel("事業者ID:"))
+        # 事業者IDを入力するための1行テキストボックス (プレースホルダーは「例) osaka_metro」)
+        self.id_edit = QLineEdit()
+        self.id_edit.setPlaceholderText("例) osaka_metro")
+        self.id_edit.textChanged.connect(self._clear_id_error)
+        layout.addWidget(self.id_edit)
+
+        # 2. 警告を表示するためのラベル
+        self.warning_label = QLabel("")
+        self.warning_label.setStyleSheet("color: #cc3333; padding-left: 5px;")
+        layout.addWidget(self.warning_label)
+
+        # 3. 「事業者名:」ラベル
+        layout.addWidget(QLabel("事業者名:"))
+        # 事業者名を入力するための1行テキストボックス (プレースホルダーは「例) 大阪市高速電気軌道株式会社」)
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("例) 大阪市高速電気軌道株式会社")
+        layout.addWidget(self.name_edit)
+
+        # 4. 「事業者名の省略表記:」ラベル
+        layout.addWidget(QLabel("事業者名の省略表記:"))
+        # 事業者名の省略表記を入力するための1行テキストボックス (プレースホルダーは「例) 大阪メトロ」)
+        self.short_name_edit = QLineEdit()
+        self.short_name_edit.setPlaceholderText("例) 大阪メトロ")
+        layout.addWidget(self.short_name_edit)
+
+        layout.addStretch()
+
+        # 5. 「OK」「キャンセル」ボタン
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        self.ok_button = QPushButton("OK")
+        self.ok_button.setProperty("class", "ok_button")
+        self.cancel_button = QPushButton("キャンセル")
+        button_layout.addWidget(self.ok_button)
+        button_layout.addWidget(self.cancel_button)
+        layout.addLayout(button_layout)
+
+        self.ok_button.clicked.connect(self._on_ok_clicked)
+        self.cancel_button.clicked.connect(self.reject)
+
+    def _clear_id_error(self):
+        """ID入力欄のエラー表示状態をクリアする"""
+        self.id_edit.setStyleSheet("")
+        self.warning_label.setText("")
+
+    def _on_ok_clicked(self):
+        """OKボタン押下時の検証処理"""
+        agency_id = self.id_edit.text().strip()
+        self.id_edit.setStyleSheet("")
+
+        if not agency_id:
+            self.warning_label.setText("IDを指定してください")
+            self.id_edit.setStyleSheet("background-color: #ffeeee;")
+            return
+
+        if not re.match(r"^[a-zA-Z0-9_]+$", agency_id):
+            self.warning_label.setText("IDには半角英数字とアンダーバーのみが使用可能です")
+            self.id_edit.setStyleSheet("background-color: #ffeeee;")
+            return
+
+        if agency_id in self.project.agencies:
+            self.warning_label.setText("既に使用されているIDです")
+            self.id_edit.setStyleSheet("background-color: #ffeeee;")
+            return
+
+        self.accept()
 
 
 class AgencyEditorDialog(QDialog):
@@ -49,31 +132,32 @@ class AgencyEditorDialog(QDialog):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # --- 左側の領域 (幅180px) ---
+        # --- 左側の領域 (幅200px) ---
         left_panel = QWidget()
-        left_panel.setFixedWidth(180)
+        left_panel.setFixedWidth(200)
         left_panel.setProperty("class", "dialog_sidebar")
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(10, 10, 10, 10)
         left_layout.setSpacing(5)
 
-        # 1. 「鉄道事業者」ラベル
+        # 「鉄道事業者」ラベル
         agency_label = QLabel("鉄道事業者")
         agency_label.setStyleSheet("font-weight: bold;")
         left_layout.addWidget(agency_label)
 
-        # 2. 鉄道事業者名を一覧表示するためのリストウィジェット「鉄道事業者リスト」
+        # 鉄道事業者リスト
         self.agency_list_widget = QListWidget()
         self.agency_list_widget.setDragDropMode(QListWidget.InternalMove)
         self.agency_list_widget.model().rowsMoved.connect(self._on_agencies_reordered)
         self.agency_list_widget.itemSelectionChanged.connect(self._on_agency_selected)
         left_layout.addWidget(self.agency_list_widget)
 
-        # 3. 「鉄道事業者の追加」ボタン (クリック時の動作はまだ設定しない)
+        # 「鉄道事業者の追加」ボタン
         self.add_agency_button = QPushButton("鉄道事業者の追加")
+        self.add_agency_button.clicked.connect(self._on_add_agency)
         left_layout.addWidget(self.add_agency_button)
 
-        # 4. 「鉄道事業者はドラッグ操作で並び替え可能です」ラベル
+        # 「鉄道事業者はドラッグ操作で並び替え可能です」ラベル
         drag_info_label = QLabel("鉄道事業者はドラッグ操作で並び替え可能です")
         drag_info_label.setWordWrap(True)
         drag_info_label.setProperty("class", "informational_text")
@@ -100,28 +184,28 @@ class AgencyEditorDialog(QDialog):
         edit_form_layout.setContentsMargins(20, 20, 20, 20)
         edit_form_layout.setSpacing(8)
 
-        # 1. 「事業者ID:」というラベル
+        # 「事業者ID:」ラベル
         edit_form_layout.addWidget(QLabel("事業者ID:"))
         # 事業者IDが表示される1行テキストボックス(常に無効状態)
         self.agency_id_edit = QLineEdit()
         self.agency_id_edit.setEnabled(False)
         edit_form_layout.addWidget(self.agency_id_edit)
 
-        # 2. 「事業者名:」というラベル
+        # 「事業者名:」ラベル
         edit_form_layout.addWidget(QLabel("事業者名:"))
         # 事業者名を編集するための1行テキストボックス
         self.agency_name_edit = QLineEdit()
         self.agency_name_edit.textEdited.connect(self._on_agency_name_edited)
         edit_form_layout.addWidget(self.agency_name_edit)
 
-        # 3. 「事業者名の省略表記:」というラベル
+        # 「事業者名の省略表記:」ラベル
         edit_form_layout.addWidget(QLabel("事業者名の省略表記:"))
         # 事業者名の省略表記を編集するための1行テキストボックス
         self.agency_short_name_edit = QLineEdit()
         self.agency_short_name_edit.textEdited.connect(self._on_agency_short_name_edited)
         edit_form_layout.addWidget(self.agency_short_name_edit)
 
-        # 4. 「事業者公式サイトのURL:」というラベル
+        # 「事業者公式サイトのURL:」ラベル
         edit_form_layout.addWidget(QLabel("事業者公式サイトのURL:"))
         # 事業者公式サイトのURLを編集するための1行テキストボックス
         self.agency_url_edit = QLineEdit()
@@ -136,7 +220,7 @@ class AgencyEditorDialog(QDialog):
 
         edit_form_layout.addStretch()
 
-        # 最下部右端の「この事業者を削除」ボタン
+        # 「この事業者を削除」ボタン
         bottom_layout = QHBoxLayout()
         bottom_layout.addStretch()
         self.delete_agency_button = QPushButton("この事業者を削除")
@@ -146,7 +230,7 @@ class AgencyEditorDialog(QDialog):
 
         self.right_stack.addWidget(self.edit_form_page)
 
-        # リスト初期化
+        # リスト初期化処理
         self._populate_agency_list()
         if self.agency_list_widget.count() > 0:
             self.agency_list_widget.setCurrentRow(0)
@@ -177,6 +261,36 @@ class AgencyEditorDialog(QDialog):
 
         self.agency_list_widget.blockSignals(False)
         self._update_stack_view()
+
+    def _on_add_agency(self):
+        """鉄道事業者の追加ダイアログを表示して新規事業者を追加する"""
+        dialog = AddAgencyDialog(self, self.project)
+        if dialog.exec() == QDialog.Accepted:
+            agency_id = dialog.id_edit.text().strip()
+            agency_name = dialog.name_edit.text().strip()
+            agency_short_name = dialog.short_name_edit.text().strip()
+
+            new_agency = {
+                "agency_id": agency_id,
+                "agency_name": agency_name,
+                "agency_short_name": agency_short_name,
+                "agency_url": None,
+            }
+
+            self.project.agencies[agency_id] = new_agency
+            self.project.agencies_order.append(agency_id)
+
+            # リストを再構築
+            self._populate_agency_list()
+
+            # 新規追加した事業者を選択状態にする
+            for i in range(self.agency_list_widget.count()):
+                item = self.agency_list_widget.item(i)
+                if item.data(Qt.UserRole) == agency_id:
+                    self.agency_list_widget.setCurrentRow(i)
+                    break
+
+            self._set_modified()
 
     def _on_agency_selected(self):
         """リストで選択中の鉄道事業者の情報をフォームに反映する"""

@@ -28,6 +28,7 @@ from dialogs.line_station import LineStationEditorDialog
 from dialogs.train_type import AddTrainTypeDialog, TrainTypeEditorDialog
 from dialogs.operation import VehicleOperationEditorDialog
 from previews.operation_detail import OperationDetailPreviewDialog
+from dialogs.agency import AgencyEditorDialog
 from dialogs.project_meta import ProjectPropertiesDialog
 from dialogs.preferences import PreferencesDialog
 from dialogs.about import AboutDialog
@@ -723,6 +724,8 @@ class MainWindow(QMainWindow):
         open_project_action = file_menu.addAction("プロジェクトを開く(&O)")
         open_project_action.setShortcut("Ctrl+O")
         open_project_action.triggered.connect(self._on_open_project)
+        self.recent_files_menu = file_menu.addMenu("最近開いたプロジェクト(&R)")
+        self._update_recent_files_menu() # メニューを初期化
         file_menu.addSeparator()
         save_action = file_menu.addAction("上書き保存(&S)")
         save_action.setShortcut("Ctrl+S")
@@ -730,16 +733,16 @@ class MainWindow(QMainWindow):
         save_as_action = file_menu.addAction("名前を付けて保存(&A)")
         save_as_action.setShortcut("Ctrl+Shift+S")
         save_as_action.triggered.connect(self._on_save_as_project)
+        file_menu.addSeparator()
         import_csv_action = file_menu.addAction("時刻表をCSVからインポート")
         import_csv_action.triggered.connect(self._on_import_csv)
         export_csv_action = file_menu.addAction("時刻表をCSVにエクスポート")
         export_csv_action.triggered.connect(self._on_export_csv)
         file_menu.addSeparator()
         properties_action = file_menu.addAction("プロジェクトのプロパティ")
-        file_menu.addSeparator()
         properties_action.triggered.connect(self._on_project_properties)
-        self.recent_files_menu = file_menu.addMenu("最近開いたプロジェクト(&R)")
-        self._update_recent_files_menu() # メニューを初期化
+        agency_action = file_menu.addAction("鉄道事業者情報の編集")
+        agency_action.triggered.connect(self._on_edit_agencies)
         file_menu.addSeparator()
         exit_action = file_menu.addAction("終了(&Q)")
         exit_action.setShortcut("Ctrl+Q")
@@ -1016,6 +1019,11 @@ class MainWindow(QMainWindow):
         dialog = ProjectPropertiesDialog(self, self.project)
         if dialog.exec() == QDialog.Accepted:
             self.set_modified(True)
+
+    def _on_edit_agencies(self):
+        """鉄道事業者情報編集ダイアログを表示する"""
+        dialog = AgencyEditorDialog(self, self.project)
+        dialog.exec()
 
     def _on_preferences(self):
         """環境設定ダイアログを表示する"""
