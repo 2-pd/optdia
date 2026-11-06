@@ -119,9 +119,10 @@ class AgencyEditorDialog(QDialog):
     """
     鉄道事業者情報編集ダイアログ
     """
-    def __init__(self, parent, project: OptDiaProject):
+    def __init__(self, parent, project: OptDiaProject, initial_agency_id: str | None = None):
         super().__init__(parent)
         self.project = project
+        self.initial_agency_id = initial_agency_id
         self._current_agency_id: str | None = None
 
         self.setWindowTitle("鉄道事業者情報の編集")
@@ -236,7 +237,13 @@ class AgencyEditorDialog(QDialog):
         # リスト初期化処理
         self._populate_agency_list()
         if self.agency_list_widget.count() > 0:
-            self.agency_list_widget.setCurrentRow(0)
+            target_row = 0
+            if self.initial_agency_id:
+                for i in range(self.agency_list_widget.count()):
+                    if self.agency_list_widget.item(i).data(Qt.UserRole) == self.initial_agency_id:
+                        target_row = i
+                        break
+            self.agency_list_widget.setCurrentRow(target_row)
         else:
             self._update_stack_view()
 

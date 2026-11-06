@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 from core.project import OptDiaProject, SchemaVersionError, generate_random_id, load_project
 from common.gui_utils import HtmlDelegate, create_color_square_pixmap
 from common.widgets import ColorPickerWidget, HelpLabel
+from dialogs.agency import AgencyEditorDialog
 
 
 LINE_TYPES = [
@@ -723,6 +724,39 @@ class EditTrackDialog(QDialog):
         super().accept()
 
 
+# 路線に鉄道事業者を追加するダイアログ
+class AddLineAgencyDialog(QDialog):
+    def __init__(self, parent, available_agencies: list[tuple[str, str]]):
+        super().__init__(parent)
+        self.setWindowTitle("路線に鉄道事業者を追加")
+        self.setFixedSize(360, 160)
+
+        layout = QVBoxLayout(self)
+
+        layout.addWidget(QLabel("追加する事業者:"))
+        self.agency_combo = QComboBox()
+        for agency_id, short_name in available_agencies:
+            self.agency_combo.addItem(short_name, agency_id)
+        layout.addWidget(self.agency_combo)
+
+        layout.addStretch()
+
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        self.add_button = QPushButton("追加")
+        self.add_button.setProperty("class", "ok_button")
+        self.cancel_button = QPushButton("キャンセル")
+        btn_layout.addWidget(self.add_button)
+        btn_layout.addWidget(self.cancel_button)
+        layout.addLayout(btn_layout)
+
+        self.add_button.clicked.connect(self.accept)
+        self.cancel_button.clicked.connect(self.reject)
+
+    def get_selected_agency_id(self) -> str | None:
+        return self.agency_combo.currentData()
+
+
 # 路線・駅情報編集ダイアログ
 class LineStationEditorDialog(QDialog):
     def __init__(self, parent, project: OptDiaProject):
@@ -935,6 +969,8 @@ class LineStationEditorDialog(QDialog):
         self.track_list_widget.setDragDropMode(QListWidget.InternalMove)
         self.track_list_widget.itemDoubleClicked.connect(self._on_edit_track)
         self.track_list_widget.model().rowsMoved.connect(self._on_tracks_reordered)
+        self.track_list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.track_list_widget.customContextMenuRequested.connect(self._on_track_list_context_menu)
         right_vertical_layout.addWidget(self.track_list_widget)
 
         track_btn_layout = QHBoxLayout()
@@ -1039,64 +1075,116 @@ class LineStationEditorDialog(QDialog):
         self.line_info_layout.setContentsMargins(20, 20, 20, 20)
         self.line_info_layout.setSpacing(10)
 
+        # 上部水平レイアウト (1つ目の垂直レイアウト: 路線基本情報, 2つ目の垂直レイアウト: 管轄事業者)
+        line_top_hlayout = QHBoxLayout()
+        line_top_hlayout.setContentsMargins(0, 0, 0, 0)
+        line_top_hlayout.setSpacing(30)
+
+        # 1つ目の垂直レイアウト
+        line_left_vlayout = QVBoxLayout()
+        line_left_vlayout.setContentsMargins(0, 0, 0, 0)
+        line_left_vlayout.setSpacing(10)
+
         # 路線ID (表示のみ、編集不可)
-        self.line_info_layout.addWidget(QLabel("路線ID(変更不可):"))
+        line_left_vlayout.addWidget(QLabel("路線ID(変更不可):"))
         self.line_id_display = QLineEdit()
         self.line_id_display.setReadOnly(True)
-        self.line_info_layout.addWidget(self.line_id_display)
+        line_left_vlayout.addWidget(self.line_id_display)
 
         # 路線名
-        self.line_info_layout.addWidget(QLabel("路線名:"))
+        line_left_vlayout.addWidget(QLabel("路線名:"))
         self.line_name_edit = QLineEdit()
         self.line_name_edit.textChanged.connect(self._on_line_name_changed)
-        self.line_info_layout.addWidget(self.line_name_edit)
+        line_left_vlayout.addWidget(self.line_name_edit)
 
         # 路線の分類
-        self.line_info_layout.addWidget(QLabel("路線の分類:"))
+        line_left_vlayout.addWidget(QLabel("路線の分類:"))
         self.line_type_combo = QComboBox()
         for lt_code, lt_name in LINE_TYPES:
             self.line_type_combo.addItem(lt_name, lt_code)
         self.line_type_combo.currentIndexChanged.connect(self._on_line_type_changed)
-        self.line_info_layout.addWidget(self.line_type_combo)
+        line_left_vlayout.addWidget(self.line_type_combo)
 
         # 路線の色
-        self.line_info_layout.addWidget(QLabel("路線の色:"))
+        line_left_vlayout.addWidget(QLabel("路線の色:"))
         self.color_picker = ColorPickerWidget("#333333")
         self.color_picker.colorChanged.connect(self._on_line_color_changed)
-        self.line_info_layout.addWidget(self.color_picker)
+        line_left_vlayout.addWidget(self.color_picker)
 
         # 路線記号
-        self.line_info_layout.addWidget(QLabel("路線記号等:"))
+        line_left_vlayout.addWidget(QLabel("路線記号等:"))
         self.line_symbol_edit = QLineEdit()
         self.line_symbol_edit.setFixedWidth(80)
         self.line_symbol_edit.textChanged.connect(self._on_line_symbol_changed)
-        self.line_info_layout.addWidget(self.line_symbol_edit)
+        line_left_vlayout.addWidget(self.line_symbol_edit)
 
-        self.line_info_layout.addSpacing(15)
+        line_left_vlayout.addSpacing(15)
 
         # 編成の前位向きと列車の上り向きが一致するチェックボックス
         self.inbound_direction_checkbox = QCheckBox("編成の前位向きと列車の上り向きが一致する")
         self.inbound_direction_checkbox.stateChanged.connect(self._on_inbound_direction_changed)
-        self.line_info_layout.addWidget(self.inbound_direction_checkbox)
+        line_left_vlayout.addWidget(self.inbound_direction_checkbox)
 
-        self.line_info_layout.addSpacing(15)
+        line_left_vlayout.addSpacing(15)
 
         # 環状路線の設定
-        self.line_info_layout.addWidget(QLabel("環状路線の設定:"))
+        line_left_vlayout.addWidget(QLabel("環状路線の設定:"))
         self.loop_line_combo = QComboBox()
         self.loop_line_combo.addItem("環状路線でない", None)
         self.loop_line_combo.addItem("上り列車が右回り(外回り)で運転", True)
         self.loop_line_combo.addItem("上り列車が左回り(内回り)で運転", False)
         self.loop_line_combo.currentIndexChanged.connect(self._on_loop_line_changed)
-        self.line_info_layout.addWidget(self.loop_line_combo)
+        line_left_vlayout.addWidget(self.loop_line_combo)
 
-        self.line_info_layout.addSpacing(10)
+        line_left_vlayout.addSpacing(10)
 
         # 基準運転時分の自動算出ボタン
         self.calc_running_time_button = QPushButton("この路線の基準運転時分を自動算出")
         self.calc_running_time_button.clicked.connect(self._on_calc_running_time)
         self.calc_running_time_button.setProperty("class", "text_button")
-        self.line_info_layout.addWidget(self.calc_running_time_button, alignment=Qt.AlignLeft)
+        line_left_vlayout.addWidget(self.calc_running_time_button, alignment=Qt.AlignLeft)
+
+        line_top_hlayout.addLayout(line_left_vlayout, stretch=1)
+
+        # 2つ目の垂直レイアウト (幅240px固定)
+        line_agency_widget = QWidget()
+        line_agency_widget.setFixedWidth(240)
+        line_right_vlayout = QVBoxLayout(line_agency_widget)
+        line_right_vlayout.setContentsMargins(0, 0, 0, 0)
+        line_right_vlayout.setSpacing(6)
+
+        # 「この路線を管轄する事業者」ラベル
+        line_right_vlayout.addWidget(QLabel("この路線を管轄する事業者:"))
+
+        # 路線を管轄する鉄道事業者のリスト
+        self.line_agency_list_widget = QListWidget()
+        self.line_agency_list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.line_agency_list_widget.customContextMenuRequested.connect(self._on_line_agency_list_context_menu)
+        line_right_vlayout.addWidget(self.line_agency_list_widget)
+
+        # 横に並んだ2つのボタン「追加」と「削除」
+        agency_btn_layout = QHBoxLayout()
+        agency_btn_layout.setContentsMargins(0, 0, 0, 0)
+        agency_btn_layout.setSpacing(5)
+        self.add_line_agency_button = QPushButton("追加")
+        self.add_line_agency_button.clicked.connect(self._on_add_line_agency)
+        self.delete_line_agency_button = QPushButton("削除")
+        self.delete_line_agency_button.clicked.connect(self._on_delete_line_agency)
+        agency_btn_layout.addWidget(self.add_line_agency_button)
+        agency_btn_layout.addWidget(self.delete_line_agency_button)
+        line_right_vlayout.addLayout(agency_btn_layout)
+
+        line_right_vlayout.addSpacing(10)
+
+        # 「鉄道事業者情報の編集」ボタン
+        self.edit_agencies_button = QPushButton("鉄道事業者情報の編集")
+        self.edit_agencies_button.setProperty("class", "text_button")
+        self.edit_agencies_button.clicked.connect(lambda: self._open_agency_editor())
+        line_right_vlayout.addWidget(self.edit_agencies_button)
+
+        line_top_hlayout.addWidget(line_agency_widget)
+
+        self.line_info_layout.addLayout(line_top_hlayout)
 
         self.line_info_layout.addStretch() # 内容を上部に寄せる
 
@@ -1137,6 +1225,10 @@ class LineStationEditorDialog(QDialog):
         self.station_list_widget.setEnabled(enabled)
         self.add_station_button.setEnabled(enabled)
         self.delete_line_button.setEnabled(enabled)
+        self.line_agency_list_widget.setEnabled(enabled)
+        self.add_line_agency_button.setEnabled(enabled)
+        self.delete_line_agency_button.setEnabled(enabled)
+        self.edit_agencies_button.setEnabled(enabled)
         
         if not enabled:
             self.line_name_edit.blockSignals(True)
@@ -1150,6 +1242,7 @@ class LineStationEditorDialog(QDialog):
             self.color_picker.set_color("#000000")
             self.line_symbol_edit.clear()
             self.station_list_widget.clear()
+            self.line_agency_list_widget.clear()
             self.station_list_label.setText("<b>駅</b>")
             self.inbound_direction_checkbox.setChecked(False)
             self.loop_line_combo.setCurrentIndex(0)
@@ -1317,6 +1410,9 @@ class LineStationEditorDialog(QDialog):
 
         # 選択された路線に紐づく駅をリストに表示
         self._populate_station_list(self.current_selected_line_data)
+
+        # 選択された路線の管轄事業者をリストに表示
+        self._populate_line_agency_list(self.current_selected_line_data)
 
         # シグナルブロックを解除
         self.line_name_edit.blockSignals(False)
@@ -2461,3 +2557,141 @@ class LineStationEditorDialog(QDialog):
 
             if hasattr(self.parent(), "set_modified"):
                 self.parent().set_modified(True)
+
+    def _on_track_list_context_menu(self, pos):
+        """発着番線リストで項目を右クリックしたときにコンテキストメニューを表示する"""
+        item = self.track_list_widget.itemAt(pos)
+        if item is None:
+            return
+
+        self.track_list_widget.setCurrentItem(item)
+
+        menu = QMenu(self)
+        edit_action = menu.addAction("この発着番線を編集")
+        delete_action = menu.addAction("この発着番線を削除")
+
+        action = menu.exec(self.track_list_widget.viewport().mapToGlobal(pos))
+        if action == edit_action:
+            self._on_edit_track()
+        elif action == delete_action:
+            self._on_delete_track()
+
+    def _populate_line_agency_list(self, line_data: dict):
+        """選択中の路線を管轄する事業者のリストを表示する"""
+        self.line_agency_list_widget.clear()
+        if not line_data:
+            return
+
+        agency_ids = line_data.get("agency_ids", [])
+        for aid in agency_ids:
+            agency = self.project.agencies.get(aid, {})
+            short_name = agency.get("agency_short_name") or agency.get("agency_name") or aid
+            item = QListWidgetItem(short_name)
+            item.setData(Qt.UserRole, aid)
+            self.line_agency_list_widget.addItem(item)
+
+    def _on_add_line_agency(self):
+        """路線に鉄道事業者を追加するダイアログを表示する"""
+        if not self.current_selected_line_data:
+            return
+
+        registered_aids = set(self.current_selected_line_data.get("agency_ids", []))
+        available_agencies = []
+        for aid in self.project.agencies_order:
+            if aid not in registered_aids:
+                agency = self.project.agencies.get(aid, {})
+                short_name = agency.get("agency_short_name") or agency.get("agency_name") or aid
+                available_agencies.append((aid, short_name))
+
+        if not available_agencies:
+            QMessageBox.information(
+                self,
+                "路線に鉄道事業者を追加",
+                "追加可能な鉄道事業者が見つかりません。\nプロジェクトデータに未登録の鉄道事業者を追加する場合は 鉄道事業者情報の編集 から事業者情報を登録してください。"
+            )
+            return
+
+        dialog = AddLineAgencyDialog(self, available_agencies)
+        if dialog.exec() == QDialog.Accepted:
+            selected_aid = dialog.get_selected_agency_id()
+            if selected_aid:
+                if "agency_ids" not in self.current_selected_line_data:
+                    self.current_selected_line_data["agency_ids"] = []
+                self.current_selected_line_data["agency_ids"].append(selected_aid)
+                self._populate_line_agency_list(self.current_selected_line_data)
+
+                # 追加した項目を選択状態にする
+                for i in range(self.line_agency_list_widget.count()):
+                    if self.line_agency_list_widget.item(i).data(Qt.UserRole) == selected_aid:
+                        self.line_agency_list_widget.setCurrentRow(i)
+                        break
+
+                if hasattr(self.parent(), "set_modified"):
+                    self.parent().set_modified(True)
+
+    def _on_delete_line_agency(self):
+        """選択中の事業者を路線の管轄事業者から除外する"""
+        if not self.current_selected_line_data:
+            return
+
+        selected_items = self.line_agency_list_widget.selectedItems()
+        if not selected_items:
+            return
+
+        agency_id = selected_items[0].data(Qt.UserRole)
+        self._delete_line_agency(agency_id)
+
+    def _delete_line_agency(self, agency_id: str):
+        """指定された事業者を路線の管轄事業者から除外する"""
+        if not self.current_selected_line_data:
+            return
+
+        agency = self.project.agencies.get(agency_id, {})
+        short_name = agency.get("agency_short_name") or agency.get("agency_name") or agency_id
+
+        reply = QMessageBox.question(
+            self,
+            "確認",
+            f"{short_name} をこの路線の管轄事業者から除外しますか？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        agency_ids = self.current_selected_line_data.get("agency_ids", [])
+        if agency_id in agency_ids:
+            agency_ids.remove(agency_id)
+
+        self._populate_line_agency_list(self.current_selected_line_data)
+
+        if hasattr(self.parent(), "set_modified"):
+            self.parent().set_modified(True)
+
+    def _open_agency_editor(self, initial_agency_id: str | None = None):
+        """鉄道事業者情報編集ダイアログを開く"""
+        dialog = AgencyEditorDialog(self, self.project, initial_agency_id=initial_agency_id)
+        dialog.exec()
+        # ダイアログ終了後、管轄事業者の表示名称やリストの整合性を更新
+        if self.current_selected_line_data:
+            self._populate_line_agency_list(self.current_selected_line_data)
+
+    def _on_line_agency_list_context_menu(self, pos):
+        """路線を管轄する鉄道事業者のリストのコンテキストメニューを表示する"""
+        item = self.line_agency_list_widget.itemAt(pos)
+        if item is None:
+            return
+
+        self.line_agency_list_widget.setCurrentItem(item)
+        agency_id = item.data(Qt.UserRole)
+
+        menu = QMenu(self)
+        edit_action = menu.addAction("この事業者の情報を編集")
+        delete_action = menu.addAction("この事業者を路線から削除")
+
+        action = menu.exec(self.line_agency_list_widget.viewport().mapToGlobal(pos))
+        if action == edit_action:
+            self._open_agency_editor(initial_agency_id=agency_id)
+        elif action == delete_action:
+            self._delete_line_agency(agency_id)
+
