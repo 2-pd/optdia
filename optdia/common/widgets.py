@@ -1,8 +1,8 @@
-from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtGui import QColor, QPainter, QPen, QPixmap, QIcon, QTransform, QFont
+from PySide6.QtCore import Qt, Signal, QTimer, QPoint, QRect
+from PySide6.QtGui import QColor, QPainter, QPen, QPixmap, QIcon, QTransform, QFont, QCursor
 from PySide6.QtWidgets import (
     QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
-    QFrame, QColorDialog, QToolTip
+    QFrame, QColorDialog, QToolTip, QComboBox
 )
 from core.settings import AppSettings
 from common.gui_utils import create_color_square_pixmap
@@ -325,6 +325,61 @@ class AccordionWidget(QWidget):
 
     def is_expanded(self) -> bool:
         return self._is_expanded
+
+
+# マウスホバーでポップアップを表示するラベル
+class HoverPopupLabel(QLabel):
+    def __init__(self, text: str, parent=None):
+        super().__init__(text, parent)
+        self.popup_widget = None
+        self.setMouseTracking(True)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def set_popup_widget(self, widget: QWidget):
+        self.popup_widget = widget
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        if self.popup_widget:
+            self.popup_widget.show_below()
+
+
+# ホバー時に表示されるポップアップウィジェット基底クラス
+class HoverPopupWindow(QWidget):
+    def __init__(self, parent_label: HoverPopupLabel):
+        super().__init__(None, Qt.ToolTip | Qt.FramelessWindowHint)
+        self.parent_label = parent_label
+        self.parent_label.set_popup_widget(self)
+        self.setAttribute(Qt.WA_AlwaysShowToolTips, True)
+
+        self._check_timer = QTimer(self)
+        self._check_timer.setInterval(100)
+        self._check_timer.timeout.connect(self._check_mouse_hover)
+
+    def show_below(self):
+        self.adjustSize()
+        pos = self.parent_label.mapToGlobal(QPoint(0, self.parent_label.height()))
+        self.move(pos)
+        self.show()
+        self.raise_()
+        self._check_timer.start()
+
+    def hide_popup(self):
+        self._check_timer.stop()
+        self.hide()
+
+    def _check_mouse_hover(self):
+        # ポップアップ内のいずれかのコンボボックスのドロップダウンが開いている場合は閉じない
+        for cb in self.findChildren(QComboBox):
+            view = cb.view()
+            if view and view.window() and view.window().isVisible():
+                return
+
+        cursor_pos = QCursor.pos()
+        label_rect = QRect(self.parent_label.mapToGlobal(QPoint(0, 0)), self.parent_label.size())
+        popup_rect = QRect(self.mapToGlobal(QPoint(0, 0)), self.size())
+        if not label_rect.contains(cursor_pos) and not popup_rect.contains(cursor_pos):
+            self.hide_popup()
 
 
 # ヘルプ文付きラベル

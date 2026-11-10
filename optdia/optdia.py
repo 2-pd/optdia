@@ -5,8 +5,8 @@ import sys
 import os
 import subprocess
 import webbrowser
-from PySide6.QtCore import Qt, QFile, QTextStream, QSize, QTimer, QPoint, QRect, QModelIndex
-from PySide6.QtGui import QIcon, QAction, QPixmap, QTransform, QCursor
+from PySide6.QtCore import Qt, QFile, QTextStream, QSize, QTimer, QPoint, QModelIndex
+from PySide6.QtGui import QIcon, QAction, QPixmap, QTransform
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QStyleFactory,
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -20,8 +20,7 @@ from version import APP_NAME, __version__, MANUAL_URL
 from core.project import OptDiaProject, load_project, SchemaVersionError
 from core.history_manager import HistoryManager
 from core.settings import AppSettings
-from common.gui_utils import HtmlDelegate, create_color_square_pixmap
-from common.widgets import LineSampleWidget
+from common.widgets import HoverPopupLabel, HoverPopupWindow
 from dialogs.route import AddRouteDialog, SelectSegmentDialog, SplitSegmentDialog, RouteEditorDialog
 from dialogs.diagram import AddDiagramDialog, DiagramEditorDialog
 from dialogs.line_station import LineStationEditorDialog
@@ -38,60 +37,6 @@ from timetable.delegate import TimetableDelegate
 from timetable.dialogs import AutoGenerateTrainNumberDialog
 from timeline.view import TimelineView, TimelineHeaderView
 from diagram.view import DiagramView, DiagramHeaderView, DiagramStationView
-
-# マウスホバーでポップアップを表示するラベル
-class HoverPopupLabel(QLabel):
-    def __init__(self, text: str, parent=None):
-        super().__init__(text, parent)
-        self.popup_widget = None
-        self.setMouseTracking(True)
-        self.setCursor(Qt.PointingHandCursor)
-
-    def set_popup_widget(self, widget: QWidget):
-        self.popup_widget = widget
-
-    def enterEvent(self, event):
-        super().enterEvent(event)
-        if self.popup_widget:
-            self.popup_widget.show_below()
-
-
-# ホバー時に表示されるポップアップウィジェット基底クラス
-class HoverPopupWindow(QWidget):
-    def __init__(self, parent_label: HoverPopupLabel):
-        super().__init__(None, Qt.ToolTip | Qt.FramelessWindowHint)
-        self.parent_label = parent_label
-        self.parent_label.set_popup_widget(self)
-        self.setAttribute(Qt.WA_AlwaysShowToolTips, True)
-
-        self._check_timer = QTimer(self)
-        self._check_timer.setInterval(100)
-        self._check_timer.timeout.connect(self._check_mouse_hover)
-
-    def show_below(self):
-        self.adjustSize()
-        pos = self.parent_label.mapToGlobal(QPoint(0, self.parent_label.height()))
-        self.move(pos)
-        self.show()
-        self.raise_()
-        self._check_timer.start()
-
-    def hide_popup(self):
-        self._check_timer.stop()
-        self.hide()
-
-    def _check_mouse_hover(self):
-        # ポップアップ内のいずれかのコンボボックスのドロップダウンが開いている場合は閉じない
-        for cb in self.findChildren(QComboBox):
-            view = cb.view()
-            if view and view.window() and view.window().isVisible():
-                return
-
-        cursor_pos = QCursor.pos()
-        label_rect = QRect(self.parent_label.mapToGlobal(QPoint(0, 0)), self.parent_label.size())
-        popup_rect = QRect(self.mapToGlobal(QPoint(0, 0)), self.size())
-        if not label_rect.contains(cursor_pos) and not popup_rect.contains(cursor_pos):
-            self.hide_popup()
 
 # メインウィンドウ
 class MainWindow(QMainWindow):
@@ -488,14 +433,14 @@ class MainWindow(QMainWindow):
         diagram_header_layout.addWidget(self.diagram_line_combo)
 
         # 「フィルタ」ラベルとホバーポップアップウィジェット
-        self.lbl_diagram_filter = HoverPopupLabel("フィルタ")
+        self.lbl_diagram_filter = HoverPopupLabel('<img src=":/assets/filter.png" style="width: 20; vertical-align: middle;"> <span style="font-size: 12px;">フィルタ</span>')
         diagram_header_layout.addWidget(self.lbl_diagram_filter)
         self._init_diagram_filter_popup()
 
         diagram_header_layout.addStretch(1)
 
         # 「表示設定」ラベルとホバーポップアップウィジェット
-        self.lbl_diagram_display_settings = HoverPopupLabel("表示設定")
+        self.lbl_diagram_display_settings = HoverPopupLabel('<img src=":/assets/customize.png" style="width: 20; vertical-align: middle;"> <span style="font-size: 12px;">表示設定</span>')
         diagram_header_layout.addWidget(self.lbl_diagram_display_settings)
         self._init_diagram_display_settings_popup()
 

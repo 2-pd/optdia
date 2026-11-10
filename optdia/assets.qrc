@@ -12,6 +12,8 @@
         <file>assets/timeline.png</file>
         <file>assets/undo.png</file>
         <file>assets/left.png</file>
+        <file>assets/filter.png</file>
+        <file>assets/customize.png</file>
         <file>assets/draggable.png</file>
         <file>assets/accordion.png</file>
     </qresource>
