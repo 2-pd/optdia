@@ -3,7 +3,7 @@ from PySide6.QtWidgets import QGraphicsView, QMenu, QMessageBox, QGraphicsPathIt
 from PySide6.QtCore import Qt, QRectF
 from PySide6.QtGui import QPainter, QWheelEvent
 from .scene import DiagramScene, DiagramHeaderScene, DiagramStationScene
-from .dialogs import AddTrainDialog, delete_train
+from .dialogs import AddTrainDialog, delete_train, OperationPickerDialog
 from previews.train_detail import TrainDetailPreviewDialog
 
 # 運行ダイヤグラムの上部ビュー（時刻ヘッダー）
@@ -107,6 +107,7 @@ class DiagramView(QGraphicsView):
             menu = QMenu(self)
             train_detail_action = menu.addAction("列車の詳細")
             edit_train_action = menu.addAction("この列車を時刻表で編集")
+            set_operation_action = menu.addAction("この列車の運用番号を設定")
             add_train_action = menu.addAction("ここに列車を追加")
             delete_train_action = menu.addAction("この列車を削除")
             selected_action = menu.exec(event.globalPos())
@@ -114,6 +115,8 @@ class DiagramView(QGraphicsView):
                 self._handle_train_detail_action(train_data)
             elif selected_action == edit_train_action and train_data is not None:
                 self._handle_edit_train_action(train_data)
+            elif selected_action == set_operation_action and train_data is not None:
+                self._handle_set_operation_action(train_data)
             elif selected_action == add_train_action:
                 self._handle_add_train_action(scene_pos)
             elif selected_action == delete_train_action and train_data is not None:
@@ -158,6 +161,30 @@ class DiagramView(QGraphicsView):
             direction = train_data.get("direction")
             train_id = train_data.get("train_id")
             main_win.edit_train_in_timetable(route_id, direction, train_id)
+
+    def _handle_set_operation_action(self, train_data):
+        main_win = self.window()
+        project = getattr(main_win, "project", getattr(self.scene, "project", None))
+        diagram_id = getattr(self.scene, "diagram_id", None)
+        if not diagram_id and hasattr(main_win, "diagram_selector_combo"):
+            diagram_id = main_win.diagram_selector_combo.currentData()
+        route_id = train_data.get("route_id")
+        direction = train_data.get("direction")
+        train_id = train_data.get("train_id")
+
+        if project and diagram_id and route_id and direction and train_id:
+            dialog = OperationPickerDialog(self, project, diagram_id, route_id, direction, train_id)
+            if dialog.exec():
+                if hasattr(main_win, "set_modified"):
+                    main_win.set_modified(True)
+                if hasattr(main_win, "_update_diagram_view"):
+                    main_win._update_diagram_view()
+                if hasattr(main_win, "timetable_model") and main_win.timetable_model:
+                    main_win.timetable_model.update_data(
+                        main_win.timetable_model.route_id,
+                        main_win.timetable_model.diagram_id,
+                        main_win.timetable_model.direction
+                    )
 
     def _handle_add_train_action(self, scene_pos):
         # メインウィンドウを探索

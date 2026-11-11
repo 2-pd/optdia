@@ -1187,3 +1187,384 @@ def delete_train(parent_view, train_data):
         history_manager.push_events(events_to_push)
 
     return True
+
+
+class OperationCandidatePicker(QDialog):
+    """
+    始発駅を終着駅とし、始発時刻以前に到着する列車の候補リストを表示するポップアップダイアログ
+    """
+    def __init__(self, parent, candidate_items: list):
+        super().__init__(parent, Qt.Popup)
+        self.selected_operations = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(2)
+
+        self.list_widget = QListWidget(self)
+        self.list_widget.setStyleSheet("border: 1px solid #dddddd;")
+        self.list_widget.setItemDelegate(HtmlDelegate(self))
+
+        for display_html, op_list in candidate_items:
+            item = QListWidgetItem(display_html)
+            item.setData(Qt.UserRole, op_list)
+            self.list_widget.addItem(item)
+
+        self.list_widget.itemClicked.connect(self._on_item_clicked)
+        layout.addWidget(self.list_widget)
+
+        item_height = 28
+        total_h = min(280, max(60, len(candidate_items) * item_height + 12))
+        self.resize(260, total_h)
+
+    def _on_item_clicked(self, item):
+        self.selected_operations = item.data(Qt.UserRole)
+        self.accept()
+
+
+class OperationPickerDialog(QDialog):
+    """
+    ダイヤグラム用の担当運用選択ダイアログ（モーダルウィンドウ形式）
+    """
+    def __init__(self, parent, project: OptDiaProject, diagram_id: str, route_id: str, direction: str, train_id: str):
+        super().__init__(parent)
+        self.setWindowModality(Qt.WindowModal)
+        self.main_win = parent.window() if hasattr(parent, "window") else None
+        self.project = project
+        self.diagram_id = diagram_id
+        self.route_id = route_id
+        self.direction = direction
+        self.train_id = train_id
+
+        # 現在編集中の列車のダイヤデータを取得
+        route = self.project.routes.get(self.route_id, {})
+        train_key = "inbound_trains" if self.direction == "inbound" else "outbound_trains"
+        self.d_train = route.get("trains_by_diagram", {}).get(self.diagram_id, {}).get(train_key, {}).get(self.train_id)
+
+        self.setWindowTitle("担当運用選択")
+        self.setFixedSize(360, 480)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(4)
+
+        # ラベル
+        label = QLabel("列車の担当運用(編成の前位側から)")
+        layout.addWidget(label)
+
+        # リストウィジェット
+        self.list_widget = DragDropListWidget(self)
+        layout.addWidget(self.list_widget)
+
+        # 「候補から運用を選択」ボタン
+        self.candidate_btn = QPushButton("候補から運用を選択")
+        self.candidate_btn.clicked.connect(self._on_candidate_clicked)
+        layout.addWidget(self.candidate_btn)
+
+        # 「担当運用の追加」ボタン
+        self.add_btn = QPushButton("担当運用の追加")
+        self.add_btn.clicked.connect(self._on_add_clicked)
+        layout.addWidget(self.add_btn)
+
+        # 「運用の追加・編集」ボタン
+        self.edit_btn = QPushButton("運用の追加・編集")
+        self.edit_btn.setProperty("class", "text_button")
+        self.edit_btn.clicked.connect(self._on_edit_clicked)
+        layout.addWidget(self.edit_btn)
+
+        layout.addSpacing(10)
+
+        # 最下部: 「OK」「キャンセル」ボタン
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        self.btn_ok = QPushButton("OK")
+        self.btn_cancel = QPushButton("キャンセル")
+        self.btn_ok.clicked.connect(self._on_ok_clicked)
+        self.btn_cancel.clicked.connect(self.reject)
+        self.btn_ok.setProperty("class", "ok_button")
+        btn_layout.addWidget(self.btn_ok)
+        btn_layout.addWidget(self.btn_cancel)
+        layout.addLayout(btn_layout)
+
+        # 既存の担当運用をリストにロード
+        if self.d_train:
+            ops = self.d_train.get("operations", [])
+            for op in ops:
+                op_id = op.get("operation_id")
+                is_rev = op.get("formation_is_reversed", False)
+                self.add_item(op_id, is_rev)
+
+    def add_item(self, operation_id=None, formation_is_reversed=False):
+        item = QListWidgetItem()
+        item.setSizeHint(QSize(280, 120))
+        item.setData(Qt.UserRole, operation_id)
+        item.setData(Qt.UserRole + 1, formation_is_reversed)
+        self.list_widget.addItem(item)
+
+        idx = self.list_widget.count()
+        widget = OperationItemWidget(self, idx, operation_id, formation_is_reversed)
+        self.list_widget.setItemWidget(item, widget)
+
+    def _on_add_clicked(self):
+        self.add_item()
+
+    def delete_item_widget(self, widget):
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if self.list_widget.itemWidget(item) == widget:
+                self.list_widget.takeItem(i)
+                break
+        self.rebuild_item_widgets()
+
+    def rebuild_item_widgets(self):
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            widget = self.list_widget.itemWidget(item)
+            idx = i + 1
+            if widget:
+                widget.group_box.setTitle(f"{idx}つ目の運用")
+            else:
+                op_id = item.data(Qt.UserRole)
+                is_rev = item.data(Qt.UserRole + 1) or False
+                item.setSizeHint(QSize(280, 110))
+                widget = OperationItemWidget(self, idx, op_id, is_rev)
+                self.list_widget.setItemWidget(item, widget)
+
+    def _save_widget_states_to_items(self):
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            widget = self.list_widget.itemWidget(item)
+            if widget:
+                item.setData(Qt.UserRole, widget.operation_id)
+                item.setData(Qt.UserRole + 1, widget.formation_is_reversed)
+
+    def sync_operations_to_project(self):
+        """
+        DragDropListWidget内部でのドロップ時や、内部同期用。
+        ダイアログ編集中はプロジェクトへ直接書き込まずアイテム状態の同期のみ行う。
+        """
+        self._save_widget_states_to_items()
+
+    def _on_ok_clicked(self):
+        if not self.d_train:
+            self.accept()
+            return
+
+        self._save_widget_states_to_items()
+
+        old_ops = copy.deepcopy(self.d_train.get("operations", []))
+
+        ops = []
+        has_valid = False
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            widget = self.list_widget.itemWidget(item)
+            if widget:
+                op_id = widget.operation_id
+                is_rev = widget.formation_is_reversed
+            else:
+                op_id = item.data(Qt.UserRole)
+                is_rev = item.data(Qt.UserRole + 1) or False
+
+            # 有効な運用IDのみを保持（未選択の項目は除外）
+            if op_id:
+                ops.append({
+                    "operation_id": op_id,
+                    "formation_is_reversed": is_rev
+                })
+                has_valid = True
+
+        self.d_train["operations"] = ops
+        if has_valid:
+            self.d_train["to_be_saved"] = True
+
+        main_win = self.main_win or (self.parent().window() if self.parent() else None)
+        if old_ops != ops:
+            history_manager = getattr(main_win, "history_manager", None)
+            if history_manager:
+                ev = ChangeTrainOperationEvent(self.route_id, self.direction, self.train_id, self.diagram_id, old_ops, ops)
+                history_manager.push_events([ev])
+
+            if hasattr(self.project, "update_operation_train_lookup"):
+                self.project.update_operation_train_lookup(
+                    self.diagram_id, self.route_id, self.direction, self.train_id,
+                    old_ops, ops
+                )
+
+        # メインウィンドウに変更を通知・再描画
+        if hasattr(main_win, "set_modified"):
+            main_win.set_modified(True)
+        if hasattr(main_win, "_update_diagram_view"):
+            main_win._update_diagram_view()
+        if hasattr(main_win, "timetable_model") and main_win.timetable_model:
+            main_win.timetable_model.update_data(
+                main_win.timetable_model.route_id,
+                main_win.timetable_model.diagram_id,
+                main_win.timetable_model.direction
+            )
+
+        self.accept()
+
+    def _get_current_train_first_stop_info(self):
+        """現在の列車の始発駅(station_id)と始発時刻(秒)を取得する"""
+        route = self.project.routes.get(self.route_id, {})
+        train_key = "inbound_trains" if self.direction == "inbound" else "outbound_trains"
+        m_train = route.get(train_key, {}).get(self.train_id, {})
+        stops = m_train.get("stops", [])
+
+        first_stop = None
+        for s in stops:
+            dep = s.get("departure_time")
+            arr = s.get("arrival_time")
+            if dep is not None or arr is not None:
+                first_stop = s
+                break
+
+        if not first_stop:
+            return None, None
+
+        seid = first_stop.get("station_entry_id")
+        sid = getattr(self.project, "station_entry_to_station_id", {}).get(seid, first_stop.get("station_id"))
+        dep_time_str = first_stop.get("departure_time") or first_stop.get("arrival_time")
+        dep_sec = _time_to_seconds(dep_time_str)
+        return sid, dep_sec
+
+    def _get_train_terminal_stop_info(self, m_train):
+        """指定された列車の終着駅(station_id)と終着時刻(秒)を取得する"""
+        stops = m_train.get("stops", [])
+        last_stop = None
+        for s in reversed(stops):
+            dep = s.get("departure_time")
+            arr = s.get("arrival_time")
+            if dep is not None or arr is not None:
+                last_stop = s
+                break
+
+        if not last_stop:
+            return None, None
+
+        seid = last_stop.get("station_entry_id")
+        sid = getattr(self.project, "station_entry_to_station_id", {}).get(seid, last_stop.get("station_id"))
+        arr_time_str = last_stop.get("arrival_time") or last_stop.get("departure_time")
+        arr_sec = _time_to_seconds(arr_time_str)
+        return sid, arr_sec
+
+    def _find_candidate_trains(self):
+        """
+        右クリックされた列車の始発駅を終着駅とする列車のリスト
+        (上りか下りかを区別せず、右クリックされた列車の始発時刻以前に到着するものを、到着時刻の遅い順に10件)
+        """
+        target_station_id, target_dep_sec = self._get_current_train_first_stop_info()
+        if not target_station_id or target_dep_sec is None:
+            return []
+
+        candidates = []
+        diagram = self.project.diagrams.get(self.diagram_id, {})
+        operations_map = diagram.get("operations", {})
+
+        for r_id, route in self.project.routes.items():
+            tbd = route.get("trains_by_diagram", {}).get(self.diagram_id, {})
+            for dir_key in ["inbound_trains", "outbound_trains"]:
+                m_trains = route.get(dir_key, {})
+                d_trains = tbd.get(dir_key, {})
+
+                for tid, d_train in d_trains.items():
+                    if not d_train.get("to_be_saved"):
+                        continue
+                    m_train = m_trains.get(tid)
+                    if not m_train:
+                        continue
+
+                    # 自身は除外
+                    if r_id == self.route_id and dir_key == ("inbound_trains" if self.direction == "inbound" else "outbound_trains") and tid == self.train_id:
+                        continue
+
+                    term_sid, term_arr_sec = self._get_train_terminal_stop_info(m_train)
+                    if term_sid == target_station_id and term_arr_sec is not None:
+                        if term_arr_sec <= target_dep_sec:
+                            # 担当運用が存在するか確認
+                            ops = d_train.get("operations", [])
+                            # 有効な運用IDを持つもののみ
+                            valid_ops = [op for op in ops if op.get("operation_id")]
+                            if not valid_ops:
+                                continue
+
+                            candidates.append({
+                                "route_id": r_id,
+                                "train_id": tid,
+                                "m_train": m_train,
+                                "d_train": d_train,
+                                "arr_sec": term_arr_sec,
+                                "valid_ops": valid_ops
+                            })
+
+        # 到着時刻の遅い順にソート (降順)
+        candidates.sort(key=lambda c: c["arr_sec"], reverse=True)
+        top10 = candidates[:10]
+
+        # リスト項目のHTMLおよび運用リストを作成
+        items = []
+        for cand in top10:
+            m_train = cand["m_train"]
+            num = m_train.get("train_number") or "(列車番号なし)"
+            tt_id = m_train.get("train_type_id")
+            tt = self.project.train_types.get(tt_id) if tt_id else None
+            tt_color = tt.get("main_color", "#333333") if tt else "#333333"
+
+            op_numbers = []
+            for op in cand["valid_ops"]:
+                op_id = op.get("operation_id")
+                op_obj = operations_map.get(op_id, {})
+                op_num = op_obj.get("operation_number") or str(op_id)
+                op_numbers.append(op_num)
+
+            joined_op_numbers = "+".join(op_numbers)
+            display_html = f"<b><font color='{tt_color}'>{num}</font></b> ({joined_op_numbers})"
+            items.append((display_html, cand["valid_ops"]))
+
+        return items
+
+    def _on_candidate_clicked(self):
+        candidate_items = self._find_candidate_trains()
+        if not candidate_items:
+            QMessageBox.information(self, "候補がありません", "選択可能な運用の候補が見つかりませんでした。")
+            return
+
+        picker = OperationCandidatePicker(self, candidate_items)
+        btn_pos = self.candidate_btn.mapToGlobal(self.candidate_btn.rect().bottomLeft())
+        picker.move(btn_pos)
+        if picker.exec() and picker.selected_operations:
+            selected_ops = picker.selected_operations
+
+            # 既に運用が1つ以上設定されているかチェック
+            existing_valid_ops = False
+            for i in range(self.list_widget.count()):
+                item = self.list_widget.item(i)
+                widget = self.list_widget.itemWidget(item)
+                if widget and widget.operation_id:
+                    existing_valid_ops = True
+                    break
+                elif item.data(Qt.UserRole):
+                    existing_valid_ops = True
+                    break
+
+            if existing_valid_ops:
+                res = QMessageBox.question(
+                    self,
+                    "上書きの確認",
+                    "既に設定されている内容を上書きしますか？",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
+                )
+                if res != QMessageBox.Yes:
+                    return
+
+            # 上書き設定
+            self.list_widget.clear()
+            for op in selected_ops:
+                op_id = op.get("operation_id")
+                is_rev = op.get("formation_is_reversed", False)
+                self.add_item(op_id, is_rev)
+
+    def _on_edit_clicked(self):
+        dialog = VehicleOperationEditorDialog(self.parent(), self.project, self.diagram_id)
+        dialog.exec()
