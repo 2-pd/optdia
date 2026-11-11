@@ -5,14 +5,18 @@ from typing import Optional, List, Dict, Any
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QComboBox, QSpinBox, QTableWidget, QTableWidgetItem,
-    QPushButton, QHeaderView, QMessageBox, QWidget
+    QPushButton, QHeaderView, QMessageBox, QWidget, QListWidget, QListWidgetItem,
+    QFrame
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSize, QPoint
 from PySide6.QtGui import QColor
 
 from core.project import OptDiaProject, generate_random_id
-from core.events import AddTrainEvent
+from core.events import AddTrainEvent, ChangeTrainOperationEvent
 from core.history_manager import HistoryManager
+from common.gui_utils import HtmlDelegate
+from dialogs.operation import VehicleOperationEditorDialog
+from timetable.dialogs import DragDropListWidget, OperationItemWidget
 
 
 def _format_time(text: str) -> Optional[str]:
@@ -82,6 +86,62 @@ def _seconds_to_time(seconds: Optional[int]) -> Optional[str]:
     return f"{hh:02d}:{mm:02d}:{ss:02d}"
 
 
+class StationPickerPopup(QDialog):
+    """
+    駅選択ポップアップ（ボタン押下時に表示されるリストウィジェット）。
+    幅300px、高さ400pxのリストから1駅を選択する。
+    """
+    def __init__(self, parent, route_sequence: List[Dict[str, Any]], current_route_idx: Optional[int] = None):
+        super().__init__(parent, Qt.Popup | Qt.FramelessWindowHint)
+        self.selected_route_idx: Optional[int] = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(1, 1, 1, 1)
+        layout.setSpacing(0)
+
+        self.list_widget = QListWidget(self)
+        self.list_widget.setFixedSize(298, 398)
+        layout.addWidget(self.list_widget)
+
+        for item in route_sequence:
+            ridx = item["route_idx"]
+            sname = item["station_name"]
+            lw_item = QListWidgetItem(sname)
+            lw_item.setData(Qt.UserRole, ridx)
+            self.list_widget.addItem(lw_item)
+
+        # 現在選択されている駅を初期選択状態にする
+        if current_route_idx is not None:
+            for i in range(self.list_widget.count()):
+                lw_item = self.list_widget.item(i)
+                if lw_item.data(Qt.UserRole) == current_route_idx:
+                    self.list_widget.setCurrentItem(lw_item)
+                    self.list_widget.scrollToItem(lw_item)
+                    break
+
+        self.list_widget.itemClicked.connect(self._on_item_clicked)
+        self.setFixedSize(300, 400)
+
+    def _on_item_clicked(self, item: QListWidgetItem):
+        self.selected_route_idx = item.data(Qt.UserRole)
+        self.accept()
+
+
+class TrainTableWidget(QTableWidget):
+    """
+    セルをダブルクリックしなくても Delete キーや Backspace キーを押すだけで
+    選択セルの内容を削除できるように拡張した QTableWidget
+    """
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key_Delete, Qt.Key_Backspace):
+            selected_items = self.selectedItems()
+            if selected_items:
+                for item in selected_items:
+                    item.setText("")
+                return
+        super().keyPressEvent(event)
+
+
 class AddTrainDialog(QDialog):
     """
     運行ダイヤグラム用「列車の追加」ダイアログ
@@ -104,6 +164,10 @@ class AddTrainDialog(QDialog):
 
         self._is_formatting_table = False
         self._is_updating_minute = False
+
+        # 始発・終着駅の選択状態（route_idx で管理）
+        self._dep_route_idx: Optional[int] = None
+        self._arr_route_idx: Optional[int] = None
 
         self._init_ui(default_station_id, default_hour, default_minute)
 
@@ -223,11 +287,12 @@ class AddTrainDialog(QDialog):
         type_h_layout.addWidget(self.spin_named_number)
         left_layout.addLayout(type_h_layout)
 
-        # 3. 始発: ラベル & 始発駅コンボボックス
+        # 3. 始発: ラベル & 始発駅選択ボタン
         lbl_dep_station = QLabel("始発:")
-        self.combo_dep_station = QComboBox()
+        self.btn_dep_station = QPushButton()
+        self.btn_dep_station.setFlat(False)
         left_layout.addWidget(lbl_dep_station)
-        left_layout.addWidget(self.combo_dep_station)
+        left_layout.addWidget(self.btn_dep_station)
 
         # 始発時刻スピンボックス群 (時と分は別々。時: 0〜99。分: -1〜60で自動調整)
         time_h_layout = QHBoxLayout()
@@ -247,19 +312,12 @@ class AddTrainDialog(QDialog):
         time_h_layout.addWidget(self.spin_dep_min)
         left_layout.addLayout(time_h_layout)
 
-        # 4. 終着: ラベル & 終着駅コンボボックス
+        # 4. 終着: ラベル & 終着駅選択ボタン
         lbl_arr_station = QLabel("終着:")
-        self.combo_arr_station = QComboBox()
+        self.btn_arr_station = QPushButton()
+        self.btn_arr_station.setFlat(False)
         left_layout.addWidget(lbl_arr_station)
-        left_layout.addWidget(self.combo_arr_station)
-
-        # 駅リストをコンボボックスに追加
-        # route_idx を UserRole として保持
-        for item in self.full_route_sequence:
-            ridx = item["route_idx"]
-            sname = item["station_name"]
-            self.combo_dep_station.addItem(sname, ridx)
-            self.combo_arr_station.addItem(sname, ridx)
+        left_layout.addWidget(self.btn_arr_station)
 
         # デフォルト始発駅の設定
         dep_selected_idx = 0
@@ -268,13 +326,16 @@ class AddTrainDialog(QDialog):
                 if item["station_id"] == default_station_id:
                     dep_selected_idx = i
                     break
-        self.combo_dep_station.setCurrentIndex(dep_selected_idx)
 
         # デフォルト終着駅の設定（始発駅より後の駅、なければ末尾）
         arr_selected_idx = len(self.full_route_sequence) - 1
-        if dep_selected_idx < len(self.full_route_sequence) - 1:
-            arr_selected_idx = len(self.full_route_sequence) - 1
-        self.combo_arr_station.setCurrentIndex(arr_selected_idx)
+
+        # 内部状態を設定してボタンラベルを更新
+        if self.full_route_sequence:
+            self._dep_route_idx = self.full_route_sequence[dep_selected_idx]["route_idx"]
+            self._arr_route_idx = self.full_route_sequence[arr_selected_idx]["route_idx"]
+            self.btn_dep_station.setText(self.full_route_sequence[dep_selected_idx]["station_name"])
+            self.btn_arr_station.setText(self.full_route_sequence[arr_selected_idx]["station_name"])
 
         # 5. 警告ラベル（始発駅と終着駅が同じ駅の場合）
         self.lbl_station_warning = QLabel("始発駅と終着駅で同じ駅エントリが選択されています。")
@@ -288,7 +349,7 @@ class AddTrainDialog(QDialog):
         # ==========================================
         # 右側の領域（テーブルウィジェット）
         # ==========================================
-        self.table_widget = QTableWidget()
+        self.table_widget = TrainTableWidget()
         self.table_widget.setColumnCount(1)
         self.table_widget.setHorizontalHeaderLabels(["発着時刻"])
         self.table_widget.horizontalHeader().setStretchLastSection(True)
@@ -308,13 +369,14 @@ class AddTrainDialog(QDialog):
         self.btn_cancel = QPushButton("キャンセル")
         self.btn_ok.clicked.connect(self._on_ok_clicked)
         self.btn_cancel.clicked.connect(self.reject)
+        self.btn_ok.setProperty("class", "ok_button")
         btn_layout.addWidget(self.btn_ok)
         btn_layout.addWidget(self.btn_cancel)
         main_layout.addLayout(btn_layout)
 
         # シグナル接続
-        self.combo_dep_station.currentIndexChanged.connect(self._on_station_selection_changed)
-        self.combo_arr_station.currentIndexChanged.connect(self._on_station_selection_changed)
+        self.btn_dep_station.clicked.connect(self._on_dep_station_btn_clicked)
+        self.btn_arr_station.clicked.connect(self._on_arr_station_btn_clicked)
         self.combo_train_type.currentIndexChanged.connect(self._on_train_type_or_dest_changed)
 
         # 初回のテーブル更新
@@ -388,8 +450,8 @@ class AddTrainDialog(QDialog):
             self._is_formatting_table = False
 
     def _check_station_warning(self):
-        dep_ridx = self.combo_dep_station.currentData()
-        arr_ridx = self.combo_arr_station.currentData()
+        dep_ridx = self._dep_route_idx
+        arr_ridx = self._arr_route_idx
         same_station = False
         if dep_ridx is not None and arr_ridx is not None:
             dep_item = next((x for x in self.full_route_sequence if x["route_idx"] == dep_ridx), None)
@@ -397,6 +459,28 @@ class AddTrainDialog(QDialog):
             if dep_item and arr_item and dep_item["station_entry_id"] == arr_item["station_entry_id"]:
                 same_station = True
         self.lbl_station_warning.setVisible(same_station)
+
+    def _on_dep_station_btn_clicked(self):
+        popup = StationPickerPopup(self, self.full_route_sequence, self._dep_route_idx)
+        btn_pos = self.btn_dep_station.mapToGlobal(QPoint(0, self.btn_dep_station.height()))
+        popup.move(btn_pos)
+        if popup.exec() and popup.selected_route_idx is not None:
+            self._dep_route_idx = popup.selected_route_idx
+            dep_item = next((x for x in self.full_route_sequence if x["route_idx"] == self._dep_route_idx), None)
+            if dep_item:
+                self.btn_dep_station.setText(dep_item["station_name"])
+            self._on_station_selection_changed()
+
+    def _on_arr_station_btn_clicked(self):
+        popup = StationPickerPopup(self, self.full_route_sequence, self._arr_route_idx)
+        btn_pos = self.btn_arr_station.mapToGlobal(QPoint(0, self.btn_arr_station.height()))
+        popup.move(btn_pos)
+        if popup.exec() and popup.selected_route_idx is not None:
+            self._arr_route_idx = popup.selected_route_idx
+            arr_item = next((x for x in self.full_route_sequence if x["route_idx"] == self._arr_route_idx), None)
+            if arr_item:
+                self.btn_arr_station.setText(arr_item["station_name"])
+            self._on_station_selection_changed()
 
     def _on_station_selection_changed(self):
         self._check_station_warning()
@@ -407,8 +491,8 @@ class AddTrainDialog(QDialog):
         self._auto_fill_times_if_possible()
 
     def _get_selected_interval_items(self) -> List[Dict[str, Any]]:
-        dep_ridx = self.combo_dep_station.currentData()
-        arr_ridx = self.combo_arr_station.currentData()
+        dep_ridx = self._dep_route_idx
+        arr_ridx = self._arr_route_idx
         if dep_ridx is None or arr_ridx is None or not self.full_route_sequence:
             return []
 
@@ -437,6 +521,12 @@ class AddTrainDialog(QDialog):
         row_defs = []
         n_items = len(items)
 
+        # 上り/下りの判定: items[0] の route_idx が items[-1] より大きければ上り列車
+        # full_route_sequence は下り方向で構築されているため、is_segment_start/is_segment_end の
+        # 意味が上り列車では逆転する。上り列車では is_segment_end が「区間への入口(発)」、
+        # is_segment_start が「区間からの出口(着)」となる。
+        is_inbound = (items[0]["route_idx"] > items[-1]["route_idx"]) if n_items > 1 else False
+
         for i, item in enumerate(items):
             is_first = (i == 0)
             is_last = (i == n_items - 1)
@@ -445,22 +535,57 @@ class AddTrainDialog(QDialog):
             show_arr = item.get("show_arrival_time", False)
             name = item.get("station_name", "")
 
-            if is_first or is_seg_start:
-                # 発車時刻専用
+            # 上り列車の場合、区間フラグの役割を入れ替えて解釈する
+            if is_inbound:
+                seg_entry_point = is_seg_end    # 区間への入口（下り向き「終点」が上り向き「始点」）
+                seg_exit_point = is_seg_start   # 区間からの出口（下り向き「始点」が上り向き「終点」）
+            else:
+                seg_entry_point = is_seg_start  # 区間への入口（下り向き「始点」がそのまま「始点」）
+                seg_exit_point = is_seg_end     # 区間からの出口（下り向き「終点」がそのまま「終点」）
+
+            if is_first:
+                # 始発駅: 発車時刻専用
                 row_defs.append({
                     "header": f"{name} [発]",
                     "type": "dep",
                     "item": item
                 })
-            elif is_last or is_seg_end:
-                # 終着時刻専用
+            elif is_last:
+                # 終着駅: 到着時刻専用
                 row_defs.append({
                     "header": f"{name} [着]",
                     "type": "arr",
                     "item": item
                 })
+            elif seg_exit_point and seg_entry_point:
+                # 隣接する区間の接続点（前の区間の出口かつ次の区間の入口）:
+                # 到着[着]→発車[発]の順で表示
+                row_defs.append({
+                    "header": f"{name} [着]",
+                    "type": "arr",
+                    "item": item
+                })
+                row_defs.append({
+                    "header": f"{name} [発]",
+                    "type": "dep",
+                    "item": item
+                })
+            elif seg_exit_point:
+                # 区間の出口（前の区間の終点）: 到着時刻専用
+                row_defs.append({
+                    "header": f"{name} [着]",
+                    "type": "arr",
+                    "item": item
+                })
+            elif seg_entry_point:
+                # 区間の入口（次の区間の始点）: 発車時刻専用
+                row_defs.append({
+                    "header": f"{name} [発]",
+                    "type": "dep",
+                    "item": item
+                })
             elif show_arr:
-                # 到着時刻と発車時刻を別々の行
+                # 中間駅（show_arrival_time=True）: 到着時刻→発車時刻の順で表示
                 row_defs.append({
                     "header": f"{name} [着]",
                     "type": "arr",
@@ -567,9 +692,13 @@ class AddTrainDialog(QDialog):
 
     def _auto_fill_times_if_possible(self):
         """
-        同一種別かつ始発駅を経由する列車で選択中の始発時刻より前にあるものの中で最後の列車
+        同一種別・同一方向かつ始発駅を経由する列車で選択中の始発時刻より前にあるものの中で最後の列車
         (前になければ後にあるものの中で最初の列車)から、選択中の始発駅から選択中の終着駅までの
         各経由駅の所要時間を計算して、右側のテーブルに時刻を自動入力する。
+
+        ただし、時刻基準で選ばれた列車の終着駅が入力された終着駅より手前にある場合（終着駅の時刻が
+        自動入力できない場合）で、同じ方向・同じ種別の列車で指定された終着駅と同じかそれより遠い駅まで
+        運転される列車があるならば、そちらを優先して所要時間を参照する。
         """
         tt_id = self.combo_train_type.currentData()
         if not tt_id:
@@ -580,6 +709,7 @@ class AddTrainDialog(QDialog):
             return
 
         start_station_id = interval_items[0]["station_id"]
+        end_station_entry_id = interval_items[-1]["station_entry_id"]
         start_route_idx = interval_items[0]["route_idx"]
         end_route_idx = interval_items[-1]["route_idx"]
         is_outbound = (start_route_idx <= end_route_idx)
@@ -597,9 +727,17 @@ class AddTrainDialog(QDialog):
         m_outbound = route.get("outbound_trains", {})
 
         # ダイヤグラム上に表示されている列車から同一種別かつ始発駅を経由する列車を収集
+        # 追加する列車の方向(上り/下り)に合わせて、同一方向の列車のみを候補とする
         candidate_trains = []
 
-        for d_dict, m_dict in [(d_outbound, m_outbound), (d_inbound, m_inbound)]:
+        if is_outbound:
+            dir_pairs = [(d_outbound, m_outbound)]
+        else:
+            dir_pairs = [(d_inbound, m_inbound)]
+
+        entry_to_sid = getattr(self.project, "station_entry_to_station_id", {})
+
+        for d_dict, m_dict in dir_pairs:
             for tid, d_train in d_dict.items():
                 if not d_train.get("to_be_saved", True):
                     continue
@@ -613,9 +751,7 @@ class AddTrainDialog(QDialog):
                 # 始発駅を経由しているか確認
                 matched_stop = None
                 for st in stops:
-                    sid = getattr(self.project, "station_entry_to_station_id", {}).get(
-                        st.get("station_entry_id"), st.get("station_id")
-                    )
+                    sid = entry_to_sid.get(st.get("station_entry_id"), st.get("station_id"))
                     if sid == start_station_id:
                         matched_stop = st
                         break
@@ -629,10 +765,18 @@ class AddTrainDialog(QDialog):
                 if ref_dep_sec is None:
                     continue
 
+                # この列車が終着駅（end_station_entry_id）以降まで運転されているか確認
+                # stops の中に end_station_entry_id が含まれていれば「到達可能」とみなす
+                reaches_dest = any(
+                    st.get("station_entry_id") == end_station_entry_id
+                    for st in stops
+                )
+
                 candidate_trains.append({
                     "m_train": m_train,
                     "ref_dep_sec": ref_dep_sec,
-                    "matched_stop": matched_stop
+                    "matched_stop": matched_stop,
+                    "reaches_dest": reaches_dest
                 })
 
         if not candidate_trains:
@@ -644,12 +788,31 @@ class AddTrainDialog(QDialog):
 
         if earlier_trains:
             earlier_trains.sort(key=lambda t: t["ref_dep_sec"])
-            chosen = earlier_trains[-1]
+            time_chosen = earlier_trains[-1]
         elif later_trains:
             later_trains.sort(key=lambda t: t["ref_dep_sec"])
-            chosen = later_trains[0]
+            time_chosen = later_trains[0]
         else:
             return
+
+        # 時刻基準で選ばれた列車が終着駅に到達しない場合、終着駅まで運転される列車を優先して選ぶ
+        if not time_chosen["reaches_dest"]:
+            # 終着駅に到達する候補が存在するか確認
+            dest_reachable = [t for t in candidate_trains if t["reaches_dest"]]
+            if dest_reachable:
+                # 同じく「始発時刻より前で最後→なければ後で最初」のルールで選ぶ
+                dest_earlier = [t for t in dest_reachable if t["ref_dep_sec"] <= selected_dep_sec]
+                dest_later = [t for t in dest_reachable if t["ref_dep_sec"] > selected_dep_sec]
+                if dest_earlier:
+                    dest_earlier.sort(key=lambda t: t["ref_dep_sec"])
+                    chosen = dest_earlier[-1]
+                else:
+                    dest_later.sort(key=lambda t: t["ref_dep_sec"])
+                    chosen = dest_later[0]
+            else:
+                chosen = time_chosen
+        else:
+            chosen = time_chosen
 
         ref_train = chosen["m_train"]
         ref_start_dep_sec = chosen["ref_dep_sec"]
@@ -715,8 +878,8 @@ class AddTrainDialog(QDialog):
         (to_be_savedがTrueでない列車よりは前)に新しい列車が挿入される。
         このとき、HistoryManagerクラスのインスタンスへ、列車の追加イベントのインスタンスを登録すること。
         """
-        dep_ridx = self.combo_dep_station.currentData()
-        arr_ridx = self.combo_arr_station.currentData()
+        dep_ridx = self._dep_route_idx
+        arr_ridx = self._arr_route_idx
         if dep_ridx is None or arr_ridx is None:
             self.reject()
             return
@@ -780,6 +943,7 @@ class AddTrainDialog(QDialog):
         # stops を interval_items の順にリスト化
         stops = []
         n_items = len(interval_items)
+        is_inbound = (direction == "inbound")
         for i, item in enumerate(interval_items):
             ridx = item["route_idx"]
             stop_data = item_stops_map.get(ridx, {
@@ -791,25 +955,29 @@ class AddTrainDialog(QDialog):
                 "stop_type": 1
             })
 
+            # 部分区間端の判定（上り列車の場合は進行方向に対して始点と終点の意味が逆転する）
+            is_seg_start = item.get("is_segment_end") if is_inbound else item.get("is_segment_start")
+            is_seg_end = item.get("is_segment_start") if is_inbound else item.get("is_segment_end")
+            is_seg_boundary = is_seg_start or is_seg_end
+            show_arr = item.get("show_arrival_time", False)
+
             # 始発駅・部分区間始点
-            if i == 0 or item.get("is_segment_start"):
+            if i == 0 or is_seg_start:
                 stop_data["arrival_time"] = None
 
             # 終着駅・部分区間終点
             if i == n_items - 1:
                 # 列車の終着駅の経由駅情報では、その駅が部分区間の端の駅でなくshow_arrival_time=Trueでもないならば発時刻をNoneとせずに着時刻と同じ値を設定する
-                is_seg_boundary = item.get("is_segment_start") or item.get("is_segment_end")
-                show_arr = item.get("show_arrival_time", False)
                 if not is_seg_boundary and not show_arr:
                     stop_data["departure_time"] = stop_data.get("arrival_time")
                 else:
                     stop_data["departure_time"] = None
-            elif item.get("is_segment_end"):
+            elif is_seg_end:
                 stop_data["departure_time"] = None
 
             # 中間駅かつ着時刻非表示で発時刻のみ入力されている場合、着時刻にも同じ値を設定
-            if i > 0 and i < n_items - 1 and not item.get("is_segment_start") and not item.get("is_segment_end"):
-                if not item.get("show_arrival_time", False):
+            if i > 0 and i < n_items - 1 and not is_seg_boundary:
+                if not show_arr:
                     if stop_data["departure_time"] and not stop_data["arrival_time"]:
                         stop_data["arrival_time"] = stop_data["departure_time"]
 
