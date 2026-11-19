@@ -1057,13 +1057,28 @@ def split_train_at_cell(parent, model, index):
     station_name = model.project.stations.get(station_id, {}).get("station_name", station_id)
     reply = QMessageBox.question(
         parent,
-        "確認",
+        "列車の分割",
         f"{station_name}でこの列車を分割しますか？",
         QMessageBox.Yes | QMessageBox.No,
         QMessageBox.No
     )
     if reply != QMessageBox.Yes:
         return
+
+    # 現在編集中のダイヤ以外にも運転日が設定されているか確認し、設定されていれば追加の確認ダイアログを表示
+    diagram_ids_for_train = m_train.get("_diagram_ids", [])
+    other_diagrams = [did for did in diagram_ids_for_train if did != diagram_id]
+    if other_diagrams:
+        reply2 = QMessageBox.question(
+            parent,
+            "列車の分割",
+            "この列車の運転日は現在編集中の運転ダイヤだけではありません。\n"
+            "このまま分割すると他のダイヤでもこの列車が分割されますがよろしいですか？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if reply2 != QMessageBox.Yes:
+            return
 
     from core.events import AddTrainEvent, ChangeTrainStopEvent, RemoveTrainStopEvent, ChangeSubsequentTrainEvent
     events_to_push = []

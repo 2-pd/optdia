@@ -368,9 +368,30 @@ class TimetableDelegate(QStyledItemDelegate):
         pos = widget.viewport().mapToGlobal(rect.bottomLeft())
         picker.move(pos)
         if picker.exec() == QDialog.Accepted:
+            # update_data は beginResetModel/endResetModel を呼び出して全体を再描画するため、
+            # 選択セルがリセットされてしまう。現在の選択状態を保存して復元する。
+            current_index = widget.currentIndex() if hasattr(widget, 'currentIndex') else None
+            selected_indexes = widget.selectedIndexes() if hasattr(widget, 'selectedIndexes') else []
             # DiagramPickerがモデルを直接更新するため、ここではmodel.update_dataを呼び出す
             # model.update_dataはbeginResetModel/endResetModelを呼び出し、テーブル全体を再描画する
             model.update_data(route_id, diagram_id, direction)
+            # 選択状態を復元する
+            if current_index and current_index.isValid():
+                restored_index = model.index(current_index.row(), current_index.column())
+                if restored_index.isValid():
+                    widget.setCurrentIndex(restored_index)
+                    # 複数セルが選択されていた場合も復元する
+                    if len(selected_indexes) > 1 and hasattr(widget, 'selectionModel'):
+                        sel_model = widget.selectionModel()
+                        if sel_model:
+                            from PySide6.QtCore import QItemSelection, QItemSelectionModel
+                            selection = QItemSelection()
+                            for idx in selected_indexes:
+                                r_idx = model.index(idx.row(), idx.column())
+                                if r_idx.isValid():
+                                    selection.select(r_idx, r_idx)
+                            sel_model.select(selection, QItemSelectionModel.Select)
+
 
     def _show_note_popup(self, index, model, widget):
         train_id = model.train_ids[index.column()]
