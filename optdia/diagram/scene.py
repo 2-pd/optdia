@@ -75,7 +75,7 @@ class DiagramStationScene(QGraphicsScene):
 
             # 部分区間の境界で異なるIDの駅が隣接しているときのy座標オフセット処理
             seg_id = st.get("segment_id")
-            if seg_id is not None:
+            if seg_id is not None and not st.get("is_track_entry", False):
                 # 前の駅と異なる部分区間、かつ駅IDが異なる場合（下側の部分区間の上端の駅）
                 if i > 0:
                     prev_st = stations_data[i - 1]
@@ -91,18 +91,58 @@ class DiagramStationScene(QGraphicsScene):
                     if next_st.get("segment_id") != seg_id and next_st.get("station_id") != sid:
                         y -= 10.0
 
-            text_item = QGraphicsSimpleTextItem(name)
-            if st_obj.get("is_major_station", False):
-                text_item.setFont(font_major)
+            if st.get("is_track_entry", False):
+                # 発着番線占有表表示時:
+                # 最初の発着番線: 「<駅名> <発着番線名の省略表記>」
+                # 2つ目以降: 「<発着番線名の省略表記>」
+                # 「発着番線名の省略表記」は常にフォント太さを標準で表示する
+                track_short_name = st.get("track_short_name", "")
+                if st.get("is_first_track", False):
+                    # 駅名部分（主要駅なら太字）と発着番線名（常に標準）を分けて描画
+                    is_major = st_obj.get("is_major_station", False)
+                    # 2つのアイテムを作成、またはまとめて位置決め
+                    # 駅名アイテム
+                    st_name_item = QGraphicsSimpleTextItem(name + " ")
+                    st_name_item.setFont(font_major if is_major else font)
+                    st_name_item.setBrush(QBrush(QColor("#666666")))
+                    # 番線名アイテム (常に標準フォント)
+                    trk_item = QGraphicsSimpleTextItem(track_short_name)
+                    trk_item.setFont(font)
+                    trk_item.setBrush(QBrush(QColor("#666666")))
+
+                    br_st = st_name_item.boundingRect()
+                    br_trk = trk_item.boundingRect()
+                    total_w = br_st.width() + br_trk.width()
+
+                    tx_start = self.STATION_WIDTH - total_w - 5
+                    ty_st = y - (br_st.height() / 2.0)
+                    ty_trk = y - (br_trk.height() / 2.0)
+
+                    st_name_item.setPos(tx_start, ty_st)
+                    trk_item.setPos(tx_start + br_st.width(), ty_trk)
+
+                    self.addItem(st_name_item)
+                    self.addItem(trk_item)
+                    continue
+                else:
+                    text_item = QGraphicsSimpleTextItem(track_short_name)
+                    text_item.setFont(font) # 常に標準フォント
+                    text_item.setBrush(QBrush(QColor("#666666")))
             else:
-                text_item.setFont(font)
-            text_item.setBrush(QBrush(QColor("#666666")))
+                text_item = QGraphicsSimpleTextItem(name)
+                if st_obj.get("is_major_station", False):
+                    text_item.setFont(font_major)
+                else:
+                    text_item.setFont(font)
+                text_item.setBrush(QBrush(QColor("#666666")))
+
 
             br = text_item.boundingRect()
             tx = self.STATION_WIDTH - br.width() - 5
             ty = y - (br.height() / 2.0)
             text_item.setPos(tx, ty)
             self.addItem(text_item)
+
 
 
 # 運行ダイヤグラムのメインシーン（右下）
@@ -117,6 +157,7 @@ class DiagramScene(QGraphicsScene):
         self.filter_train_type_id = None
         self.scale_x = scale_x
         self.scale_y = scale_y
+        self.show_track_allocation_chart = False
         self.rendered_trains = []
         self.stations_data = []
         self.current_highlight_train = None
@@ -208,7 +249,7 @@ class DiagramScene(QGraphicsScene):
                 return None
             return float(total_diff)
 
-    def calculate_auto_scale_y(self, viewport_height: int, project=None, selected_target=None, route_id=None) -> float | None:
+    def calculate_auto_scale_y(self, viewport_height: int, project=None, selected_target=None, route_id=None, show_track_allocation_chart: bool = False) -> float | None:
         """
         ビューの表示高さ（viewport_height）にシーンの上下サイズ（max_y + 40）がちょうど収まるような scale_y の値を計算して返す。
         """
@@ -216,9 +257,59 @@ class DiagramScene(QGraphicsScene):
         if total_time is None or total_time <= 0:
             return None
 
-        # シーン全体の高さ: scene_h = max_y + 40 = 40 + total_time * scale_y + 40 = total_time * scale_y + 80
-        # viewport_height に収まるためには: total_time * scale_y + 80 = viewport_height
-        available_height = viewport_height - 80.0
+        # show_track_allocation_chartがTrueの場合、各対象駅の発着番線分の追加高さを計算
+        extra_track_height = 0.0
+        if show_track_allocation_chart:
+            proj = project if project is not None else self.project
+            target = selected_target if selected_target is not None else self.selected_target
+            r_id = route_id if route_id is not None else self.route_id
+            if proj:
+                if target == "route" and r_id and r_id in proj.routes:
+                    route = proj.routes[r_id]
+                    segments = route.get("line_segments", [])
+                    for seg in segments:
+                        line_id = seg.get("line_id")
+                        line = proj.lines.get(line_id)
+                        if not line:
+                            continue
+                        line_station_entries = line.get("station_entries", [])
+                        line_eids = [s.get("station_entry_id") for s in line_station_entries]
+                        station_map = {s.get("station_entry_id"): s for s in line_station_entries}
+                        start_eid = seg.get("start_station_entry", seg.get("start_station"))
+                        end_eid = seg.get("end_station_entry", seg.get("end_station"))
+                        if start_eid not in line_eids or end_eid not in line_eids:
+                            continue
+                        idx_start = line_eids.index(start_eid)
+                        idx_end = line_eids.index(end_eid)
+                        if idx_start <= idx_end:
+                            seg_eids = line_eids[idx_start:idx_end + 1]
+                        else:
+                            seg_eids = line_eids[idx_start:idx_end - 1:-1] if idx_end > 0 else line_eids[idx_start::-1]
+                        for eid in seg_eids:
+                            st_info = station_map.get(eid)
+                            if st_info:
+                                sid = st_info.get("station_id")
+                                st_obj = proj.stations.get(sid, {})
+                                if st_obj.get("show_track_allocation_chart", False):
+                                    tracks = st_obj.get("tracks_order") or st_obj.get("tracks") or []
+                                    num_tracks = len(tracks)
+                                    if num_tracks > 0:
+                                        extra_track_height += num_tracks * 10.0
+                elif target != "route" and target in proj.lines:
+                    line = proj.lines.get(target)
+                    if line:
+                        for s_entry in line.get("station_entries", []):
+                            sid = s_entry.get("station_id")
+                            st_obj = proj.stations.get(sid, {})
+                            if st_obj.get("show_track_allocation_chart", False):
+                                tracks = st_obj.get("tracks_order") or st_obj.get("tracks") or []
+                                num_tracks = len(tracks)
+                                if num_tracks > 0:
+                                    extra_track_height += num_tracks * 10.0
+
+        # シーン全体の高さ: scene_h = max_y + 40 = 40 + total_time * scale_y + extra_track_height + 40 = total_time * scale_y + extra_track_height + 80
+        # viewport_height に収まるためには: total_time * scale_y + extra_track_height + 80 = viewport_height
+        available_height = viewport_height - 80.0 - extra_track_height
         if available_height <= 0:
             return 1.0 / 6.0  # 画面が極端に小さい場合のフォールバック値
 
@@ -247,7 +338,8 @@ class DiagramScene(QGraphicsScene):
     def update_diagram(self, project, selected_target: str, route_id: str, diagram_id: str,
             filter_train_type_id: str = None,
             filter_train_type_ids: set = None,
-            filter_operation_ids: set = None):
+            filter_operation_ids: set = None,
+            show_track_allocation_chart: bool = False):
         """
         運行ダイヤグラムを更新描画する。
         selected_target: "route" または line_id (str)
@@ -256,6 +348,7 @@ class DiagramScene(QGraphicsScene):
         filter_train_type_id: 表示する列車種別のID。Noneの場合は全種別を表示（後方互換用）
         filter_train_type_ids: 表示する列車種別IDの集合。Noneの場合は全種別を表示
         filter_operation_ids: 表示する車両運用IDの集合。Noneの場合は全運用を表示
+        show_track_allocation_chart: 発着番線占有表を表示するか否か
         """
         self.project = project
         self.selected_target = selected_target
@@ -264,6 +357,7 @@ class DiagramScene(QGraphicsScene):
         self.filter_train_type_id = filter_train_type_id
         self.filter_train_type_ids = filter_train_type_ids
         self.filter_operation_ids = filter_operation_ids
+        self.show_track_allocation_chart = show_track_allocation_chart
         self.rendered_trains = []
         self.current_highlight_train = None
         self.current_highlight_query = ""
@@ -353,7 +447,14 @@ class DiagramScene(QGraphicsScene):
                 "station_name": str,
                 "y": float,
                 "segment_id": str (運行系統の場合) or None,
-                "rel_time": float
+                "rel_time": float,
+                "is_track_entry": bool,
+                "track_id": str or None,
+                "track_short_name": str or None,
+                "is_first_track": bool,
+                "station_y_top": float,
+                "station_y_bottom": float,
+                "tracks_count": int,
             }, ...
         ]
         """
@@ -367,6 +468,7 @@ class DiagramScene(QGraphicsScene):
 
             stations_data = []
             accumulated_time = 0.0
+            cumulative_extra_y = 0.0
 
             for seg_idx, seg in enumerate(segments):
                 line_id = seg.get("line_id")
@@ -414,19 +516,57 @@ class DiagramScene(QGraphicsScene):
                     rel_time = accumulated_time + diff
 
                     # 基準運転時分(秒)に対しscale_y (上部余白40px)
-                    y = 40.0 + (rel_time * self.scale_y)
+                    base_y = 40.0 + (rel_time * self.scale_y) + cumulative_extra_y
 
                     sid = st_info.get("station_id")
                     st_obj = self.project.stations.get(sid, {})
                     st_name = st_obj.get("station_name", sid)
 
+                    if self.show_track_allocation_chart and st_obj.get("show_track_allocation_chart", False):
+                        tracks_dict = st_obj.get("tracks", {})
+                        tracks_order = st_obj.get("tracks_order", [])
+                        if not tracks_order and isinstance(tracks_dict, dict):
+                            tracks_order = list(tracks_dict.keys())
+                        num_tracks = len(tracks_order)
+                        if num_tracks > 0:
+                            station_y_top = base_y
+                            station_y_bottom = base_y + num_tracks * 10.0
+                            for k, trk_id in enumerate(tracks_order):
+                                trk_info = tracks_dict.get(trk_id, {}) if isinstance(tracks_dict, dict) else {}
+                                trk_short = trk_info.get("track_short_name", trk_id)
+                                track_center_y = base_y + k * 10.0 + 5.0
+                                stations_data.append({
+                                    "station_entry_id": eid,
+                                    "station_id": sid,
+                                    "station_name": st_name,
+                                    "y": track_center_y,
+                                    "segment_id": seg_id,
+                                    "rel_time": rel_time,
+                                    "is_track_entry": True,
+                                    "track_id": trk_id,
+                                    "track_short_name": trk_short,
+                                    "is_first_track": (k == 0),
+                                    "station_y_top": station_y_top,
+                                    "station_y_bottom": station_y_bottom,
+                                    "tracks_count": num_tracks,
+                                })
+                            cumulative_extra_y += num_tracks * 10.0
+                            continue
+
                     stations_data.append({
                         "station_entry_id": eid,
                         "station_id": sid,
                         "station_name": st_name,
-                        "y": y,
+                        "y": base_y,
                         "segment_id": seg_id,
-                        "rel_time": rel_time
+                        "rel_time": rel_time,
+                        "is_track_entry": False,
+                        "track_id": None,
+                        "track_short_name": None,
+                        "is_first_track": True,
+                        "station_y_top": base_y,
+                        "station_y_bottom": base_y,
+                        "tracks_count": 0,
                     })
 
                 # 2つ目以降の部分区間に備えて累積時間を加算
@@ -447,6 +587,8 @@ class DiagramScene(QGraphicsScene):
                 return []
 
             stations_data = []
+            cumulative_extra_y = 0.0
+
             for s_entry in station_entries:
                 eid = s_entry.get("station_entry_id")
                 sid = s_entry.get("station_id")
@@ -455,17 +597,55 @@ class DiagramScene(QGraphicsScene):
                     return None
 
                 # 上部余白40px
-                y = 40.0 + (abs_time * self.scale_y)
+                base_y = 40.0 + (abs_time * self.scale_y) + cumulative_extra_y
                 st_obj = self.project.stations.get(sid, {})
                 st_name = st_obj.get("station_name", sid)
+
+                if self.show_track_allocation_chart and st_obj.get("show_track_allocation_chart", False):
+                    tracks_dict = st_obj.get("tracks", {})
+                    tracks_order = st_obj.get("tracks_order", [])
+                    if not tracks_order and isinstance(tracks_dict, dict):
+                        tracks_order = list(tracks_dict.keys())
+                    num_tracks = len(tracks_order)
+                    if num_tracks > 0:
+                        station_y_top = base_y
+                        station_y_bottom = base_y + num_tracks * 10.0
+                        for k, trk_id in enumerate(tracks_order):
+                            trk_info = tracks_dict.get(trk_id, {}) if isinstance(tracks_dict, dict) else {}
+                            trk_short = trk_info.get("track_short_name", trk_id)
+                            track_center_y = base_y + k * 10.0 + 5.0
+                            stations_data.append({
+                                "station_entry_id": eid,
+                                "station_id": sid,
+                                "station_name": st_name,
+                                "y": track_center_y,
+                                "segment_id": None,
+                                "abs_time": abs_time,
+                                "is_track_entry": True,
+                                "track_id": trk_id,
+                                "track_short_name": trk_short,
+                                "is_first_track": (k == 0),
+                                "station_y_top": station_y_top,
+                                "station_y_bottom": station_y_bottom,
+                                "tracks_count": num_tracks,
+                            })
+                        cumulative_extra_y += num_tracks * 10.0
+                        continue
 
                 stations_data.append({
                     "station_entry_id": eid,
                     "station_id": sid,
                     "station_name": st_name,
-                    "y": y,
+                    "y": base_y,
                     "segment_id": None,
-                    "abs_time": abs_time
+                    "abs_time": abs_time,
+                    "is_track_entry": False,
+                    "track_id": None,
+                    "track_short_name": None,
+                    "is_first_track": True,
+                    "station_y_top": base_y,
+                    "station_y_bottom": base_y,
+                    "tracks_count": 0,
                 })
 
             return stations_data
@@ -480,7 +660,11 @@ class DiagramScene(QGraphicsScene):
             st_obj = self.project.stations.get(sid, {}) if self.project else {}
             is_major = st_obj.get("is_major_station", False)
 
-            pen = pen_major if is_major else pen_normal
+            # 発着番線の線は細線、通常駅の主要駅は2px、それ以外は1px
+            if st.get("is_track_entry", False):
+                pen = pen_normal
+            else:
+                pen = pen_major if is_major else pen_normal
             line_item = self.addLine(0, y, line_end_x, y, pen)
             line_item.setZValue(0)
 
@@ -556,6 +740,416 @@ class DiagramScene(QGraphicsScene):
                     continue
                 self._draw_single_train_for_route(m_train, stations_data, route, tid, direction, self.route_id)
 
+    def _build_train_subpaths(self, stops, stations_data, segment_indices=None, target_segment_ids=None):
+        """
+        列車の経由駅情報(stops)とstations_dataから、描画すべきサブパス群を生成する。
+        発着番線占有表表示 (show_track_allocation_chart) が有効な駅の場合は、
+        領域境界・発着番線への垂直・水平線分、通過時の垂直線分を適切に挿入する。
+        戻り値:
+        - subpaths: 通常の列車ペンのサブパス (QPointF/tupleのリストのリスト)
+        - track_items_info: 発着番線占有表用の個別線分情報 (水平線: 2px, 垂直線: 0.5px)
+        - full_subpaths: 列車番号ラベルや進行方向判定用の連続座標リスト
+        - valid_stops_record: 各ポイントに対応する経由駅情報の記録
+        """
+        tt_id = None
+        # target_segment_ids が指定されている場合（路線表示）はフィルタ
+        # segment_indices が指定されている場合（運行系統表示）は連続性チェック
+
+        subpaths = []
+        track_horizontal_segments = [] # [(x1, x2, y)] 太さ2px
+        track_vertical_segments = []   # [(x, y1, y2)] 太さ0.5px
+        label_subpaths = []
+
+        current_subpath = []
+        current_label_subpath = []
+        current_stops = []
+        all_subpath_stops = []
+        prev_seg_id = None
+
+        # 連続する駅のY座標の推移を追跡するために、前回の駅位置(y)を保持
+        last_y = None
+
+        # stations_data 内の発着番線占有表表示の駅オカレンス一覧をあらかじめ抽出
+        track_chart_stations = []
+        seen_occ = set()
+        for st in stations_data:
+            if st.get("is_track_entry"):
+                occ_key = (st.get("segment_id"), st.get("station_entry_id"), st.get("station_y_top"))
+                if occ_key not in seen_occ:
+                    seen_occ.add(occ_key)
+                    track_chart_stations.append(st)
+
+        for stop_idx, stop in enumerate(stops):
+
+            seg_id = stop.get("segment_id")
+            eid = stop.get("station_entry_id")
+            arr_time_str = stop.get("arrival_time")
+            dep_time_str = stop.get("departure_time")
+            stop_type = stop.get("stop_type", 1)
+            assigned_track_id = stop.get("track_id")
+
+            arr_sec = self._time_to_seconds(arr_time_str)
+            dep_sec = self._time_to_seconds(dep_time_str)
+
+            # 路線表示で対象部分区間外、または有効な発着時刻がどちらもない場合
+            if target_segment_ids is not None and seg_id not in target_segment_ids:
+                if len(current_subpath) >= 2:
+                    subpaths.append(current_subpath)
+                if len(current_label_subpath) >= 2:
+                    label_subpaths.append(current_label_subpath)
+                if current_stops:
+                    all_subpath_stops.append(current_stops)
+                current_subpath = []
+                current_label_subpath = []
+                current_stops = []
+                prev_seg_id = None
+                last_y = None
+                continue
+
+            if arr_sec is None and dep_sec is None:
+                if len(current_subpath) >= 2:
+                    subpaths.append(current_subpath)
+                if len(current_label_subpath) >= 2:
+                    label_subpaths.append(current_label_subpath)
+                if current_stops:
+                    all_subpath_stops.append(current_stops)
+                current_subpath = []
+                current_label_subpath = []
+                current_stops = []
+                prev_seg_id = None
+                last_y = None
+                continue
+
+            # 運行系統表示で部分区間が飛んでいるかチェック
+            if segment_indices is not None and prev_seg_id is not None and seg_id != prev_seg_id:
+                prev_idx = segment_indices.get(prev_seg_id)
+                curr_idx = segment_indices.get(seg_id)
+                if prev_idx is None or curr_idx is None or abs(curr_idx - prev_idx) != 1:
+                    if len(current_subpath) >= 2:
+                        subpaths.append(current_subpath)
+                    if len(current_label_subpath) >= 2:
+                        label_subpaths.append(current_label_subpath)
+                    if current_stops:
+                        all_subpath_stops.append(current_stops)
+                    current_subpath = []
+                    current_label_subpath = []
+                    current_stops = []
+                    last_y = None
+
+            # stations_data 内で一致する駅を検索
+            # 発着番線占有表表示の駅は同一駅が複数行(trackごと)に並んでいる
+            # また同一駅が複数回登場する場合もあるため、マッチするエントリ群を抽出
+            matching_entries = []
+            for st in stations_data:
+                # 運行系統表示では segment_id と station_entry_id
+                # 路線表示では station_entry_id のみ (segment_id は None)
+                if target_segment_ids is not None:
+                    if st.get("station_entry_id") == eid:
+                        matching_entries.append(st)
+                else:
+                    if st.get("segment_id") == seg_id and st.get("station_entry_id") == eid:
+                        matching_entries.append(st)
+
+            if not matching_entries:
+                if len(current_subpath) >= 2:
+                    subpaths.append(current_subpath)
+                if len(current_label_subpath) >= 2:
+                    label_subpaths.append(current_label_subpath)
+                if current_stops:
+                    all_subpath_stops.append(current_stops)
+                current_subpath = []
+                current_label_subpath = []
+                current_stops = []
+                prev_seg_id = None
+                last_y = None
+                continue
+
+            # 同一駅が複数回描画されている場合の隣接オカレンス判定
+            # last_y があればそれに最も近いオカレンスを選択
+            first_entry = matching_entries[0]
+            if len(matching_entries) > 1 and not first_entry.get("is_track_entry", False):
+                # 通常駅で複数回登場
+                if last_y is not None:
+                    first_entry = min(matching_entries, key=lambda e: abs(e["y"] - last_y))
+            elif first_entry.get("is_track_entry", False):
+                # 発着番線占有駅の場合、オカレンスごとに tracks_count 個のエントリが連続している
+                tracks_count = first_entry.get("tracks_count", len(matching_entries))
+                if len(matching_entries) > tracks_count and last_y is not None:
+                    # 複数オカレンスから last_y に最も近いオカレンスを選択
+                    occurrences = [matching_entries[k:k+tracks_count] for k in range(0, len(matching_entries), tracks_count)]
+                    best_occ = min(occurrences, key=lambda occ: abs(occ[0]["station_y_top"] - last_y))
+                    matching_entries = best_occ
+                    first_entry = matching_entries[0]
+
+            is_track_chart = first_entry.get("is_track_entry", False)
+
+            if not is_track_chart:
+                # --- 通常の駅描画 ---
+                y = first_entry["y"]
+                pt_time_sec = arr_sec if arr_sec is not None else dep_sec
+                pt_x = (pt_time_sec / 60.0) * self.scale_x
+
+                # 前の駅(last_pt)から現在の駅(pt_x, y)へのパスが、
+                # 途中の発着番線占有駅を跨いでいるかチェック
+                if current_subpath:
+                    last_pt = current_subpath[-1] # (x_prev, y_prev)
+                    # last_pt と (pt_x, y) の間に位置する発着番線占有駅を検索
+                    intervening_charts = []
+                    # 進行方向 (下向きか上向きか)
+                    if y > last_pt[1]:
+                        # 下向き (y_prev -> y)
+                        for occ in track_chart_stations:
+                            # occ["station_y_top"] と occ["station_y_bottom"] が (last_pt[1], y) に含まれているか
+                            if last_pt[1] <= occ["station_y_top"] and occ["station_y_bottom"] <= y:
+                                intervening_charts.append((occ["station_y_top"], occ))
+                        intervening_charts.sort(key=lambda item: item[0])
+                    elif y < last_pt[1]:
+                        # 上向き (y_prev -> y)
+                        for occ in track_chart_stations:
+                            if y <= occ["station_y_top"] and occ["station_y_bottom"] <= last_pt[1]:
+                                intervening_charts.append((occ["station_y_bottom"], occ))
+                        intervening_charts.sort(key=lambda item: item[0], reverse=True)
+
+                    for _, occ in intervening_charts:
+                        st_top = occ["station_y_top"]
+                        st_bottom = occ["station_y_bottom"]
+                        if y > last_pt[1]:
+                            # 下向き進入: topから進入してbottomから出る
+                            y_in = st_top
+                            y_out = st_bottom
+                        else:
+                            # 上向き進入: bottomから進入してtopから出る
+                            y_in = st_bottom
+                            y_out = st_top
+
+                        # 線形補間により通過時刻(X座標)を計算
+                        # 直線: last_pt -> (pt_x, y)
+                        dy_total = y - last_pt[1]
+                        if dy_total != 0:
+                            # y_in での時刻 (垂直線なので y_in の時刻で結ぶ)
+                            frac_in = (y_in - last_pt[1]) / dy_total
+                            x_cross = last_pt[0] + frac_in * (pt_x - last_pt[0])
+                        else:
+                            x_cross = last_pt[0]
+
+                        # 前のパスを y_in で区切る
+                        current_subpath.append((x_cross, y_in))
+                        subpaths.append(current_subpath)
+
+                        # 通過部分の垂直線分 (太さ0.5px)
+                        track_vertical_segments.append((x_cross, y_in, y_out))
+                        current_label_subpath.append((x_cross, (st_top + st_bottom) / 2.0))
+
+                        # 次のパスを y_out から再開
+                        current_subpath = [(x_cross, y_out)]
+                        last_pt = current_subpath[-1]
+
+                # 現在の駅の点を current_subpath に追加
+                if arr_sec is not None and dep_sec is not None:
+                    x_arr = (arr_sec / 60.0) * self.scale_x
+                    x_dep = (dep_sec / 60.0) * self.scale_x
+                    current_subpath.append((x_arr, y))
+                    current_label_subpath.append((x_arr, y))
+                    if x_arr != x_dep:
+                        current_subpath.append((x_dep, y))
+                        current_label_subpath.append((x_dep, y))
+                elif arr_sec is not None:
+                    x_arr = (arr_sec / 60.0) * self.scale_x
+                    current_subpath.append((x_arr, y))
+                    current_label_subpath.append((x_arr, y))
+                elif dep_sec is not None:
+                    x_dep = (dep_sec / 60.0) * self.scale_x
+                    current_subpath.append((x_dep, y))
+                    current_label_subpath.append((x_dep, y))
+
+                last_y = y
+
+            else:
+                # --- 発着番線占有表の駅描画 ---
+                # 駅の領域境界:
+                station_top = first_entry["station_y_top"]
+                station_bottom = first_entry["station_y_bottom"]
+
+                # 進行方向を判定
+                entering_from_top = True
+                if last_y is not None:
+                    entering_from_top = (last_y <= station_top)
+                else:
+                    # 次の駅を探して方向を推測
+                    next_y = None
+                    for next_s in stops[stop_idx + 1:]:
+                        n_eid = next_s.get("station_entry_id")
+                        for st in stations_data:
+                            if st.get("station_entry_id") == n_eid:
+                                next_y = st.get("station_y_top") if st.get("is_track_entry") else st.get("y")
+                                break
+                        if next_y is not None:
+                            break
+                    if next_y is not None:
+                        entering_from_top = (next_y >= station_bottom)
+                    else:
+                        entering_from_top = True
+
+                # 出る方向(exiting direction): 次の駅の位置から判定
+                exiting_towards_bottom = True
+                next_y = None
+                for next_s in stops[stop_idx + 1:]:
+                    n_eid = next_s.get("station_entry_id")
+                    for st in stations_data:
+                        if st.get("station_entry_id") == n_eid:
+                            next_y = st.get("station_y_top") if st.get("is_track_entry") else st.get("y")
+                            break
+                    if next_y is not None:
+                        break
+                if next_y is not None:
+                    exiting_towards_bottom = (next_y >= station_bottom)
+                else:
+                    exiting_towards_bottom = entering_from_top
+
+                # 当該駅の発着番線 Y 座標
+                track_y = None
+                if assigned_track_id:
+                    for me in matching_entries:
+                        if me.get("track_id") == assigned_track_id:
+                            track_y = me["y"]
+                            break
+                if track_y is None:
+                    track_y = matching_entries[0]["y"]
+
+                # 到着・出発の時刻とX座標
+                t_arr_sec = arr_sec if arr_sec is not None else dep_sec
+                t_dep_sec = dep_sec if dep_sec is not None else arr_sec
+                x_arr = (t_arr_sec / 60.0) * self.scale_x
+                x_dep = (t_dep_sec / 60.0) * self.scale_x
+
+                is_passing = (stop_type == 0)
+
+                # 外部パス（駅境界まで）の処理
+                entry_boundary_y = station_top if entering_from_top else station_bottom
+                exit_boundary_y = station_bottom if exiting_towards_bottom else station_top
+
+                # 前の駅(last_pt)から entry_boundary_y までの間に
+                # 別の発着番線占有駅が跨がれているかチェック
+                if current_subpath:
+                    last_pt = current_subpath[-1]
+                    intervening_charts = []
+                    if entry_boundary_y > last_pt[1]:
+                        for occ in track_chart_stations:
+                            # 自身 (first_entry) は除外
+                            if occ["station_entry_id"] == eid and occ.get("segment_id") == seg_id:
+                                continue
+                            if last_pt[1] <= occ["station_y_top"] and occ["station_y_bottom"] <= entry_boundary_y:
+                                intervening_charts.append((occ["station_y_top"], occ))
+                        intervening_charts.sort(key=lambda item: item[0])
+                    elif entry_boundary_y < last_pt[1]:
+                        for occ in track_chart_stations:
+                            if occ["station_entry_id"] == eid and occ.get("segment_id") == seg_id:
+                                continue
+                            if entry_boundary_y <= occ["station_y_top"] and occ["station_y_bottom"] <= last_pt[1]:
+                                intervening_charts.append((occ["station_y_bottom"], occ))
+                        intervening_charts.sort(key=lambda item: item[0], reverse=True)
+
+                    for _, occ in intervening_charts:
+                        st_top = occ["station_y_top"]
+                        st_bottom = occ["station_y_bottom"]
+                        if entry_boundary_y > last_pt[1]:
+                            y_in = st_top
+                            y_out = st_bottom
+                        else:
+                            y_in = st_bottom
+                            y_out = st_top
+
+                        dy_total = entry_boundary_y - last_pt[1]
+                        if dy_total != 0:
+                            frac_in = (y_in - last_pt[1]) / dy_total
+                            x_cross = last_pt[0] + frac_in * (x_arr - last_pt[0])
+                        else:
+                            x_cross = last_pt[0]
+
+                        current_subpath.append((x_cross, y_in))
+                        subpaths.append(current_subpath)
+
+                        track_vertical_segments.append((x_cross, y_in, y_out))
+                        current_label_subpath.append((x_cross, (st_top + st_bottom) / 2.0))
+
+                        current_subpath = [(x_cross, y_out)]
+                        last_pt = current_subpath[-1]
+
+                # もし始発駅で前にパスがない場合は entry_boundary に外部パスは不要
+                # 前にパスがある場合: current_subpath に entry_boundary 点を追加してサブパスを区切る
+                if current_subpath:
+                    current_subpath.append((x_arr, entry_boundary_y))
+                    subpaths.append(current_subpath)
+                    current_subpath = []
+
+                if is_passing:
+                    # 通過列車:
+                    # 当該駅の部分(発着番線用の領域の箇所)は垂直線で結ぶ
+                    # 垂直線: (x_arr, entry_boundary_y) から (x_arr, exit_boundary_y)
+                    # 太さ0.5px
+                    track_vertical_segments.append((x_arr, entry_boundary_y, exit_boundary_y))
+                    current_label_subpath.append((x_arr, (station_top + station_bottom) / 2.0))
+                else:
+                    # 停車列車:
+                    # 発着番線に水平線分 (太さ2px実線)
+                    track_horizontal_segments.append((x_arr, x_dep, track_y))
+                    current_label_subpath.append((x_arr, track_y))
+                    if x_arr != x_dep:
+                        current_label_subpath.append((x_dep, track_y))
+
+                    # 垂直線 (太さ0.5px実線):
+                    # 前のパスと結ぶ: 始発駅でなく前がある場合、または到着がある場合
+                    if last_y is not None:
+                        track_vertical_segments.append((x_arr, entry_boundary_y, track_y))
+
+                    # 後のパスと結ぶ: 次の駅がある場合
+                    if next_y is not None:
+                        track_vertical_segments.append((x_dep, track_y, exit_boundary_y))
+
+                # 次の駅に向けて current_subpath を exit_boundary から開始
+                if next_y is not None:
+                    exit_x = x_arr if is_passing else x_dep
+                    current_subpath = [(exit_x, exit_boundary_y)]
+
+                last_y = exit_boundary_y
+
+            current_stops.append(stop)
+            prev_seg_id = seg_id
+
+        if len(current_subpath) >= 2:
+            subpaths.append(current_subpath)
+        if len(current_label_subpath) >= 2:
+            label_subpaths.append(current_label_subpath)
+        if current_stops:
+            all_subpath_stops.append(current_stops)
+
+
+        # 全発着番線占有駅について、同一駅の全オカレンスに水平線分を描画する仕様:
+        # 「show_track_allocation_chartがTrueの同一駅が運行ダイヤグラム上で複数回描画されるとき、
+        # 発着番線部分の水平線はその全てに描画されるが、この水平線と列車のパスを結ぶ垂直線は、
+        # 列車のパスと駅の領域が接している部分にしか描画しない。」
+        # 停車列車で track_horizontal_segments に追加された各水平線について、
+        # 同じ駅(station_id)かつ同じtrack_idの他のオカレンスがあれば、そこにも水平線分を追加する
+        extra_horizontal_segments = []
+        for (x1, x2, ty) in track_horizontal_segments:
+            # ty に該当する station_data エントリを見つける
+            source_entry = None
+            for st in stations_data:
+                if st.get("is_track_entry") and abs(st["y"] - ty) < 0.1:
+                    source_entry = st
+                    break
+            if source_entry:
+                sid = source_entry["station_id"]
+                trkid = source_entry.get("track_id")
+                # stations_data 内の他のオカレンスで同一 sid, trkid を探す
+                for other_st in stations_data:
+                    if other_st is not source_entry and other_st.get("station_id") == sid and other_st.get("track_id") == trkid:
+                        extra_horizontal_segments.append((x1, x2, other_st["y"]))
+
+        track_horizontal_segments.extend(extra_horizontal_segments)
+
+        return subpaths, track_horizontal_segments, track_vertical_segments, label_subpaths, all_subpath_stops
+
     def _draw_single_train_for_route(self, train, stations_data, route, train_id: str, direction: str, route_id: str):
         stops = train.get("stops", [])
         if not stops:
@@ -564,84 +1158,51 @@ class DiagramScene(QGraphicsScene):
         tt_id = train.get("train_type_id")
         pen = self._create_train_pen(tt_id)
 
-        # 運行系統の部分区間の順序とインデックスのマップを作成
         segments = route.get("line_segments", [])
         segment_indices = {seg.get("segment_id"): idx for idx, seg in enumerate(segments)}
 
-        # 連続する有効な区間ごとにパスを分割
-        subpaths = []
-        current_subpath = []
-        prev_seg_id = None
-
-        for stop in stops:
-            seg_id = stop.get("segment_id")
-            eid = stop.get("station_entry_id")
-            arr_time_str = stop.get("arrival_time")
-            dep_time_str = stop.get("departure_time")
-
-            arr_sec = self._time_to_seconds(arr_time_str)
-            dep_sec = self._time_to_seconds(dep_time_str)
-
-            # 有効な発着時刻がどちらもない場合は区間が途切れる
-            if arr_sec is None and dep_sec is None:
-                if len(current_subpath) >= 2:
-                    subpaths.append(current_subpath)
-                current_subpath = []
-                prev_seg_id = None
-                continue
-
-            # 部分区間が飛んでいるか（連続していないか）チェック
-            if prev_seg_id is not None and seg_id != prev_seg_id:
-                prev_idx = segment_indices.get(prev_seg_id)
-                curr_idx = segment_indices.get(seg_id)
-                if prev_idx is None or curr_idx is None or abs(curr_idx - prev_idx) != 1:
-                    if len(current_subpath) >= 2:
-                        subpaths.append(current_subpath)
-                    current_subpath = []
-
-            # stations_data 内で一致する駅を検索
-            target_entry = None
-            for idx in range(len(stations_data)):
-                st = stations_data[idx]
-                if st.get("segment_id") == seg_id and st.get("station_entry_id") == eid:
-                    target_entry = st
-                    break
-
-            if not target_entry:
-                if len(current_subpath) >= 2:
-                    subpaths.append(current_subpath)
-                current_subpath = []
-                prev_seg_id = None
-                continue
-
-            y = target_entry["y"]
-
-            if arr_sec is not None and dep_sec is not None:
-                x_arr = (arr_sec / 60.0) * self.scale_x
-                x_dep = (dep_sec / 60.0) * self.scale_x
-                current_subpath.append((x_arr, y))
-                if x_arr != x_dep:
-                    current_subpath.append((x_dep, y))
-            elif arr_sec is not None:
-                x_arr = (arr_sec / 60.0) * self.scale_x
-                current_subpath.append((x_arr, y))
-            elif dep_sec is not None:
-                x_dep = (dep_sec / 60.0) * self.scale_x
-                current_subpath.append((x_dep, y))
-
-            prev_seg_id = seg_id
-
-        if len(current_subpath) >= 2:
-            subpaths.append(current_subpath)
+        subpaths, track_h_segs, track_v_segs, label_subpaths, all_subpath_stops = self._build_train_subpaths(
+            stops, stations_data, segment_indices=segment_indices, target_segment_ids=None
+        )
 
         path_items = []
+        # 通常のサブパスを描画
         for sp in subpaths:
             p_item = self._draw_path(sp, pen)
             if p_item:
                 path_items.append(p_item)
 
-        # 列車番号ラベルの描画
-        text_item = self._render_train_number_label(train, subpaths)
+        # 発着番線占有表用の線分を描画
+        tt = self.project.train_types.get(tt_id) if (self.project and tt_id) else None
+        main_color = tt.get("main_color", "#333333") if tt else "#333333"
+
+        # 水平線分: 2px実線 (列車の種別色)
+        pen_horizontal = QPen(QColor(main_color), 2.0, Qt.SolidLine)
+        for (x1, x2, y) in track_h_segs:
+            p = QPainterPath()
+            p.moveTo(x1, y)
+            p.lineTo(x2, y)
+            p_item = QGraphicsPathItem(p)
+            p_item.setPen(pen_horizontal)
+            p_item.setZValue(2)
+            self.addItem(p_item)
+            path_items.append(p_item)
+
+        # 垂直線分: 0.5px実線 (列車の種別色)
+        pen_vertical = QPen(QColor(main_color), 0.5, Qt.SolidLine)
+        for (x, y1, y2) in track_v_segs:
+            p = QPainterPath()
+            p.moveTo(x, y1)
+            p.lineTo(x, y2)
+            p_item = QGraphicsPathItem(p)
+            p_item.setPen(pen_vertical)
+            p_item.setZValue(2)
+            self.addItem(p_item)
+            path_items.append(p_item)
+
+        # 列車番号ラベルの描画 (ラベル用座標を使用)
+        effective_subpaths = label_subpaths if label_subpaths else subpaths
+        text_item = self._render_train_number_label(train, effective_subpaths)
 
         # 始発時刻（表示されている最初の有効な発着時刻）を取得
         sort_key = None
@@ -657,10 +1218,7 @@ class DiagramScene(QGraphicsScene):
         if sort_key is None:
             sort_key = 0
 
-        p0 = subpaths[0][0] if subpaths and subpaths[0] else (0, 0)
-        tt_id = train.get("train_type_id")
-        tt = self.project.train_types.get(tt_id) if (self.project and tt_id) else None
-        main_color = tt.get("main_color", "#333333") if tt else "#333333"
+        p0 = effective_subpaths[0][0] if effective_subpaths and effective_subpaths[0] else (0, 0)
 
         self.rendered_trains.append({
             "train_id": train_id,
@@ -676,10 +1234,6 @@ class DiagramScene(QGraphicsScene):
 
     def _render_trains_for_line(self, stations_data):
         target_line_id = self.selected_target
-        # プロジェクトデータに存在する全運行系統を走査して、
-        # 選択されている路線に属する部分区間を経由する列車を抽出し、
-        # 各列車について選択されている路線に属する部分区間の発着時刻のみをプロット
-        station_y_map = {st["station_entry_id"]: st["y"] for st in stations_data if st.get("station_entry_id")}
 
         for rid in self.project.routes_order:
             route = self.project.routes.get(rid)
@@ -713,47 +1267,12 @@ class DiagramScene(QGraphicsScene):
                         continue
 
                     stops = m_train.get("stops", [])
-                    subpaths = []
-                    current_subpath = []
-
                     tt_id = m_train.get("train_type_id")
                     pen = self._create_train_pen(tt_id)
 
-                    for stop in stops:
-                        seg_id = stop.get("segment_id")
-                        arr_sec = self._time_to_seconds(stop.get("arrival_time"))
-                        dep_sec = self._time_to_seconds(stop.get("departure_time"))
-
-                        if seg_id not in target_segment_ids or (arr_sec is None and dep_sec is None):
-                            if len(current_subpath) >= 2:
-                                subpaths.append(current_subpath)
-                            current_subpath = []
-                            continue
-
-                        eid = stop.get("station_entry_id")
-                        if eid not in station_y_map:
-                            if len(current_subpath) >= 2:
-                                subpaths.append(current_subpath)
-                            current_subpath = []
-                            continue
-
-                        y = station_y_map[eid]
-
-                        if arr_sec is not None and dep_sec is not None:
-                            x_arr = (arr_sec / 60.0) * self.scale_x
-                            x_dep = (dep_sec / 60.0) * self.scale_x
-                            current_subpath.append((x_arr, y))
-                            if x_arr != x_dep:
-                                current_subpath.append((x_dep, y))
-                        elif arr_sec is not None:
-                            x_arr = (arr_sec / 60.0) * self.scale_x
-                            current_subpath.append((x_arr, y))
-                        elif dep_sec is not None:
-                            x_dep = (dep_sec / 60.0) * self.scale_x
-                            current_subpath.append((x_dep, y))
-
-                    if len(current_subpath) >= 2:
-                        subpaths.append(current_subpath)
+                    subpaths, track_h_segs, track_v_segs, label_subpaths, all_subpath_stops = self._build_train_subpaths(
+                        stops, stations_data, segment_indices=None, target_segment_ids=target_segment_ids
+                    )
 
                     path_items = []
                     for sp in subpaths:
@@ -761,8 +1280,36 @@ class DiagramScene(QGraphicsScene):
                         if p_item:
                             path_items.append(p_item)
 
+                    tt = self.project.train_types.get(tt_id) if (self.project and tt_id) else None
+                    main_color = tt.get("main_color", "#333333") if tt else "#333333"
+
+                    # 水平線分: 2px実線 (列車の種別色)
+                    pen_horizontal = QPen(QColor(main_color), 2.0, Qt.SolidLine)
+                    for (x1, x2, y) in track_h_segs:
+                        p = QPainterPath()
+                        p.moveTo(x1, y)
+                        p.lineTo(x2, y)
+                        p_item = QGraphicsPathItem(p)
+                        p_item.setPen(pen_horizontal)
+                        p_item.setZValue(2)
+                        self.addItem(p_item)
+                        path_items.append(p_item)
+
+                    # 垂直線分: 0.5px実線 (列車の種別色)
+                    pen_vertical = QPen(QColor(main_color), 0.5, Qt.SolidLine)
+                    for (x, y1, y2) in track_v_segs:
+                        p = QPainterPath()
+                        p.moveTo(x, y1)
+                        p.lineTo(x, y2)
+                        p_item = QGraphicsPathItem(p)
+                        p_item.setPen(pen_vertical)
+                        p_item.setZValue(2)
+                        self.addItem(p_item)
+                        path_items.append(p_item)
+
                     # 列車番号ラベルの描画
-                    text_item = self._render_train_number_label(m_train, subpaths)
+                    effective_subpaths = label_subpaths if label_subpaths else subpaths
+                    text_item = self._render_train_number_label(m_train, effective_subpaths)
 
                     # 始発時刻（表示されている最初の有効な発着時刻）を取得
                     sort_key = None
@@ -778,10 +1325,7 @@ class DiagramScene(QGraphicsScene):
                     if sort_key is None:
                         sort_key = 0
 
-                    p0 = subpaths[0][0] if subpaths and subpaths[0] else (0, 0)
-                    tt_id = m_train.get("train_type_id")
-                    tt = self.project.train_types.get(tt_id) if (self.project and tt_id) else None
-                    main_color = tt.get("main_color", "#333333") if tt else "#333333"
+                    p0 = effective_subpaths[0][0] if effective_subpaths and effective_subpaths[0] else (0, 0)
 
                     self.rendered_trains.append({
                         "train_id": tid,
@@ -794,6 +1338,7 @@ class DiagramScene(QGraphicsScene):
                         "main_color": main_color,
                         "p0": p0,
                     })
+
 
     def _render_train_number_label(self, train, subpaths):
         train_number = train.get("train_number", "")
@@ -1172,7 +1717,7 @@ class DiagramScene(QGraphicsScene):
                         continue
                     drawn_connections.add(conn_key)
 
-                    self._draw_operation_connecting_path(info_prev, info_next, item_next["m_train"])
+                    self._draw_operation_connecting_path(info_prev, info_next, item_next["m_train"], op_info=op_info)
 
         # 4. 始発・終着運用番号ラベルの描画
         self._render_operation_start_end_labels(first_train_ops, last_train_ops)
@@ -1212,87 +1757,19 @@ class DiagramScene(QGraphicsScene):
             segments = route.get("line_segments", [])
             segment_indices = {seg.get("segment_id"): idx for idx, seg in enumerate(segments)}
 
-            # 各ストップの座標を計算し、描画処理と完全に一致するサブパスを生成
-            subpaths = []
-            subpath_stops = []
-            current_subpath = []
-            current_stops = []
-            prev_seg_id = None
+            subpaths, track_h_segs, track_v_segs, label_subpaths, all_subpath_stops = self._build_train_subpaths(
+                stops, stations_data, segment_indices=segment_indices, target_segment_ids=None
+            )
 
-            for stop in stops:
-                seg_id = stop.get("segment_id")
-                eid = stop.get("station_entry_id")
-                arr_time_str = stop.get("arrival_time")
-                dep_time_str = stop.get("departure_time")
-
-                arr_sec = self._time_to_seconds(arr_time_str)
-                dep_sec = self._time_to_seconds(dep_time_str)
-
-                # 有効な発着時刻がどちらもない場合は区間が途切れる
-                if arr_sec is None and dep_sec is None:
-                    if len(current_subpath) >= 2:
-                        subpaths.append(current_subpath)
-                        subpath_stops.append(current_stops)
-                    current_subpath = []
-                    current_stops = []
-                    prev_seg_id = None
-                    continue
-
-                # 部分区間が飛んでいるか（連続していないか）チェック
-                if prev_seg_id is not None and seg_id != prev_seg_id:
-                    prev_idx = segment_indices.get(prev_seg_id)
-                    curr_idx = segment_indices.get(seg_id)
-                    if prev_idx is None or curr_idx is None or abs(curr_idx - prev_idx) != 1:
-                        if len(current_subpath) >= 2:
-                            subpaths.append(current_subpath)
-                            subpath_stops.append(current_stops)
-                        current_subpath = []
-                        current_stops = []
-
-                # stations_data 内で一致する駅を検索
-                target_entry = None
-                for idx in range(len(stations_data)):
-                    st = stations_data[idx]
-                    if st.get("segment_id") == seg_id and st.get("station_entry_id") == eid:
-                        target_entry = st
-                        break
-
-                if not target_entry:
-                    if len(current_subpath) >= 2:
-                        subpaths.append(current_subpath)
-                        subpath_stops.append(current_stops)
-                    current_subpath = []
-                    current_stops = []
-                    prev_seg_id = None
-                    continue
-
-                y = target_entry["y"]
-
-                if arr_sec is not None and dep_sec is not None:
-                    x_arr = (arr_sec / 60.0) * self.scale_x
-                    x_dep = (dep_sec / 60.0) * self.scale_x
-                    current_subpath.append((x_arr, y))
-                    if x_arr != x_dep:
-                        current_subpath.append((x_dep, y))
-                elif arr_sec is not None:
-                    x_arr = (arr_sec / 60.0) * self.scale_x
-                    current_subpath.append((x_arr, y))
-                elif dep_sec is not None:
-                    x_dep = (dep_sec / 60.0) * self.scale_x
-                    current_subpath.append((x_dep, y))
-
-                current_stops.append(stop)
-                prev_seg_id = seg_id
-
-            if len(current_subpath) >= 2:
-                subpaths.append(current_subpath)
-                subpath_stops.append(current_stops)
-
-            if not subpaths:
+            if not subpaths and not track_h_segs and not label_subpaths:
                 return None
 
-            first_sp = subpaths[0]
-            last_sp = subpaths[-1]
+            effective_subpaths = label_subpaths if label_subpaths else subpaths
+            if not effective_subpaths:
+                return None
+
+            first_sp = effective_subpaths[0]
+            last_sp = effective_subpaths[-1]
             origin_pt = first_sp[0]
             term_pt = last_sp[-1]
 
@@ -1314,14 +1791,16 @@ class DiagramScene(QGraphicsScene):
             if term_dy == 0.0 and len(last_sp) > 1:
                 term_dy = term_pt[1] - last_sp[-2][1]
 
-            first_displayed_stop = subpath_stops[0][0]
-            last_displayed_stop = subpath_stops[-1][-1]
+            first_displayed_stop = all_subpath_stops[0][0] if all_subpath_stops and all_subpath_stops[0] else None
+            last_displayed_stop = all_subpath_stops[-1][-1] if all_subpath_stops and all_subpath_stops[-1] else None
 
             origin_displayed = (
+                first_displayed_stop is not None and
                 first_displayed_stop.get("segment_id") == first_stop.get("segment_id") and
                 first_displayed_stop.get("station_entry_id") == first_stop.get("station_entry_id")
             )
             terminal_displayed = (
+                last_displayed_stop is not None and
                 last_displayed_stop.get("segment_id") == last_stop.get("segment_id") and
                 last_displayed_stop.get("station_entry_id") == last_stop.get("station_entry_id")
             )
@@ -1333,6 +1812,10 @@ class DiagramScene(QGraphicsScene):
                 "term_dy": term_dy,
                 "origin_displayed": origin_displayed,
                 "terminal_displayed": terminal_displayed,
+                "first_stop": first_stop,
+                "last_stop": last_stop,
+                "first_displayed_stop": first_displayed_stop,
+                "last_displayed_stop": last_displayed_stop,
             }
 
         else:
@@ -1347,61 +1830,19 @@ class DiagramScene(QGraphicsScene):
             if not target_segment_ids:
                 return None
 
-            station_y_map = {st["station_entry_id"]: st["y"] for st in stations_data if st.get("station_entry_id")}
+            subpaths, track_h_segs, track_v_segs, label_subpaths, all_subpath_stops = self._build_train_subpaths(
+                stops, stations_data, segment_indices=None, target_segment_ids=target_segment_ids
+            )
 
-            subpaths = []
-            subpath_stops = []
-            current_subpath = []
-            current_stops = []
-
-            for stop in stops:
-                seg_id = stop.get("segment_id")
-                arr_sec = self._time_to_seconds(stop.get("arrival_time"))
-                dep_sec = self._time_to_seconds(stop.get("departure_time"))
-
-                if seg_id not in target_segment_ids or (arr_sec is None and dep_sec is None):
-                    if len(current_subpath) >= 2:
-                        subpaths.append(current_subpath)
-                        subpath_stops.append(current_stops)
-                    current_subpath = []
-                    current_stops = []
-                    continue
-
-                eid = stop.get("station_entry_id")
-                if eid not in station_y_map:
-                    if len(current_subpath) >= 2:
-                        subpaths.append(current_subpath)
-                        subpath_stops.append(current_stops)
-                    current_subpath = []
-                    current_stops = []
-                    continue
-
-                y = station_y_map[eid]
-
-                if arr_sec is not None and dep_sec is not None:
-                    x_arr = (arr_sec / 60.0) * self.scale_x
-                    x_dep = (dep_sec / 60.0) * self.scale_x
-                    current_subpath.append((x_arr, y))
-                    if x_arr != x_dep:
-                        current_subpath.append((x_dep, y))
-                elif arr_sec is not None:
-                    x_arr = (arr_sec / 60.0) * self.scale_x
-                    current_subpath.append((x_arr, y))
-                elif dep_sec is not None:
-                    x_dep = (dep_sec / 60.0) * self.scale_x
-                    current_subpath.append((x_dep, y))
-
-                current_stops.append(stop)
-
-            if len(current_subpath) >= 2:
-                subpaths.append(current_subpath)
-                subpath_stops.append(current_stops)
-
-            if not subpaths:
+            if not subpaths and not track_h_segs and not label_subpaths:
                 return None
 
-            first_sp = subpaths[0]
-            last_sp = subpaths[-1]
+            effective_subpaths = label_subpaths if label_subpaths else subpaths
+            if not effective_subpaths:
+                return None
+
+            first_sp = effective_subpaths[0]
+            last_sp = effective_subpaths[-1]
             origin_pt = first_sp[0]
             term_pt = last_sp[-1]
 
@@ -1423,14 +1864,16 @@ class DiagramScene(QGraphicsScene):
             if term_dy == 0.0 and len(last_sp) > 1:
                 term_dy = term_pt[1] - last_sp[-2][1]
 
-            first_displayed_stop = subpath_stops[0][0]
-            last_displayed_stop = subpath_stops[-1][-1]
+            first_displayed_stop = all_subpath_stops[0][0] if all_subpath_stops and all_subpath_stops[0] else None
+            last_displayed_stop = all_subpath_stops[-1][-1] if all_subpath_stops and all_subpath_stops[-1] else None
 
             origin_displayed = (
+                first_displayed_stop is not None and
                 first_displayed_stop.get("segment_id") == first_stop.get("segment_id") and
                 first_displayed_stop.get("station_entry_id") == first_stop.get("station_entry_id")
             )
             terminal_displayed = (
+                last_displayed_stop is not None and
                 last_displayed_stop.get("segment_id") == last_stop.get("segment_id") and
                 last_displayed_stop.get("station_entry_id") == last_stop.get("station_entry_id")
             )
@@ -1442,11 +1885,44 @@ class DiagramScene(QGraphicsScene):
                 "term_dy": term_dy,
                 "origin_displayed": origin_displayed,
                 "terminal_displayed": terminal_displayed,
+                "first_stop": first_stop,
+                "last_stop": last_stop,
+                "first_displayed_stop": first_displayed_stop,
+                "last_displayed_stop": last_displayed_stop,
             }
 
-    def _draw_operation_connecting_path(self, info_prev, info_next, m_train_next):
+    def _get_station_id_for_stop(self, stop):
+        """stop の station_entry_id または station_id から station_id を取得する"""
+        if not stop or not self.project:
+            return None
+        sid = stop.get("station_id")
+        if sid:
+            return sid
+        eid = stop.get("station_entry_id")
+        if eid:
+            return self.project.station_entry_to_station_id.get(eid)
+        return None
+
+    def _get_track_y(self, station_id, track_id, stations_data, ref_y=None):
+        """指定された駅・番線のY座標を stations_data から検索して返す"""
+        candidates = []
+        for st in stations_data:
+            if st.get("station_id") == station_id:
+                if st.get("is_track_entry"):
+                    if st.get("track_id") == track_id:
+                        candidates.append(st["y"])
+                else:
+                    candidates.append(st["y"])
+        if not candidates:
+            return None
+        if ref_y is not None:
+            return min(candidates, key=lambda y_val: abs(y_val - ref_y))
+        return candidates[0]
+
+    def _draw_operation_connecting_path(self, info_prev, info_next, m_train_next, op_info=None):
         """
         前の列車の終着駅(x_arr, y_arr)と後の列車の始発駅(x_dep, y_dep)を結ぶパスを描画する。
+        発着番線占有表有効時、番線一致判定および入換（shunting_operations）の描画を行う。
         線のスタイル・色は後の列車(m_train_next)の種別に従う。
         """
         p_prev = info_prev["terminal"]
@@ -1456,31 +1932,197 @@ class DiagramScene(QGraphicsScene):
         dy_next = info_next["origin_dy"]
 
         tt_id = m_train_next.get("train_type_id")
-        pen = self._create_train_pen(tt_id)
+        pen_default = self._create_train_pen(tt_id)
+        tt = self.project.train_types.get(tt_id) if (self.project and tt_id) else None
+        main_color = tt.get("main_color", "#333333") if tt else "#333333"
 
-        path = QPainterPath()
-        path.moveTo(p_prev[0], p_prev[1])
+        # 始発駅の show_track_allocation_chart 判定
+        stop_next_first = info_next.get("first_stop") or {}
+        st_id_next = self._get_station_id_for_stop(stop_next_first)
+        st_next_obj = self.project.stations.get(st_id_next, {}) if (self.project and st_id_next) else {}
+        is_track_chart_active = self.show_track_allocation_chart and st_next_obj.get("show_track_allocation_chart", False)
 
-        # 前の列車が上方に向かう列車(dy_prev < 0)で後の列車が下方に向かう列車(dy_next > 0)
-        # -> 上に凸の曲線
-        if dy_prev < 0 and dy_next > 0:
-            ctrl_x = (p_prev[0] + p_next[0]) / 2.0
-            ctrl_y = min(p_prev[1], p_next[1]) - 30.0
-            path.quadTo(ctrl_x, ctrl_y, p_next[0], p_next[1])
-        # 前の列車が下方に向かう列車(dy_prev > 0)で後の列車が上方に向かう列車(dy_next < 0)
-        # -> 下に凸の曲線
-        elif dy_prev > 0 and dy_next < 0:
-            ctrl_x = (p_prev[0] + p_next[0]) / 2.0
-            ctrl_y = max(p_prev[1], p_next[1]) + 30.0
-            path.quadTo(ctrl_x, ctrl_y, p_next[0], p_next[1])
+        if not is_track_chart_active:
+            # 発着番線占有表が無効な場合は従来通りの曲線/直線描画
+            path = QPainterPath()
+            path.moveTo(p_prev[0], p_prev[1])
+            if dy_prev < 0 and dy_next > 0:
+                ctrl_x = (p_prev[0] + p_next[0]) / 2.0
+                ctrl_y = min(p_prev[1], p_next[1]) - 30.0
+                path.quadTo(ctrl_x, ctrl_y, p_next[0], p_next[1])
+            elif dy_prev > 0 and dy_next < 0:
+                ctrl_x = (p_prev[0] + p_next[0]) / 2.0
+                ctrl_y = max(p_prev[1], p_next[1]) + 30.0
+                path.quadTo(ctrl_x, ctrl_y, p_next[0], p_next[1])
+            else:
+                path.lineTo(p_next[0], p_next[1])
+
+            path_item = QGraphicsPathItem(path)
+            path_item.setPen(pen_default)
+            path_item.setZValue(2)
+            self.addItem(path_item)
+            return
+
+        # --- 発着番線占有表がTrueの場合 ---
+        # 仕様:
+        # 「前の列車の終着駅と後の列車の始発駅とを結ぶ曲線については、その始発駅のshow_track_allocation_chartがTrueであるならば、
+        # 曲線ではなく水平の線分として始発駅の経由駅情報に登録されている発着番線の位置に描画する(線のスタイルは前述の駅停車中の場合と同様)。
+        # ただし、前の列車の終着駅・終着駅の発着番線と後の列車の始発駅・始発駅の発着番線が一致しない場合は、
+        # 水平の線分ではなく、終着の発着番線の位置から始発の発着番線の位置まで点線で結ぶ。」
+        # 「前の列車の終着駅と後の列車の始発駅との間に位置する時刻に同じ車両運用の駅構内入換が設定されている場合、
+        # 水平の線分となるか点線となるか、それをどの位置に描画するかは、終着駅と駅構内入換の移動元番線の間、
+        # 駅構内入換の移動先番線と始発駅の間でそれぞれ判定し、描画する。駅構内入換は連続して複数設定することもできるため、
+        # その場合は終着駅と最初の駅構内入換の移動元番線の間、駅構内入換同士の移動先番線と移動元番線の間、
+        # 最後の駅構内入換の移動先番線と始発駅の間で判定し、描画することになる。」
+
+        stop_prev_last = info_prev.get("last_stop") or {}
+        st_id_prev = self._get_station_id_for_stop(stop_prev_last)
+        track_prev = stop_prev_last.get("track_id")
+        track_next = stop_next_first.get("track_id")
+
+        t_prev_sec = self._time_to_seconds(stop_prev_last.get("arrival_time") or stop_prev_last.get("departure_time"))
+        t_next_sec = self._time_to_seconds(stop_next_first.get("departure_time") or stop_next_first.get("arrival_time"))
+
+        if t_prev_sec is None or t_next_sec is None:
+            t_prev_sec = (p_prev[0] / self.scale_x) * 60.0
+            t_next_sec = (p_next[0] / self.scale_x) * 60.0
+
+        # 駅構内入換 (shunting_operations) の抽出
+        shunting_ops = []
+        if op_info:
+            all_shunts = op_info.get("shunting_operations", []) or []
+            for sh in all_shunts:
+                sh_time_str = sh.get("shunting_time")
+                sh_sec = self._time_to_seconds(sh_time_str)
+                if sh_sec is not None and t_prev_sec < sh_sec < t_next_sec:
+                    shunting_ops.append((sh_sec, sh))
+            shunting_ops.sort(key=lambda x: x[0])
+
+        pen_solid = QPen(QColor(main_color), 2.0, Qt.SolidLine)
+        pen_dotted = QPen(QColor(main_color), 1.0, Qt.DotLine)
+
+        if not shunting_ops:
+            # 入換なし
+            # 終着駅と始発駅、番線がすべて一致するか判定
+            stations_and_tracks_match = (st_id_prev == st_id_next and track_prev == track_next and track_next is not None)
+            if stations_and_tracks_match:
+                # 水平線分 (2px実線)
+                x1 = (t_prev_sec / 60.0) * self.scale_x
+                x2 = (t_next_sec / 60.0) * self.scale_x
+                y = p_next[1]
+                path = QPainterPath()
+                path.moveTo(x1, y)
+                path.lineTo(x2, y)
+                item = QGraphicsPathItem(path)
+                item.setPen(pen_solid)
+                item.setZValue(2)
+                self.addItem(item)
+            else:
+                # 点線で結ぶ
+                path = QPainterPath()
+                path.moveTo(p_prev[0], p_prev[1])
+                path.lineTo(p_next[0], p_next[1])
+                item = QGraphicsPathItem(path)
+                item.setPen(pen_dotted)
+                item.setZValue(2)
+                self.addItem(item)
         else:
-            # それ以外は直線
-            path.lineTo(p_next[0], p_next[1])
+            # 入換あり
+            # 区間ごとに判定:
+            # 1. 終着駅 (t_prev, st_id_prev, track_prev, p_prev) -> 第1入換移動元番線 (sh_sec_1, sh_st_id_1, orig_track_1)
+            # 2. 入換 k 移動先番線 (sh_sec_k, dest_track_k) -> 入換 k+1 移動元番線 (sh_sec_k+1, orig_track_k+1)
+            # 3. 最終入換移動先番線 (sh_sec_last, dest_track_last) -> 始発駅 (t_next, st_id_next, track_next, p_next)
+            # また、各入換自体の移動元番線から移動先番線へは時刻 sh_sec において点線で結ぶ
+            stages = []
+            # 最初の地点
+            stages.append({
+                "time_sec": t_prev_sec,
+                "station_id": st_id_prev,
+                "track_id": track_prev,
+                "point": p_prev,
+            })
 
-        path_item = QGraphicsPathItem(path)
-        path_item.setPen(pen)
-        path_item.setZValue(2)
-        self.addItem(path_item)
+            ref_y = p_prev[1]
+            for sh_sec, sh in shunting_ops:
+                sh_sid = sh.get("station_id") or st_id_next
+                orig_trk = sh.get("origin_track")
+                dest_trk = sh.get("destination_track")
+
+                y_orig = self._get_track_y(sh_sid, orig_trk, self.stations_data, ref_y=ref_y) or ref_y
+                x_sh = (sh_sec / 60.0) * self.scale_x
+                pt_orig = (x_sh, y_orig)
+
+                stages.append({
+                    "time_sec": sh_sec,
+                    "station_id": sh_sid,
+                    "track_id": orig_trk,
+                    "point": pt_orig,
+                    "is_shunt_orig": True,
+                    "dest_track_id": dest_trk,
+                })
+
+                y_dest = self._get_track_y(sh_sid, dest_trk, self.stations_data, ref_y=y_orig) or y_orig
+                pt_dest = (x_sh, y_dest)
+                ref_y = y_dest
+
+                stages.append({
+                    "time_sec": sh_sec,
+                    "station_id": sh_sid,
+                    "track_id": dest_trk,
+                    "point": pt_dest,
+                    "is_shunt_dest": True,
+                })
+
+            stages.append({
+                "time_sec": t_next_sec,
+                "station_id": st_id_next,
+                "track_id": track_next,
+                "point": p_next,
+            })
+
+            # stages のペアごとに描画
+            i = 0
+            while i < len(stages) - 1:
+                stg_a = stages[i]
+                stg_b = stages[i + 1]
+
+                pt_a = stg_a["point"]
+                pt_b = stg_b["point"]
+
+                if stg_a.get("is_shunt_orig") and stg_b.get("is_shunt_dest") and stg_a["time_sec"] == stg_b["time_sec"]:
+                    # 入換自体の移動元〜移動先: 時刻同一での垂直/点線移動
+                    path = QPainterPath()
+                    path.moveTo(pt_a[0], pt_a[1])
+                    path.lineTo(pt_b[0], pt_b[1])
+                    item = QGraphicsPathItem(path)
+                    item.setPen(pen_dotted)
+                    item.setZValue(2)
+                    self.addItem(item)
+                else:
+                    # 時間間隔を伴う移動 (終着〜入換、入換間、入換〜始発)
+                    match = (
+                        stg_a["station_id"] == stg_b["station_id"] and
+                        stg_a["track_id"] == stg_b["track_id"] and
+                        stg_a["track_id"] is not None
+                    )
+                    if match:
+                        path = QPainterPath()
+                        path.moveTo(pt_a[0], pt_a[1])
+                        path.lineTo(pt_b[0], pt_a[1])
+                        item = QGraphicsPathItem(path)
+                        item.setPen(pen_solid)
+                        item.setZValue(2)
+                        self.addItem(item)
+                    else:
+                        path = QPainterPath()
+                        path.moveTo(pt_a[0], pt_a[1])
+                        path.lineTo(pt_b[0], pt_b[1])
+                        item = QGraphicsPathItem(path)
+                        item.setPen(pen_dotted)
+                        item.setZValue(2)
+                        self.addItem(item)
+                i += 1
+
 
     def _render_operation_start_end_labels(self, first_train_ops, last_train_ops):
         """

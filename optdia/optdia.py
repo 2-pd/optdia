@@ -1617,10 +1617,20 @@ class MainWindow(QMainWindow):
         if idx_dh >= 0:
             self.diagram_height_combo.setCurrentIndex(idx_dh)
         else:
-            idx_standard = self.diagram_height_combo.findData("standard")
-            self.diagram_height_combo.setCurrentIndex(idx_standard if idx_standard >= 0 else 0) # デフォルトは「自動」
+            self.diagram_height_combo.setCurrentIndex(0) # デフォルトは「自動」
         self.diagram_height_combo.currentIndexChanged.connect(self._on_diagram_height_changed)
         frame_layout.addWidget(self.diagram_height_combo)
+
+        # 「発着番線占有表を表示」チェックボックス
+        self.cb_show_track_allocation_chart = QCheckBox("発着番線占有表を表示")
+        self.cb_show_track_allocation_chart.setChecked(self.app_settings.load_diagram_show_track_allocation_chart())
+        self.cb_show_track_allocation_chart.toggled.connect(self._on_diagram_show_track_allocation_chart_toggled)
+        frame_layout.addWidget(self.cb_show_track_allocation_chart)
+
+    def _on_diagram_show_track_allocation_chart_toggled(self, checked: bool):
+        """「発着番線占有表を表示」チェックボックス切り替え時"""
+        self.app_settings.save_diagram_show_track_allocation_chart(checked)
+        self._update_diagram_view()
 
     def _on_filter_target_radio_toggled(self, btn_id: int, checked: bool):
         """フィルタ対象ラジオボタンの切り替え時"""
@@ -1795,7 +1805,8 @@ class MainWindow(QMainWindow):
                 if route_id is None and hasattr(self, "route_list_widget"):
                     item = self.route_list_widget.currentItem()
                     route_id = item.data(Qt.UserRole) if item else None
-                auto_scale = self.diagram_view.scene.calculate_auto_scale_y(viewport_h, self.project, target, route_id)
+                show_track_chart = self.cb_show_track_allocation_chart.isChecked() if hasattr(self, "cb_show_track_allocation_chart") else self.app_settings.load_diagram_show_track_allocation_chart()
+                auto_scale = self.diagram_view.scene.calculate_auto_scale_y(viewport_h, self.project, target, route_id, show_track_allocation_chart=show_track_chart)
                 if auto_scale is not None and auto_scale > 0:
                     return auto_scale
             return 1.0 / 3.0
@@ -1865,6 +1876,8 @@ class MainWindow(QMainWindow):
             else:
                 filter_operation_ids = set()
 
+        show_track_chart = self.cb_show_track_allocation_chart.isChecked() if hasattr(self, "cb_show_track_allocation_chart") else self.app_settings.load_diagram_show_track_allocation_chart()
+
         scale_x = self._get_diagram_scale_x()
         scale_y = self._get_diagram_scale_y(selected_target=selected_target, route_id=route_id)
 
@@ -1874,7 +1887,8 @@ class MainWindow(QMainWindow):
         stations_data = self.diagram_view.update_diagram(
             self.project, selected_target, route_id, diagram_id,
             filter_train_type_ids=filter_train_type_ids,
-            filter_operation_ids=filter_operation_ids
+            filter_operation_ids=filter_operation_ids,
+            show_track_allocation_chart=show_track_chart
         )
         self.diagram_header_view.update_header()
         self.diagram_station_view.update_stations(self.project, stations_data)
