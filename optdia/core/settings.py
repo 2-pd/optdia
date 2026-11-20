@@ -107,8 +107,19 @@ class AppSettings:
         self.settings.setValue("diagram/height_scale", scale_key)
 
     def load_diagram_height_scale(self) -> str:
-        """ダイヤグラムの表示高さ設定を読み込む（デフォルト: 'standard'）"""
-        return self.settings.value("diagram/height_scale", "standard")
+        """ダイヤグラムの表示高さ設定を読み込む（デフォルト: 'auto'）"""
+        return self.settings.value("diagram/height_scale", "auto")
+
+    def save_diagram_show_track_allocation_chart(self, enabled: bool):
+        """発着番線占有表を表示する設定を保存する"""
+        self.settings.setValue("diagram/show_track_allocation_chart", enabled)
+
+    def load_diagram_show_track_allocation_chart(self) -> bool:
+        """発着番線占有表を表示する設定を読み込む（デフォルト: False）"""
+        val = self.settings.value("diagram/show_track_allocation_chart", False)
+        if isinstance(val, str):
+            return val.lower() in ("true", "1")
+        return bool(val)
 
     def save_autobackup_interval(self, interval: int | None):
         """自動バックアップ間隔（分、無効時はNone）を保存する"""

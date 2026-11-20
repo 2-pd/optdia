@@ -1,0 +1,451 @@
+import re
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
+    QPushButton, QWidget, QListWidget, QListWidgetItem,
+    QStackedWidget, QMessageBox, QMenu
+)
+from core.project import OptDiaProject
+
+
+def validate_agency_url(url_str: str) -> tuple[bool, str]:
+    """
+    URL文字列のバリデーションを行う関数。
+    空欄の場合は有効と判定する。
+    正しくない場合は (False, 警告テキスト) を返す。
+    """
+    if not url_str:
+        return True, ""
+
+    if not (url_str.startswith("https://") or url_str.startswith("http://")):
+        return False, "【注意】URLは https:// または http:// で始まる必要があります"
+
+    # RFC 3986 に準拠する有効なURL文字の正規表現
+    # 空ホスト名（https:// や http:// 単体）も除外
+    pattern = r"^https?://[a-zA-Z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+$"
+    if not re.match(pattern, url_str):
+        return False, "【注意】URLに使用できない記号または文字が含まれています"
+
+    if url_str in ("https://", "http://"):
+        return False, "【注意】URLのホスト名が指定されていません"
+
+    return True, ""
+
+
+class AddAgencyDialog(QDialog):
+    """
+    鉄道事業者の追加ダイアログ
+    """
+    def __init__(self, parent, project: OptDiaProject):
+        super().__init__(parent)
+        self.project = project
+
+        self.setWindowTitle("鉄道事業者の追加")
+        self.setFixedSize(400, 280)
+
+        layout = QVBoxLayout(self)
+
+        # 1. 「事業者ID:」ラベル
+        layout.addWidget(QLabel("事業者ID:"))
+        # 事業者IDを入力するための1行テキストボックス (プレースホルダーは「例) osaka_metro」)
+        self.id_edit = QLineEdit()
+        self.id_edit.setPlaceholderText("例) osaka_metro")
+        self.id_edit.textChanged.connect(self._clear_id_error)
+        layout.addWidget(self.id_edit)
+
+        # 2. 警告を表示するためのラベル
+        self.warning_label = QLabel("")
+        self.warning_label.setStyleSheet("color: #cc3333; padding-left: 5px;")
+        layout.addWidget(self.warning_label)
+
+        # 3. 「事業者名:」ラベル
+        layout.addWidget(QLabel("事業者名:"))
+        # 事業者名を入力するための1行テキストボックス (プレースホルダーは「例) 大阪市高速電気軌道株式会社」)
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("例) 大阪市高速電気軌道株式会社")
+        layout.addWidget(self.name_edit)
+
+        # 4. 「事業者名の省略表記:」ラベル
+        layout.addWidget(QLabel("事業者名の省略表記:"))
+        # 事業者名の省略表記を入力するための1行テキストボックス (プレースホルダーは「例) 大阪メトロ」)
+        self.short_name_edit = QLineEdit()
+        self.short_name_edit.setPlaceholderText("例) 大阪メトロ")
+        layout.addWidget(self.short_name_edit)
+
+        layout.addStretch()
+
+        # 5. 「OK」「キャンセル」ボタン
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        self.ok_button = QPushButton("OK")
+        self.ok_button.setProperty("class", "ok_button")
+        self.cancel_button = QPushButton("キャンセル")
+        button_layout.addWidget(self.ok_button)
+        button_layout.addWidget(self.cancel_button)
+        layout.addLayout(button_layout)
+
+        self.ok_button.clicked.connect(self._on_ok_clicked)
+        self.cancel_button.clicked.connect(self.reject)
+
+    def _clear_id_error(self):
+        """ID入力欄のエラー表示状態をクリアする"""
+        self.id_edit.setStyleSheet("")
+        self.warning_label.setText("")
+
+    def _on_ok_clicked(self):
+        """OKボタン押下時の検証処理"""
+        agency_id = self.id_edit.text().strip()
+        self.id_edit.setStyleSheet("")
+
+        if not agency_id:
+            self.warning_label.setText("IDを指定してください")
+            self.id_edit.setStyleSheet("background-color: #ffeeee;")
+            return
+
+        if not re.match(r"^[a-zA-Z0-9_]+$", agency_id):
+            self.warning_label.setText("IDには半角英数字とアンダーバーのみが使用可能です")
+            self.id_edit.setStyleSheet("background-color: #ffeeee;")
+            return
+
+        if agency_id in self.project.agencies:
+            self.warning_label.setText("既に使用されているIDです")
+            self.id_edit.setStyleSheet("background-color: #ffeeee;")
+            return
+
+        self.accept()
+
+
+class AgencyEditorDialog(QDialog):
+    """
+    鉄道事業者情報編集ダイアログ
+    """
+    def __init__(self, parent, project: OptDiaProject, initial_agency_id: str | None = None):
+        super().__init__(parent)
+        self.project = project
+        self.initial_agency_id = initial_agency_id
+        self._current_agency_id: str | None = None
+
+        self.setWindowTitle("鉄道事業者情報の編集")
+        self.setFixedSize(640, 480)
+
+        # メインレイアウト（左右2分割）
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # --- 左側の領域 (幅200px) ---
+        left_panel = QWidget()
+        left_panel.setFixedWidth(200)
+        left_panel.setProperty("class", "dialog_sidebar")
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(10, 10, 10, 10)
+        left_layout.setSpacing(5)
+
+        # 「鉄道事業者」ラベル
+        agency_label = QLabel("鉄道事業者")
+        agency_label.setStyleSheet("font-weight: bold;")
+        left_layout.addWidget(agency_label)
+
+        # 鉄道事業者リスト
+        self.agency_list_widget = QListWidget()
+        self.agency_list_widget.setDragDropMode(QListWidget.InternalMove)
+        self.agency_list_widget.model().rowsMoved.connect(self._on_agencies_reordered)
+        self.agency_list_widget.itemSelectionChanged.connect(self._on_agency_selected)
+        self.agency_list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.agency_list_widget.customContextMenuRequested.connect(self._on_agency_list_context_menu)
+        left_layout.addWidget(self.agency_list_widget)
+
+        # 「鉄道事業者の追加」ボタン
+        self.add_agency_button = QPushButton("鉄道事業者の追加")
+        self.add_agency_button.clicked.connect(self._on_add_agency)
+        left_layout.addWidget(self.add_agency_button)
+
+        # 「鉄道事業者はドラッグ操作で並び替え可能です」ラベル
+        drag_info_label = QLabel("鉄道事業者はドラッグ操作で並び替え可能です")
+        drag_info_label.setWordWrap(True)
+        drag_info_label.setProperty("class", "informational_text")
+        left_layout.addWidget(drag_info_label)
+
+        main_layout.addWidget(left_panel)
+
+        # --- 右側の領域 (スタックドウィジェット) ---
+        self.right_stack = QStackedWidget()
+        main_layout.addWidget(self.right_stack, stretch=1)
+
+        # プレースホルダーページ (項目が存在しないとき)
+        self.placeholder_page = QWidget()
+        placeholder_layout = QVBoxLayout(self.placeholder_page)
+        placeholder_label = QLabel("鉄道事業者を追加してください")
+        placeholder_label.setAlignment(Qt.AlignCenter)
+        placeholder_label.setProperty("class", "placeholder_label")
+        placeholder_layout.addWidget(placeholder_label)
+        self.right_stack.addWidget(self.placeholder_page)
+
+        # 編集フォームページ (項目が存在するとき)
+        self.edit_form_page = QWidget()
+        edit_form_layout = QVBoxLayout(self.edit_form_page)
+        edit_form_layout.setContentsMargins(20, 20, 20, 20)
+        edit_form_layout.setSpacing(8)
+
+        # 「事業者ID:」ラベル
+        edit_form_layout.addWidget(QLabel("事業者ID:"))
+        # 事業者IDが表示される1行テキストボックス(常に無効状態)
+        self.agency_id_edit = QLineEdit()
+        self.agency_id_edit.setEnabled(False)
+        edit_form_layout.addWidget(self.agency_id_edit)
+
+        # 「事業者名:」ラベル
+        edit_form_layout.addWidget(QLabel("事業者名:"))
+        # 事業者名を編集するための1行テキストボックス
+        self.agency_name_edit = QLineEdit()
+        self.agency_name_edit.textEdited.connect(self._on_agency_name_edited)
+        edit_form_layout.addWidget(self.agency_name_edit)
+
+        # 「事業者名の省略表記:」ラベル
+        edit_form_layout.addWidget(QLabel("事業者名の省略表記:"))
+        # 事業者名の省略表記を編集するための1行テキストボックス
+        self.agency_short_name_edit = QLineEdit()
+        self.agency_short_name_edit.textEdited.connect(self._on_agency_short_name_edited)
+        edit_form_layout.addWidget(self.agency_short_name_edit)
+
+        # 「事業者公式サイトのURL:」ラベル
+        edit_form_layout.addWidget(QLabel("事業者公式サイトのURL:"))
+        # 事業者公式サイトのURLを編集するための1行テキストボックス
+        self.agency_url_edit = QLineEdit()
+        self.agency_url_edit.textEdited.connect(self._on_agency_url_edited)
+        edit_form_layout.addWidget(self.agency_url_edit)
+
+        # URLとして正しくない文字列が入力されたときに警告を表示するためのラベル
+        self.url_warning_label = QLabel("")
+        self.url_warning_label.setStyleSheet("color: #cc6600; font-size: 12px;")
+        self.url_warning_label.setWordWrap(True)
+        edit_form_layout.addWidget(self.url_warning_label)
+
+        edit_form_layout.addStretch()
+
+        # 「この事業者を削除」ボタン
+        bottom_layout = QHBoxLayout()
+        bottom_layout.addStretch()
+        self.delete_agency_button = QPushButton("この事業者を削除")
+        self.delete_agency_button.setProperty("class", "delete_button")
+        self.delete_agency_button.clicked.connect(self._on_delete_agency)
+        bottom_layout.addWidget(self.delete_agency_button)
+        edit_form_layout.addLayout(bottom_layout)
+
+        self.right_stack.addWidget(self.edit_form_page)
+
+        # リスト初期化処理
+        self._populate_agency_list()
+        if self.agency_list_widget.count() > 0:
+            target_row = 0
+            if self.initial_agency_id:
+                for i in range(self.agency_list_widget.count()):
+                    if self.agency_list_widget.item(i).data(Qt.UserRole) == self.initial_agency_id:
+                        target_row = i
+                        break
+            self.agency_list_widget.setCurrentRow(target_row)
+        else:
+            self._update_stack_view()
+
+    def _update_stack_view(self):
+        """鉄道事業者リストの項目有無に応じてスタックドウィジェットの表示を切り替える"""
+        if self.agency_list_widget.count() == 0:
+            self.right_stack.setCurrentWidget(self.placeholder_page)
+            self._current_agency_id = None
+        else:
+            self.right_stack.setCurrentWidget(self.edit_form_page)
+
+    def _populate_agency_list(self):
+        """プロジェクトデータに基づいて鉄道事業者リストを構築する"""
+        self.agency_list_widget.blockSignals(True)
+        self.agency_list_widget.clear()
+
+        for agency_id in self.project.agencies_order:
+            agency = self.project.agencies.get(agency_id)
+            if not agency:
+                continue
+            display_name = agency.get("agency_name", "")
+            item = QListWidgetItem(display_name)
+            item.setData(Qt.UserRole, agency_id)
+            self.agency_list_widget.addItem(item)
+
+        self.agency_list_widget.blockSignals(False)
+        self._update_stack_view()
+
+    def _on_add_agency(self):
+        """鉄道事業者の追加ダイアログを表示して新規事業者を追加する"""
+        dialog = AddAgencyDialog(self, self.project)
+        if dialog.exec() == QDialog.Accepted:
+            agency_id = dialog.id_edit.text().strip()
+            agency_name = dialog.name_edit.text().strip()
+            agency_short_name = dialog.short_name_edit.text().strip()
+
+            new_agency = {
+                "agency_id": agency_id,
+                "agency_name": agency_name,
+                "agency_short_name": agency_short_name,
+                "agency_url": None,
+            }
+
+            self.project.agencies[agency_id] = new_agency
+            self.project.agencies_order.append(agency_id)
+
+            # リストを再構築
+            self._populate_agency_list()
+
+            # 新規追加した事業者を選択状態にする
+            for i in range(self.agency_list_widget.count()):
+                item = self.agency_list_widget.item(i)
+                if item.data(Qt.UserRole) == agency_id:
+                    self.agency_list_widget.setCurrentRow(i)
+                    break
+
+            self._set_modified()
+
+    def _on_agency_selected(self):
+        """リストで選択中の鉄道事業者の情報をフォームに反映する"""
+        selected_items = self.agency_list_widget.selectedItems()
+        if not selected_items:
+            self._update_stack_view()
+            return
+
+        agency_id = selected_items[0].data(Qt.UserRole)
+        agency = self.project.agencies.get(agency_id)
+        if not agency:
+            self._update_stack_view()
+            return
+
+        self._current_agency_id = agency_id
+        self._update_stack_view()
+
+        # フォームの値を更新（シグナルをブロックして変更ハンドラが発火しないようにする）
+        self.agency_id_edit.blockSignals(True)
+        self.agency_name_edit.blockSignals(True)
+        self.agency_short_name_edit.blockSignals(True)
+        self.agency_url_edit.blockSignals(True)
+
+        self.agency_id_edit.setText(agency.get("agency_id", ""))
+        self.agency_name_edit.setText(agency.get("agency_name", ""))
+        self.agency_short_name_edit.setText(agency.get("agency_short_name", ""))
+        raw_url = agency.get("agency_url")
+        self.agency_url_edit.setText(raw_url if raw_url is not None else "")
+
+        self.agency_id_edit.blockSignals(False)
+        self.agency_name_edit.blockSignals(False)
+        self.agency_short_name_edit.blockSignals(False)
+        self.agency_url_edit.blockSignals(False)
+
+        # URLのバリデーション表示更新
+        self._validate_and_display_url_warning(self.agency_url_edit.text().strip())
+
+    def _on_agency_name_edited(self, text: str):
+        """事業者名が編集された時の処理"""
+        if not self._current_agency_id:
+            return
+        agency = self.project.agencies.get(self._current_agency_id)
+        if agency is not None:
+            agency["agency_name"] = text
+            # リストアイテムの表示テキストも更新
+            selected_items = self.agency_list_widget.selectedItems()
+            if selected_items:
+                selected_items[0].setText(text)
+            self._set_modified()
+
+    def _on_agency_short_name_edited(self, text: str):
+        """事業者名の省略表記が編集された時の処理"""
+        if not self._current_agency_id:
+            return
+        agency = self.project.agencies.get(self._current_agency_id)
+        if agency is not None:
+            agency["agency_short_name"] = text
+            self._set_modified()
+
+    def _on_agency_url_edited(self, text: str):
+        """事業者公式サイトのURLが編集された時の処理"""
+        if not self._current_agency_id:
+            return
+        agency = self.project.agencies.get(self._current_agency_id)
+        if agency is not None:
+            url_str = text.strip()
+            # 空欄のときはプロジェクトデータのagency_urlにNoneがセットされる
+            agency["agency_url"] = url_str if url_str else None
+            self._validate_and_display_url_warning(url_str)
+            self._set_modified()
+
+    def _validate_and_display_url_warning(self, url_str: str):
+        """URLのバリデーションを行い警告ラベルを更新する"""
+        is_valid, warning_msg = validate_agency_url(url_str)
+        if not is_valid:
+            self.url_warning_label.setText(warning_msg)
+        else:
+            self.url_warning_label.setText("")
+
+    def _on_agencies_reordered(self, parent, start, end, destination, row):
+        """ドラッグアンドドロップで並び替えられた順序をプロジェクトデータに反映する"""
+        new_order = []
+        for i in range(self.agency_list_widget.count()):
+            item = self.agency_list_widget.item(i)
+            new_order.append(item.data(Qt.UserRole))
+
+        self.project.agencies_order = new_order
+        self._set_modified()
+
+    def _on_agency_list_context_menu(self, pos):
+        """鉄道事業者リストの項目を右クリックしたときのコンテキストメニューを表示する"""
+        item = self.agency_list_widget.itemAt(pos)
+        if item is None:
+            return
+
+        agency_id = item.data(Qt.UserRole)
+        menu = QMenu(self)
+        delete_action = menu.addAction("この事業者を削除")
+        action = menu.exec(self.agency_list_widget.viewport().mapToGlobal(pos))
+        if action == delete_action:
+            self._delete_agency(agency_id)
+
+    def _on_delete_agency(self):
+        """現在編集中の鉄道事業者を削除する（フォーム上の削除ボタン押下時）"""
+        if self._current_agency_id:
+            self._delete_agency(self._current_agency_id)
+
+    def _delete_agency(self, agency_id: str):
+        """確認ダイアログを表示し、指定された鉄道事業者情報を削除する"""
+        if not agency_id or agency_id not in self.project.agencies:
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "鉄道事業者の削除",
+            "この鉄道事業者の情報を削除しますか？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # 1. プロジェクトデータから該当鉄道事業者を削除
+        del self.project.agencies[agency_id]
+        if agency_id in self.project.agencies_order:
+            self.project.agencies_order.remove(agency_id)
+
+        # 2. 全ての路線情報を走査し、削除対象の事業者IDを除去
+        for line in self.project.lines.values():
+            agency_ids = line.get("agency_ids", [])
+            if agency_id in agency_ids:
+                line["agency_ids"] = [aid for aid in agency_ids if aid != agency_id]
+
+        # 3. リストの再構築
+        self._populate_agency_list()
+
+        # 削除後に項目が存在する場合は先頭を選択
+        if self.agency_list_widget.count() > 0:
+            self.agency_list_widget.setCurrentRow(0)
+        else:
+            self._update_stack_view()
+
+        self._set_modified()
+
+    def _set_modified(self):
+        """親ウィンドウに変更状態を通知する"""
+        if hasattr(self.parent(), "set_modified"):
+            self.parent().set_modified(True)

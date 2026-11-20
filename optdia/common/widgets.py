@@ -1,8 +1,8 @@
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QPixmap, QIcon, QTransform
+from PySide6.QtCore import Qt, Signal, QTimer, QPoint, QRect
+from PySide6.QtGui import QColor, QPainter, QPen, QPixmap, QIcon, QTransform, QFont, QCursor
 from PySide6.QtWidgets import (
     QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
-    QFrame, QColorDialog
+    QFrame, QColorDialog, QToolTip, QComboBox
 )
 from core.settings import AppSettings
 from common.gui_utils import create_color_square_pixmap
@@ -26,16 +26,17 @@ class ClickableColorLabel(QLabel):
 class ColorPickerWidget(QWidget):
     colorChanged = Signal(str)
 
-    def __init__(self, default_color: str = "#333333", parent=None):
+    def __init__(self, default_color: str = "#333333", target_is_foreground: bool = True, parent=None):
         super().__init__(parent)
         self._current_color = default_color
+        self._target_is_foreground = target_is_foreground
         self._app_settings = AppSettings()
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(6)
 
-        # 上部: 30pxの正方形ピクスマップと色コードボタン
+        # 上部: 30pxの正方形ピクスマップと色コードボタン、警告ラベル
         top_layout = QHBoxLayout()
         top_layout.setContentsMargins(0, 0, 0, 0)
         top_layout.setSpacing(6)
@@ -49,6 +50,10 @@ class ColorPickerWidget(QWidget):
         self.color_button = QPushButton(self._current_color)
         self.color_button.clicked.connect(self._open_color_dialog)
         top_layout.addWidget(self.color_button)
+
+        self.warning_label = QLabel()
+        self.warning_label.setStyleSheet("color: #cc6600;")
+        top_layout.addWidget(self.warning_label)
         top_layout.addStretch()
 
         main_layout.addLayout(top_layout)
@@ -91,11 +96,51 @@ class ColorPickerWidget(QWidget):
         super().setEnabled(enabled)
         self.color_square.setEnabled(enabled)
         self.color_button.setEnabled(enabled)
+        self.warning_label.setEnabled(enabled)
         self.history_frame.setEnabled(enabled)
 
     def _update_display(self, color_hex: str):
         self.color_button.setText(color_hex)
         self.color_square.setPixmap(create_color_square_pixmap(color_hex, size=30))
+        self._update_warning(color_hex)
+
+    def _calculate_relative_luminance(self, color: QColor) -> float:
+        """リニアRGBから計算される相対輝度を算出 (WCAG 2.x準拠)"""
+        def channel_luminance(c_val: int) -> float:
+            c = c_val / 255.0
+            return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+        r = channel_luminance(color.red())
+        g = channel_luminance(color.green())
+        b = channel_luminance(color.blue())
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+    def _update_warning(self, color_hex: str):
+        color = QColor(color_hex)
+        if not color.isValid():
+            self.warning_label.setText("")
+            return
+
+        rel_lum = self._calculate_relative_luminance(color)
+        warning_text = ""
+
+        # ハレーション判定: HSVで彩度が85%以上かつ相対輝度が0.2以上
+        hsv_saturation = color.hsvSaturationF()
+        if hsv_saturation >= 0.85 and rel_lum >= 0.2:
+            warning_text = "【注意】選択中の色は彩度が高すぎます"
+        else:
+            if self._target_is_foreground:
+                # 白とのコントラスト比: (1.0 + 0.05) / (L + 0.05)
+                contrast_with_white = (1.0 + 0.05) / (rel_lum + 0.05)
+                if contrast_with_white < 3.0:
+                    warning_text = "【注意】選択中の色は明度が高すぎます"
+            else:
+                # 黒とのコントラスト比: (L + 0.05) / (0.0 + 0.05)
+                contrast_with_black = (rel_lum + 0.05) / 0.05
+                if contrast_with_black < 3.0:
+                    warning_text = "【注意】選択中の色は明度が低すぎます"
+
+        self.warning_label.setText(warning_text)
 
     def _open_color_dialog(self):
         if not self.isEnabled():
@@ -280,3 +325,108 @@ class AccordionWidget(QWidget):
 
     def is_expanded(self) -> bool:
         return self._is_expanded
+
+
+# マウスホバーでポップアップを表示するラベル
+class HoverPopupLabel(QLabel):
+    def __init__(self, text: str, parent=None):
+        super().__init__(text, parent)
+        self.popup_widget = None
+        self.setMouseTracking(True)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def set_popup_widget(self, widget: QWidget):
+        self.popup_widget = widget
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        if self.popup_widget:
+            self.popup_widget.show_below()
+
+
+# ホバー時に表示されるポップアップウィジェット基底クラス
+class HoverPopupWindow(QWidget):
+    def __init__(self, parent_label: HoverPopupLabel):
+        super().__init__(None, Qt.ToolTip | Qt.FramelessWindowHint)
+        self.parent_label = parent_label
+        self.parent_label.set_popup_widget(self)
+        self.setAttribute(Qt.WA_AlwaysShowToolTips, True)
+
+        self._check_timer = QTimer(self)
+        self._check_timer.setInterval(100)
+        self._check_timer.timeout.connect(self._check_mouse_hover)
+
+    def show_below(self):
+        self.adjustSize()
+        pos = self.parent_label.mapToGlobal(QPoint(0, self.parent_label.height()))
+        self.move(pos)
+        self.show()
+        self.raise_()
+        self._check_timer.start()
+
+    def hide_popup(self):
+        self._check_timer.stop()
+        self.hide()
+
+    def _check_mouse_hover(self):
+        # ポップアップ内のいずれかのコンボボックスのドロップダウンが開いている場合は閉じない
+        for cb in self.findChildren(QComboBox):
+            view = cb.view()
+            if view and view.window() and view.window().isVisible():
+                return
+
+        cursor_pos = QCursor.pos()
+        label_rect = QRect(self.parent_label.mapToGlobal(QPoint(0, 0)), self.parent_label.size())
+        popup_rect = QRect(self.mapToGlobal(QPoint(0, 0)), self.size())
+        if not label_rect.contains(cursor_pos) and not popup_rect.contains(cursor_pos):
+            self.hide_popup()
+
+
+# ヘルプ文付きラベル
+class HelpLabel(QLabel):
+    """
+    QLabelを継承し、右上に小さな「？」を灰色(#888888)の太字で表示し、
+    マウスホバーしたときにヘルプ文をツールチップで表示するカスタムウィジェット
+    """
+    def __init__(self, text: str = "", help_text: str = "", parent=None):
+        super().__init__(text, parent)
+        self._help_text = help_text
+        if help_text:
+            self.setToolTip(help_text)
+
+        self.setContentsMargins(0, 0, 8, 0)
+    def setHelpText(self, help_text: str):
+        self._help_text = help_text
+        self.setToolTip(help_text)
+
+    def helpText(self) -> str:
+        return self._help_text
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        badge_font = QFont(self.font())
+        badge_font.setBold(True)
+        badge_font.setPixelSize(10)
+        painter.setFont(badge_font)
+        painter.setPen(QColor("#888888"))
+
+        fm = painter.fontMetrics()
+        char_w = fm.horizontalAdvance("?")
+        char_h = fm.ascent()
+        x = max(0, self.width() - char_w - 1)
+        y = char_h + 1
+        painter.drawText(x, y, "?")
+        painter.end()
+
+    def mouseReleaseEvent(self, event):
+        # 左クリックされた場合にツールチップを強制表示
+        if event.button() == Qt.MouseButton.LeftButton:
+            # ボタンを離した際、マウスがまだこのラベルの上にある場合のみ実行
+            if self.rect().contains(event.position().toPoint()):
+                global_pos = event.globalPosition().toPoint()
+                QTimer.singleShot(
+                    50, QToolTip.showText(global_pos, self._help_text, self, self.rect())
+                )
+
+        super().mouseReleaseEvent(event)

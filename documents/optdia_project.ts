@@ -6,7 +6,7 @@
  */
 
 
-// 仕様バージョン 2026.10.001
+// 仕様バージョン 2026.11.001
 
 // OptDiaでは、鉄道ダイヤグラムデータを以下のオブジェクト「optdia_project」に適合するJSON文字列として、拡張子「.optdia」のファイルに保存する。
 // 「optdia_project」オブジェクトに適合するJSON文字列をgzip圧縮して保存したファイルも利用可能であり、その場合の拡張子は「.optd」となる。
@@ -69,6 +69,7 @@ interface optdia_line {
     line_color: string; // 路線の色(デフォルト値は #333333)
     line_symbol: string | null; // 路線記号等(1〜2文字の英数字または1文字のマルチバイト文字)
     inbound_direction_is_forward_direction: boolean; // 編成の前位向きと列車の上り向きが一致するか否か
+    clockwise_is_inbound: boolean | null; // 環状路線で上り列車が時計回り運転となるか否か(環状路線でない場合はnull)
     station_entries: optdia_line_station_entry[]; // 路線に駅を紐付ける情報(下記)を起点側の駅のものから順に配列で
     agency_ids: string[]; // 路線を管轄する鉄道事業者の事業者IDを表示順に配列で
 }
@@ -89,8 +90,10 @@ interface optdia_station {
     is_signal_station: boolean; // 信号場か否か
     show_arrival_time: boolean; // 時刻表で着時刻を表示するか否か
     show_track_name: boolean; // 時刻表で発着番線を表示するか否か
+    show_track_allocation_chart: boolean; // 運行ダイヤグラムで発着番線占有状況を表示するか否か
     latitude: number | null; // 駅の緯度(小数点以下は6桁まで)
     longitude: number | null; // 駅の経度(小数点以下は6桁まで)
+    station_code: string | null; // 列車番号の自動生成に使用する駅コード
     tracks: optdia_station_track[]; // 発着番線情報(下記)を表示順に配列で
 }
 
@@ -100,6 +103,7 @@ interface optdia_station_track {
     track_id: string; // 発着番線ID(異なる駅との重複は制限されない)
     track_name: string; // 発着番線名(アルファベット等も使用可能)
     track_short_name: string; // 発着番線名の省略表記
+    available_for_passengers: boolean; // 旅客の乗降が可能か否か
 }
 
 
@@ -165,6 +169,7 @@ interface optdia_train_type {
     background_color: string; // 時刻表での列車種別の背景色(デフォルト値は #ffffff)
     line_weight: "thin" | "normal" | "bold"; // ダイヤグラムでの線の太さ(細、標準、太)
     line_style: "solid" | "dashed" | "dotted"; // ダイヤグラムでの線スタイル(実線、破線、点線)
+    train_type_code: string | null; // 列車番号の自動生成に使用する列車種別コード
 }
 
 
@@ -239,6 +244,7 @@ interface optdia_operation {
     end_time: string | null; // 運用の入庫時間(hh:mm:ss形式、入庫しない場合や未設定の場合はnull)
     note: string; // 備考
     temporary_stabling_events: optdia_temporary_stabling_event[]; // 一時入庫の情報(下記)を時系列順に配列で
+    shunting_operations: optdia_shunting_operation[]; // 駅構内入換の情報(下記)を時系列順に配列で
 }
 
 
@@ -248,6 +254,16 @@ interface optdia_temporary_stabling_event {
     start_time: string; // 入庫時刻(hh:mm:ss形式)
     end_time: string; // 出庫時刻(hh:mm:ss形式)
     formations_can_changed: boolean; // 編成が変更される可能性があるか否か
+    note: string; // 備考
+}
+
+
+// 駅構内入換の情報
+interface optdia_shunting_operation {
+    station_id: string; // 駅ID
+    shunting_time: string; // 入換時刻(hh:mm:ss形式)
+    origin_track: string | null; // 移動元番線の発着番線ID
+    destination_track: string | null; // 移動先番線の発着番線ID
     note: string; // 備考
 }
 
@@ -264,6 +280,7 @@ interface optdia_operation_group {
     operation_group_id: string; // 運用グループID(ランダムな英数字12文字)
     operation_group_name: string; // 運用グループ名
     main_color: string; // 運用グループの表示色(デフォルト値は #ffffff)
+    operation_group_code: string | null; // 列車番号の自動生成に使用する運用グループコード
     operations: string[]; // グループに属する車両運用のIDを表示順に配列で
 }
 

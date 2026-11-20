@@ -8,8 +8,8 @@ class HistoryExecutionError(Exception):
     pass
 
 
-class BaseEvent(ABC):
-    """すべての履歴イベントの基底クラス"""
+class BaseTrainEvent(ABC):
+    """列車関連の履歴イベントの基底クラス"""
     def __init__(self, route_id: str, direction: str, train_id: str):
         self.route_id = route_id
         self.direction = direction  # "inbound" or "outbound"
@@ -71,7 +71,7 @@ class BaseEvent(ABC):
 
 
 # 列車の追加
-class AddTrainEvent(BaseEvent):
+class AddTrainEvent(BaseTrainEvent):
     """
     列車の追加イベント
     - index: 追加された位置（order内のインデックス）
@@ -146,7 +146,7 @@ class AddTrainEvent(BaseEvent):
 
 
 # 列車の削除
-class RemoveTrainEvent(BaseEvent):
+class RemoveTrainEvent(BaseTrainEvent):
     """
     列車の削除イベント（全運転ダイヤおよび運行系統マスタからの列車削除）
     - route_id: 運行系統ID
@@ -220,7 +220,7 @@ class RemoveTrainEvent(BaseEvent):
 
 
 # 列車の並び替え
-class ReorderTrainsEvent(BaseEvent):
+class ReorderTrainsEvent(BaseTrainEvent):
     """
     列車の並び替えイベント
     - diagram_id: 運転ダイヤID
@@ -276,7 +276,7 @@ class ReorderTrainsEvent(BaseEvent):
 
 
 # 列車の列車番号変更
-class ChangeTrainNumberEvent(BaseEvent):
+class ChangeTrainNumberEvent(BaseTrainEvent):
     def __init__(self, route_id: str, direction: str, train_id: str, old_value: str, new_value: str):
         super().__init__(route_id, direction, train_id)
         self.old_value = old_value
@@ -304,7 +304,7 @@ class ChangeTrainNumberEvent(BaseEvent):
 
 
 # 列車の運転日追加(運転ダイヤ別の列車情報の生成)
-class AddTrainDiagramEvent(BaseEvent):
+class AddTrainDiagramEvent(BaseTrainEvent):
     def __init__(self, route_id: str, direction: str, train_id: str, diagram_id: str, index: int, d_train: dict):
         super().__init__(route_id, direction, train_id)
         self.diagram_id = diagram_id
@@ -353,7 +353,7 @@ class AddTrainDiagramEvent(BaseEvent):
 
 
 # 列車の運転日削除(運転ダイヤ別の列車情報の削除)
-class RemoveTrainDiagramEvent(BaseEvent):
+class RemoveTrainDiagramEvent(BaseTrainEvent):
     def __init__(self, route_id: str, direction: str, train_id: str, diagram_id: str, index: int, d_train: dict):
         super().__init__(route_id, direction, train_id)
         self.diagram_id = diagram_id
@@ -402,7 +402,7 @@ class RemoveTrainDiagramEvent(BaseEvent):
 
 
 # 列車への担当運用の登録
-class AddTrainOperationEvent(BaseEvent):
+class AddTrainOperationEvent(BaseTrainEvent):
     def __init__(self, route_id: str, direction: str, train_id: str, diagram_id: str, index: int, operation: dict):
         super().__init__(route_id, direction, train_id)
         self.diagram_id = diagram_id
@@ -450,7 +450,7 @@ class AddTrainOperationEvent(BaseEvent):
 
 
 # 列車からの担当運用の除外
-class RemoveTrainOperationEvent(BaseEvent):
+class RemoveTrainOperationEvent(BaseTrainEvent):
     def __init__(self, route_id: str, direction: str, train_id: str, diagram_id: str, index: int, operation: dict):
         super().__init__(route_id, direction, train_id)
         self.diagram_id = diagram_id
@@ -498,7 +498,7 @@ class RemoveTrainOperationEvent(BaseEvent):
 
 
 # 列車の担当運用の変更
-class ChangeTrainOperationEvent(BaseEvent):
+class ChangeTrainOperationEvent(BaseTrainEvent):
     def __init__(self, route_id: str, direction: str, train_id: str, diagram_id: str, old_operations: list, new_operations: list):
         super().__init__(route_id, direction, train_id)
         self.diagram_id = diagram_id
@@ -539,7 +539,7 @@ class ChangeTrainOperationEvent(BaseEvent):
 
 
 # 列車の両数の変更
-class ChangeTrainCarCountEvent(BaseEvent):
+class ChangeTrainCarCountEvent(BaseTrainEvent):
     def __init__(self, route_id: str, direction: str, train_id: str, diagram_id: str, old_value: Optional[int], new_value: Optional[int]):
         super().__init__(route_id, direction, train_id)
         self.diagram_id = diagram_id
@@ -570,7 +570,7 @@ class ChangeTrainCarCountEvent(BaseEvent):
 
 
 # 列車の種別の変更
-class ChangeTrainTypeEvent(BaseEvent):
+class ChangeTrainTypeEvent(BaseTrainEvent):
     def __init__(self, route_id: str, direction: str, train_id: str, old_value: Optional[str], new_value: Optional[str]):
         super().__init__(route_id, direction, train_id)
         self.old_value = old_value
@@ -598,7 +598,7 @@ class ChangeTrainTypeEvent(BaseEvent):
 
 
 # 列車の号数の変更
-class ChangeTrainNamedNumberEvent(BaseEvent):
+class ChangeTrainNamedNumberEvent(BaseTrainEvent):
     def __init__(self, route_id: str, direction: str, train_id: str, old_value: Optional[int], new_value: Optional[int]):
         super().__init__(route_id, direction, train_id)
         self.old_value = old_value
@@ -626,7 +626,7 @@ class ChangeTrainNamedNumberEvent(BaseEvent):
 
 
 # 列車の行き先の変更
-class ChangeTrainDestinationEvent(BaseEvent):
+class ChangeTrainDestinationEvent(BaseTrainEvent):
     def __init__(self, route_id: str, direction: str, train_id: str, diagram_id: str, old_value: Optional[str], new_value: Optional[str]):
         super().__init__(route_id, direction, train_id)
         self.diagram_id = diagram_id
@@ -657,7 +657,7 @@ class ChangeTrainDestinationEvent(BaseEvent):
 
 
 # 列車の経由駅情報の追加
-class AddTrainStopEvent(BaseEvent):
+class AddTrainStopEvent(BaseTrainEvent):
     def __init__(self, route_id: str, direction: str, train_id: str, index: int, stop: dict):
         super().__init__(route_id, direction, train_id)
         self.index = index
@@ -701,7 +701,7 @@ class AddTrainStopEvent(BaseEvent):
 
 
 # 列車の経由駅情報の削除
-class RemoveTrainStopEvent(BaseEvent):
+class RemoveTrainStopEvent(BaseTrainEvent):
     def __init__(self, route_id: str, direction: str, train_id: str, index: int, stop: dict):
         super().__init__(route_id, direction, train_id)
         self.index = index
@@ -745,7 +745,7 @@ class RemoveTrainStopEvent(BaseEvent):
 
 
 # 列車の経由駅情報の変更
-class ChangeTrainStopEvent(BaseEvent):
+class ChangeTrainStopEvent(BaseTrainEvent):
     def __init__(self, route_id: str, direction: str, train_id: str, stop_idx: int, old_stop: dict, new_stop: dict):
         super().__init__(route_id, direction, train_id)
         self.stop_idx = stop_idx
@@ -793,7 +793,7 @@ class ChangeTrainStopEvent(BaseEvent):
 
 
 # 列車への連続する列車の追加
-class AddSubsequentTrainEvent(BaseEvent):
+class AddSubsequentTrainEvent(BaseTrainEvent):
     def __init__(self, route_id: str, direction: str, train_id: str, diagram_id: str, index: int, subsequent_train: dict):
         super().__init__(route_id, direction, train_id)
         self.diagram_id = diagram_id
@@ -833,7 +833,7 @@ class AddSubsequentTrainEvent(BaseEvent):
 
 
 # 列車からの連続する列車の削除
-class RemoveSubsequentTrainEvent(BaseEvent):
+class RemoveSubsequentTrainEvent(BaseTrainEvent):
     def __init__(self, route_id: str, direction: str, train_id: str, diagram_id: str, index: int, subsequent_train: dict):
         super().__init__(route_id, direction, train_id)
         self.diagram_id = diagram_id
@@ -873,7 +873,7 @@ class RemoveSubsequentTrainEvent(BaseEvent):
 
 
 # 列車の連続する列車の変更
-class ChangeSubsequentTrainEvent(BaseEvent):
+class ChangeSubsequentTrainEvent(BaseTrainEvent):
     def __init__(self, route_id: str, direction: str, train_id: str, diagram_id: str, old_subsequent_trains: list, new_subsequent_trains: list):
         super().__init__(route_id, direction, train_id)
         self.diagram_id = diagram_id
@@ -908,7 +908,7 @@ class ChangeSubsequentTrainEvent(BaseEvent):
 
 
 # 列車の備考の変更
-class ChangeTrainNoteEvent(BaseEvent):
+class ChangeTrainNoteEvent(BaseTrainEvent):
     def __init__(self, route_id: str, direction: str, train_id: str, old_value: str, new_value: str):
         super().__init__(route_id, direction, train_id)
         self.old_value = old_value
@@ -1101,4 +1101,172 @@ class ChangeTemporaryStablingEvent(BaseTemporaryStablingEvent):
             events = op["temporary_stabling_events"]
             if 0 <= self.index < len(events):
                 events[self.index] = copy.deepcopy(self.new_stabling_event)
+
+
+# 駅構内入換情報の基底イベント
+class BaseShuntingOperationEvent(ABC):
+    """駅構内入換に関するイベントの基底クラス"""
+    def __init__(self, diagram_id: str, operation_id: str):
+        self.diagram_id = diagram_id
+        self.operation_id = operation_id
+
+    # --- 共通検証ヘルパー ---
+
+    def _validate_diagram(self, project, for_undo: bool) -> None:
+        """diagram_id に対応する運転ダイヤがプロジェクトデータに存在するか検証する"""
+        if self.diagram_id not in project.diagrams:
+            if for_undo:
+                raise HistoryExecutionError("運転ダイヤ情報が変更されたためこれ以上操作を元に戻すことができません")
+            else:
+                raise HistoryExecutionError("運転ダイヤ情報が変更されたためこれ以上操作をやり直すことができません")
+
+    def _validate_operation(self, project, for_undo: bool) -> None:
+        """operation_id に対応する車両運用がプロジェクトデータに存在するか検証する"""
+        diagram = project.diagrams.get(self.diagram_id, {})
+        if self.operation_id not in diagram.get("operations", {}):
+            if for_undo:
+                raise HistoryExecutionError("車両運用情報が変更されたためこれ以上操作を元に戻すことができません")
+            else:
+                raise HistoryExecutionError("車両運用情報が変更されたためこれ以上操作をやり直すことができません")
+
+    # -------------------------
+
+    def validate_undo(self, project) -> None:
+        """Undo実行前に整合性を検証する。不可能ならHistoryExecutionErrorを送出"""
+        pass
+
+    def validate_redo(self, project) -> None:
+        """Redo実行前に整合性を検証する。不可能ならHistoryExecutionErrorを送出"""
+        pass
+
+    @abstractmethod
+    def undo(self, project) -> None:
+        pass
+
+    @abstractmethod
+    def redo(self, project) -> None:
+        pass
+
+
+# 駅構内入換情報の追加
+class AddShuntingOperationEvent(BaseShuntingOperationEvent):
+    """
+    駅構内入換情報の追加イベント
+    - diagram_id: 運転ダイヤID
+    - operation_id: 車両運用ID
+    - index: 追加された位置（shunting_operations内のインデックス）
+    - shunting_event: 駅構内入換情報
+    """
+    def __init__(self, diagram_id: str, operation_id: str, index: int, shunting_event: dict):
+        super().__init__(diagram_id, operation_id)
+        self.index = index
+        self.shunting_event = copy.deepcopy(shunting_event)
+
+    def validate_undo(self, project) -> None:
+        self._validate_diagram(project, for_undo=True)
+        self._validate_operation(project, for_undo=True)
+
+    def validate_redo(self, project) -> None:
+        self._validate_diagram(project, for_undo=False)
+        self._validate_operation(project, for_undo=False)
+
+    def undo(self, project) -> None:
+        diagram = project.diagrams.get(self.diagram_id, {})
+        op = diagram.get("operations", {}).get(self.operation_id)
+        if op and "shunting_operations" in op:
+            events = op["shunting_operations"]
+            if 0 <= self.index < len(events):
+                events.pop(self.index)
+
+    def redo(self, project) -> None:
+        diagram = project.diagrams.get(self.diagram_id, {})
+        op = diagram.get("operations", {}).get(self.operation_id)
+        if op:
+            events = op.setdefault("shunting_operations", [])
+            if self.index >= len(events):
+                events.append(copy.deepcopy(self.shunting_event))
+            else:
+                events.insert(self.index, copy.deepcopy(self.shunting_event))
+
+
+# 駅構内入換情報の削除
+class RemoveShuntingOperationEvent(BaseShuntingOperationEvent):
+    """
+    駅構内入換情報の削除イベント
+    - diagram_id: 運転ダイヤID
+    - operation_id: 車両運用ID
+    - index: 削除前の位置（shunting_operations内のインデックス）
+    - shunting_event: 削除された元の駅構内入換情報
+    """
+    def __init__(self, diagram_id: str, operation_id: str, index: int, shunting_event: dict):
+        super().__init__(diagram_id, operation_id)
+        self.index = index
+        self.shunting_event = copy.deepcopy(shunting_event)
+
+    def validate_undo(self, project) -> None:
+        self._validate_diagram(project, for_undo=True)
+        self._validate_operation(project, for_undo=True)
+
+    def validate_redo(self, project) -> None:
+        self._validate_diagram(project, for_undo=False)
+        self._validate_operation(project, for_undo=False)
+
+    def undo(self, project) -> None:
+        diagram = project.diagrams.get(self.diagram_id, {})
+        op = diagram.get("operations", {}).get(self.operation_id)
+        if op:
+            events = op.setdefault("shunting_operations", [])
+            if self.index >= len(events):
+                events.append(copy.deepcopy(self.shunting_event))
+            else:
+                events.insert(self.index, copy.deepcopy(self.shunting_event))
+
+    def redo(self, project) -> None:
+        diagram = project.diagrams.get(self.diagram_id, {})
+        op = diagram.get("operations", {}).get(self.operation_id)
+        if op and "shunting_operations" in op:
+            events = op["shunting_operations"]
+            if 0 <= self.index < len(events):
+                events.pop(self.index)
+
+
+# 駅構内入換情報の変更
+class ChangeShuntingOperationEvent(BaseShuntingOperationEvent):
+    """
+    駅構内入換情報の変更イベント
+    - diagram_id: 運転ダイヤID
+    - operation_id: 車両運用ID
+    - index: 変更対象の位置
+    - old_shunting_event: 変更前の値
+    - new_shunting_event: 変更後の値
+    """
+    def __init__(self, diagram_id: str, operation_id: str, index: int, old_shunting_event: dict, new_shunting_event: dict):
+        super().__init__(diagram_id, operation_id)
+        self.index = index
+        self.old_shunting_event = copy.deepcopy(old_shunting_event)
+        self.new_shunting_event = copy.deepcopy(new_shunting_event)
+
+    def validate_undo(self, project) -> None:
+        self._validate_diagram(project, for_undo=True)
+        self._validate_operation(project, for_undo=True)
+
+    def validate_redo(self, project) -> None:
+        self._validate_diagram(project, for_undo=False)
+        self._validate_operation(project, for_undo=False)
+
+    def undo(self, project) -> None:
+        diagram = project.diagrams.get(self.diagram_id, {})
+        op = diagram.get("operations", {}).get(self.operation_id)
+        if op and "shunting_operations" in op:
+            events = op["shunting_operations"]
+            if 0 <= self.index < len(events):
+                events[self.index] = copy.deepcopy(self.old_shunting_event)
+
+    def redo(self, project) -> None:
+        diagram = project.diagrams.get(self.diagram_id, {})
+        op = diagram.get("operations", {}).get(self.operation_id)
+        if op and "shunting_operations" in op:
+            events = op["shunting_operations"]
+            if 0 <= self.index < len(events):
+                events[self.index] = copy.deepcopy(self.new_shunting_event)
 

@@ -5,34 +5,36 @@ import sys
 import os
 import subprocess
 import webbrowser
-from PySide6.QtCore import Qt, QFile, QTextStream, QSize, QTimer
+from PySide6.QtCore import Qt, QFile, QTextStream, QSize, QTimer, QPoint, QModelIndex
 from PySide6.QtGui import QIcon, QAction, QPixmap, QTransform
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QStyleFactory,
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QPushButton, QFileDialog, QMessageBox, QDialog, QLabel, QComboBox,
     QListWidget, QListWidgetItem, QStackedWidget, QLineEdit,
-    QTabBar, QHeaderView, QMenu, QAbstractItemView, QFrame
+    QTabBar, QHeaderView, QMenu, QAbstractItemView, QFrame,
+    QRadioButton, QCheckBox, QScrollArea, QButtonGroup
 )
 import assets_rc
 from version import APP_NAME, __version__, MANUAL_URL
 from core.project import OptDiaProject, load_project, SchemaVersionError
 from core.history_manager import HistoryManager
 from core.settings import AppSettings
-from common.gui_utils import HtmlDelegate, create_color_square_pixmap
-from common.widgets import LineSampleWidget
+from common.widgets import HoverPopupLabel, HoverPopupWindow
 from dialogs.route import AddRouteDialog, SelectSegmentDialog, SplitSegmentDialog, RouteEditorDialog
 from dialogs.diagram import AddDiagramDialog, DiagramEditorDialog
 from dialogs.line_station import LineStationEditorDialog
 from dialogs.train_type import AddTrainTypeDialog, TrainTypeEditorDialog
 from dialogs.operation import VehicleOperationEditorDialog
 from previews.operation_detail import OperationDetailPreviewDialog
+from dialogs.agency import AgencyEditorDialog
 from dialogs.project_meta import ProjectPropertiesDialog
 from dialogs.preferences import PreferencesDialog
 from dialogs.about import AboutDialog
 from timetable.model import TimetableModel
 from timetable.view import TimetableView, TimetableVerticalHeader
 from timetable.delegate import TimetableDelegate
+from timetable.dialogs import AutoGenerateTrainNumberDialog
 from timeline.view import TimelineView, TimelineHeaderView
 from diagram.view import DiagramView, DiagramHeaderView, DiagramStationView
 
@@ -122,6 +124,8 @@ class MainWindow(QMainWindow):
         self.route_list_widget.setDragDropMode(QListWidget.InternalMove)
         self.route_list_widget.model().rowsMoved.connect(self._on_routes_reordered)
         self.route_list_widget.itemSelectionChanged.connect(lambda: self._on_timetable_settings_changed(reset_scroll_pos=False))
+        self.route_list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.route_list_widget.customContextMenuRequested.connect(self._on_route_list_context_menu)
         route_layout.addWidget(self.route_list_widget)
 
         # サイドバーの残りスペースを2等分するため、stretch=1 を指定
@@ -149,6 +153,8 @@ class MainWindow(QMainWindow):
         self.diagram_list_widget.setDragDropMode(QListWidget.InternalMove)
         self.diagram_list_widget.model().rowsMoved.connect(self._on_diagrams_reordered)
         self.diagram_list_widget.itemSelectionChanged.connect(self._on_diagram_selected_in_main_window)
+        self.diagram_list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.diagram_list_widget.customContextMenuRequested.connect(self._on_diagram_list_context_menu)
         diagram_layout.addWidget(self.diagram_list_widget)
 
         # サイドバーの残りスペースを2等分するため、stretch=1 を指定
@@ -426,53 +432,17 @@ class MainWindow(QMainWindow):
         self.diagram_line_combo.currentIndexChanged.connect(self._on_diagram_line_combo_changed)
         diagram_header_layout.addWidget(self.diagram_line_combo)
 
-        # 列車種別フィルタコンボボックス
-        self.diagram_type_combo = QComboBox()
-        self.diagram_type_combo.setFixedWidth(120)
-        self.diagram_type_combo.currentIndexChanged.connect(self._on_diagram_type_combo_changed)
-        diagram_header_layout.addWidget(self.diagram_type_combo)
+        # 「フィルタ」ラベルとホバーポップアップウィジェット
+        self.lbl_diagram_filter = HoverPopupLabel('<img src=":/assets/filter.png" style="width: 20; vertical-align: middle;"> <span style="font-size: 12px;">フィルタ</span>')
+        diagram_header_layout.addWidget(self.lbl_diagram_filter)
+        self._init_diagram_filter_popup()
 
         diagram_header_layout.addStretch(1)
 
-        # ダイヤグラム表示幅コンボボックス (狭め: 3px/分, 標準: 6px/分, やや広め: 15px/分, 広め: 30px/分)
-        lbl_diag_width = QLabel("表示幅:")
-        diagram_header_layout.addWidget(lbl_diag_width)
-
-        self.diagram_width_combo = QComboBox()
-        self.diagram_width_combo.setFixedWidth(80)
-        self.diagram_width_combo.addItem("狭め", "narrow")
-        self.diagram_width_combo.addItem("標準", "standard")
-        self.diagram_width_combo.addItem("やや広め", "slightly_wide")
-        self.diagram_width_combo.addItem("広め", "wide")
-
-        saved_diag_width = self.app_settings.load_diagram_width_scale()
-        idx_dw = self.diagram_width_combo.findData(saved_diag_width)
-        if idx_dw >= 0:
-            self.diagram_width_combo.setCurrentIndex(idx_dw)
-        else:
-            self.diagram_width_combo.setCurrentIndex(1) # 標準
-        self.diagram_width_combo.currentIndexChanged.connect(self._on_diagram_width_changed)
-        diagram_header_layout.addWidget(self.diagram_width_combo)
-
-        # ダイヤグラム表示高さコンボボックス (狭め: 6秒/px, 標準: 3秒/px, やや広め: 2秒/px, 広め: 1秒/px)
-        lbl_diag_height = QLabel("表示高さ:")
-        diagram_header_layout.addWidget(lbl_diag_height)
-
-        self.diagram_height_combo = QComboBox()
-        self.diagram_height_combo.setFixedWidth(80)
-        self.diagram_height_combo.addItem("狭め", "narrow")
-        self.diagram_height_combo.addItem("標準", "standard")
-        self.diagram_height_combo.addItem("やや広め", "slightly_wide")
-        self.diagram_height_combo.addItem("広め", "wide")
-
-        saved_diag_height = self.app_settings.load_diagram_height_scale()
-        idx_dh = self.diagram_height_combo.findData(saved_diag_height)
-        if idx_dh >= 0:
-            self.diagram_height_combo.setCurrentIndex(idx_dh)
-        else:
-            self.diagram_height_combo.setCurrentIndex(1) # 標準
-        self.diagram_height_combo.currentIndexChanged.connect(self._on_diagram_height_changed)
-        diagram_header_layout.addWidget(self.diagram_height_combo)
+        # 「表示設定」ラベルとホバーポップアップウィジェット
+        self.lbl_diagram_display_settings = HoverPopupLabel('<img src=":/assets/customize.png" style="width: 20; vertical-align: middle;"> <span style="font-size: 12px;">表示設定</span>')
+        diagram_header_layout.addWidget(self.lbl_diagram_display_settings)
+        self._init_diagram_display_settings_popup()
 
         # 運行ダイヤグラム用の検索ボックス
         self.diag_search_edit = QLineEdit()
@@ -699,6 +669,8 @@ class MainWindow(QMainWindow):
         open_project_action = file_menu.addAction("プロジェクトを開く(&O)")
         open_project_action.setShortcut("Ctrl+O")
         open_project_action.triggered.connect(self._on_open_project)
+        self.recent_files_menu = file_menu.addMenu("最近開いたプロジェクト(&R)")
+        self._update_recent_files_menu() # メニューを初期化
         file_menu.addSeparator()
         save_action = file_menu.addAction("上書き保存(&S)")
         save_action.setShortcut("Ctrl+S")
@@ -706,16 +678,16 @@ class MainWindow(QMainWindow):
         save_as_action = file_menu.addAction("名前を付けて保存(&A)")
         save_as_action.setShortcut("Ctrl+Shift+S")
         save_as_action.triggered.connect(self._on_save_as_project)
+        file_menu.addSeparator()
         import_csv_action = file_menu.addAction("時刻表をCSVからインポート")
         import_csv_action.triggered.connect(self._on_import_csv)
         export_csv_action = file_menu.addAction("時刻表をCSVにエクスポート")
         export_csv_action.triggered.connect(self._on_export_csv)
         file_menu.addSeparator()
         properties_action = file_menu.addAction("プロジェクトのプロパティ")
-        file_menu.addSeparator()
         properties_action.triggered.connect(self._on_project_properties)
-        self.recent_files_menu = file_menu.addMenu("最近開いたプロジェクト(&R)")
-        self._update_recent_files_menu() # メニューを初期化
+        agency_action = file_menu.addAction("鉄道事業者情報の編集")
+        agency_action.triggered.connect(self._on_edit_agencies)
         file_menu.addSeparator()
         exit_action = file_menu.addAction("終了(&Q)")
         exit_action.setShortcut("Ctrl+Q")
@@ -752,6 +724,11 @@ class MainWindow(QMainWindow):
         self.adjust_later_action.setChecked(self.app_settings.load_adjust_later_enabled())
         self.adjust_later_action.triggered.connect(self._on_adjust_later_triggered)
         edit_menu.addAction(self.adjust_later_action)
+        edit_menu.addSeparator()
+
+        # 「列車番号の自動生成」
+        self.auto_generate_train_number_action = edit_menu.addAction("列車番号の自動生成")
+        self.auto_generate_train_number_action.triggered.connect(self._on_auto_generate_train_number)
 
         # 設定(S)
         settings_menu = menu_bar.addMenu("設定(&S)")
@@ -793,6 +770,43 @@ class MainWindow(QMainWindow):
         """「発着時刻の変更時に後の駅の発着時刻も増減」チェックボックスのトリガーハンドラ"""
         self.timetable_model.set_adjust_later_enabled(checked)
         self.app_settings.save_adjust_later_enabled(checked)
+
+    def _on_auto_generate_train_number(self):
+        """「列車番号の自動生成」アクションのハンドラ"""
+        # メインウィンドウで時刻表テーブルが表示されているか判定
+        is_timetable_visible = (
+            self.right_stack.currentIndex() == 0 and
+            self.timetable_content_stack.currentIndex() == 0 and
+            self.main_tab_bar.currentIndex() in (0, 1)
+        )
+        if not is_timetable_visible:
+            QMessageBox.critical(self, "エラー", "この機能は時刻表の編集中にのみ使用可能です")
+            return
+
+        route_item = self.route_list_widget.currentItem()
+        diagram_item = self.diagram_list_widget.currentItem()
+        route_id = route_item.data(Qt.UserRole) if route_item else None
+        diagram_id = diagram_item.data(Qt.UserRole) if diagram_item else None
+
+        if not route_id or not diagram_id:
+            QMessageBox.critical(self, "エラー", "この機能は時刻表の編集中にのみ使用可能です")
+            return
+
+        def on_completed(events):
+            if events:
+                self.set_modified(True)
+                self.timetable_model.update_data(self.timetable_model.route_id, self.timetable_model.diagram_id, self.timetable_model.direction)
+                self.timetable_model.dataChanged.emit(QModelIndex(), QModelIndex(), [])
+
+        dialog = AutoGenerateTrainNumberDialog(
+            self,
+            self.project,
+            route_id,
+            diagram_id,
+            history_manager=self.history_manager,
+            on_completed=on_completed
+        )
+        dialog.exec()
 
     def _update_recent_files_menu(self):
         """最近開いたプロジェクトメニューを更新する"""
@@ -951,6 +965,11 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.Accepted:
             self.set_modified(True)
 
+    def _on_edit_agencies(self):
+        """鉄道事業者情報編集ダイアログを表示する"""
+        dialog = AgencyEditorDialog(self, self.project)
+        dialog.exec()
+
     def _on_preferences(self):
         """環境設定ダイアログを表示する"""
         dialog = PreferencesDialog(self, self.app_settings)
@@ -973,6 +992,30 @@ class MainWindow(QMainWindow):
         dialog = TrainTypeEditorDialog(self, self.project)
         dialog.exec()
         self._on_timetable_settings_changed()
+
+    def _on_route_list_context_menu(self, pos: QPoint):
+        """運行系統リストの右クリックメニューを表示する"""
+        item = self.route_list_widget.itemAt(pos)
+        if item is None:
+            return
+        self.route_list_widget.setCurrentItem(item)
+        menu = QMenu(self)
+        edit_action = menu.addAction("この運行系統を編集")
+        action = menu.exec(self.route_list_widget.viewport().mapToGlobal(pos))
+        if action == edit_action:
+            self._on_edit_routes()
+
+    def _on_diagram_list_context_menu(self, pos: QPoint):
+        """運転ダイヤリストの右クリックメニューを表示する"""
+        item = self.diagram_list_widget.itemAt(pos)
+        if item is None:
+            return
+        self.diagram_list_widget.setCurrentItem(item)
+        menu = QMenu(self)
+        edit_action = menu.addAction("この運転ダイヤを編集")
+        action = menu.exec(self.diagram_list_widget.viewport().mapToGlobal(pos))
+        if action == edit_action:
+            self._on_edit_diagrams()
 
     def _on_edit_routes(self):
         """運行系統編集ウィンドウを表示する"""
@@ -1022,7 +1065,7 @@ class MainWindow(QMainWindow):
             # ダイヤグラムタブ選択時
             # 運行系統リストの有効/無効は路線選択コンボボックスの状態に応じる
             self._update_diagram_line_combo()
-            self._update_diagram_type_combo()
+            self._update_diagram_filter_content()
             is_route_selected = (self.diagram_line_combo.currentData() == "route")
             self.route_list_widget.setEnabled(is_route_selected)
         elif tab_index == 3:
@@ -1107,6 +1150,30 @@ class MainWindow(QMainWindow):
         if idx.isValid():
             self.timetable_view.setCurrentIndex(idx)
             self.timetable_view.scrollTo(idx, QAbstractItemView.PositionAtCenter)
+
+    def edit_train_in_timetable(self, route_id: str, direction: str, train_id: str):
+        """指定された列車を時刻表で編集するためにタブを切り替え、該当列車の列車番号セルを選択する"""
+        # 1. 運行系統の選択を切り替え（該当の route_id があれば）
+        if route_id and hasattr(self, "route_list_widget"):
+            for i in range(self.route_list_widget.count()):
+                item = self.route_list_widget.item(i)
+                if item and item.data(Qt.UserRole) == route_id:
+                    self.route_list_widget.setCurrentRow(i)
+                    break
+
+        # 2. 上り/下りに応じてタブを切り替え
+        # 0: 下り時刻表, 1: 上り時刻表
+        tab_index = 1 if direction == "inbound" else 0
+        if self.main_tab_bar.currentIndex() != tab_index:
+            self.main_tab_bar.setCurrentIndex(tab_index)
+        else:
+            # 既に該当タブが開かれている場合でも、運行系統やデータの更新を確実に行う
+            self._on_timetable_settings_changed()
+
+        # 3. 時刻表モデル内の列車列を探して選択
+        if train_id in self.timetable_model.train_ids:
+            col = self.timetable_model.train_ids.index(train_id)
+            self._select_train_column(col)
 
     def _on_train_search_text_changed(self, text: str):
         """列車番号検索テキストが変更されたときの処理"""
@@ -1403,40 +1470,303 @@ class MainWindow(QMainWindow):
         self.route_list_widget.setEnabled(is_route_selected)
         self._update_diagram_view()
 
-    def _update_diagram_type_combo(self):
-        """ダイヤグラム上部の列車種別フィルタコンボボックスの選択肢を更新する"""
-        current_data = self.diagram_type_combo.currentData()
+    def _init_diagram_filter_popup(self):
+        """ダイヤグラムの「フィルタ」ポップアップウィジェットを初期化する"""
+        self.diagram_filter_popup = HoverPopupWindow(self.lbl_diagram_filter)
+        self.diagram_filter_popup.setFixedWidth(240)
+        
+        frame = QFrame(self.diagram_filter_popup)
+        frame.setProperty("class", "popup_frame")
+        popup_layout = QVBoxLayout(self.diagram_filter_popup)
+        popup_layout.setContentsMargins(0, 0, 0, 0)
+        popup_layout.addWidget(frame)
 
-        self.diagram_type_combo.blockSignals(True)
-        self.diagram_type_combo.clear()
+        frame_layout = QVBoxLayout(frame)
+        frame_layout.setContentsMargins(10, 10, 10, 10)
+        frame_layout.setSpacing(6)
 
-        # 選択肢1: 「全ての種別」(Noneをデータとして使用)
-        self.diagram_type_combo.addItem("全ての種別", None)
+        lbl_target = QLabel("表示フィルタリング対象:")
+        lbl_target.setStyleSheet("font-weight: bold;")
+        frame_layout.addWidget(lbl_target)
 
-        # 選択肢2以降: プロジェクトデータに登録されている各列車種別
+        self.radio_filter_all = QRadioButton("全て表示")
+        self.radio_filter_type = QRadioButton("列車種別")
+        self.radio_filter_operation = QRadioButton("車両運用")
+
+        self.filter_button_group = QButtonGroup(self)
+        self.filter_button_group.addButton(self.radio_filter_all, 0)
+        self.filter_button_group.addButton(self.radio_filter_type, 1)
+        self.filter_button_group.addButton(self.radio_filter_operation, 2)
+        self.radio_filter_all.setChecked(True)
+
+        self.filter_button_group.idToggled.connect(self._on_filter_target_radio_toggled)
+
+        frame_layout.addWidget(self.radio_filter_all)
+        frame_layout.addWidget(self.radio_filter_type)
+        frame_layout.addWidget(self.radio_filter_operation)
+
+        # スタックドウィジェット
+        self.diagram_filter_stack = QStackedWidget()
+
+        # ページ0: 「全て表示」選択時（表示内容なし）
+        page_all = QWidget()
+        self.diagram_filter_stack.addWidget(page_all)
+
+        # ページ1: 「列車種別」選択時（スクロール可能領域内に各列車種別のチェックボックス）
+        page_type = QWidget()
+        page_type_layout = QVBoxLayout(page_type)
+        page_type_layout.setContentsMargins(0, 5, 0, 0)
+        page_type_layout.setSpacing(4)
+
+        self.type_filter_scroll = QScrollArea()
+        self.type_filter_scroll.setWidgetResizable(True)
+        self.type_filter_scroll.setMaximumHeight(180)
+        self.type_filter_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.type_filter_scroll.setFrameShape(QFrame.NoFrame)
+
+        self.type_filter_container = QWidget()
+        self.type_filter_container.setProperty("class", "scroll_content")
+        self.type_filter_layout = QVBoxLayout(self.type_filter_container)
+        self.type_filter_layout.setContentsMargins(4, 4, 4, 4)
+        self.type_filter_layout.setSpacing(4)
+        self.type_filter_layout.setAlignment(Qt.AlignTop)
+        self.type_filter_scroll.setWidget(self.type_filter_container)
+
+        page_type_layout.addWidget(self.type_filter_scroll)
+        self.diagram_filter_stack.addWidget(page_type)
+
+        # ページ2: 「車両運用」選択時
+        page_op = QWidget()
+        page_op_layout = QVBoxLayout(page_op)
+        page_op_layout.setContentsMargins(0, 5, 0, 0)
+        page_op_layout.setSpacing(4)
+
+        lbl_op_group = QLabel("運用グループ:")
+        page_op_layout.addWidget(lbl_op_group)
+
+        self.filter_op_group_combo = QComboBox()
+        self.filter_op_group_combo.setFixedHeight(28)
+        self.filter_op_group_combo.currentIndexChanged.connect(self._on_filter_op_group_changed)
+        page_op_layout.addWidget(self.filter_op_group_combo)
+
+        lbl_op_num = QLabel("運用番号:")
+        page_op_layout.addWidget(lbl_op_num)
+
+        self.filter_op_num_combo = QComboBox()
+        self.filter_op_num_combo.setFixedHeight(28)
+        self.filter_op_num_combo.currentIndexChanged.connect(self._on_filter_op_num_changed)
+        page_op_layout.addWidget(self.filter_op_num_combo)
+
+        page_op_layout.addStretch()
+
+        self.diagram_filter_stack.addWidget(page_op)
+
+        frame_layout.addWidget(self.diagram_filter_stack)
+
+        self.type_checkboxes = {}  # {tt_id: QCheckBox}
+
+    def _init_diagram_display_settings_popup(self):
+        """ダイヤグラムの「表示設定」ポップアップウィジェットを初期化する"""
+        self.diagram_settings_popup = HoverPopupWindow(self.lbl_diagram_display_settings)
+        self.diagram_settings_popup.setFixedWidth(180)
+
+        frame = QFrame(self.diagram_settings_popup)
+        frame.setProperty("class", "popup_frame")
+        popup_layout = QVBoxLayout(self.diagram_settings_popup)
+        popup_layout.setContentsMargins(0, 0, 0, 0)
+        popup_layout.addWidget(frame)
+
+        frame_layout = QVBoxLayout(frame)
+        frame_layout.setContentsMargins(10, 10, 10, 10)
+        frame_layout.setSpacing(6)
+
+        # ダイヤグラム表示幅コンボボックス
+        lbl_diag_width = QLabel("表示幅:")
+        frame_layout.addWidget(lbl_diag_width)
+
+        self.diagram_width_combo = QComboBox()
+        self.diagram_width_combo.setFixedHeight(28)
+        self.diagram_width_combo.addItem("狭め", "narrow")
+        self.diagram_width_combo.addItem("標準", "standard")
+        self.diagram_width_combo.addItem("やや広め", "slightly_wide")
+        self.diagram_width_combo.addItem("広め", "wide")
+
+        saved_diag_width = self.app_settings.load_diagram_width_scale()
+        idx_dw = self.diagram_width_combo.findData(saved_diag_width)
+        if idx_dw >= 0:
+            self.diagram_width_combo.setCurrentIndex(idx_dw)
+        else:
+            self.diagram_width_combo.setCurrentIndex(1) # 標準
+        self.diagram_width_combo.currentIndexChanged.connect(self._on_diagram_width_changed)
+        frame_layout.addWidget(self.diagram_width_combo)
+
+        # ダイヤグラム表示高さコンボボックス
+        lbl_diag_height = QLabel("表示高さ:")
+        frame_layout.addWidget(lbl_diag_height)
+
+        self.diagram_height_combo = QComboBox()
+        self.diagram_height_combo.setFixedHeight(28)
+        self.diagram_height_combo.addItem("自動", "auto")
+        self.diagram_height_combo.addItem("狭め", "narrow")
+        self.diagram_height_combo.addItem("標準", "standard")
+        self.diagram_height_combo.addItem("やや広め", "slightly_wide")
+        self.diagram_height_combo.addItem("広め", "wide")
+
+        saved_diag_height = self.app_settings.load_diagram_height_scale()
+        idx_dh = self.diagram_height_combo.findData(saved_diag_height)
+        if idx_dh >= 0:
+            self.diagram_height_combo.setCurrentIndex(idx_dh)
+        else:
+            self.diagram_height_combo.setCurrentIndex(0) # デフォルトは「自動」
+        self.diagram_height_combo.currentIndexChanged.connect(self._on_diagram_height_changed)
+        frame_layout.addWidget(self.diagram_height_combo)
+
+        # 「発着番線占有表を表示」チェックボックス
+        self.cb_show_track_allocation_chart = QCheckBox("発着番線占有表を表示")
+        self.cb_show_track_allocation_chart.setChecked(self.app_settings.load_diagram_show_track_allocation_chart())
+        self.cb_show_track_allocation_chart.toggled.connect(self._on_diagram_show_track_allocation_chart_toggled)
+        frame_layout.addWidget(self.cb_show_track_allocation_chart)
+
+    def _on_diagram_show_track_allocation_chart_toggled(self, checked: bool):
+        """「発着番線占有表を表示」チェックボックス切り替え時"""
+        self.app_settings.save_diagram_show_track_allocation_chart(checked)
+        self._update_diagram_view()
+
+    def _on_filter_target_radio_toggled(self, btn_id: int, checked: bool):
+        """フィルタ対象ラジオボタンの切り替え時"""
+        if not checked:
+            return
+        self.diagram_filter_stack.setCurrentIndex(btn_id)
+        if btn_id == 1:
+            self._update_diagram_type_filter()
+        elif btn_id == 2:
+            self._update_filter_op_group_combo()
+        self._update_diagram_view()
+
+    def _update_diagram_filter_content(self):
+        """プロジェクトデータや選択中ダイヤに応じてフィルタポップアップの各種項目を更新する"""
+        self._update_diagram_type_filter()
+        self._update_filter_op_group_combo()
+
+    def _update_diagram_type_filter(self):
+        """プロジェクトデータに存在する全ての列車種別をチェックボックスとして構築する"""
+        if not hasattr(self, "type_checkboxes"):
+            return
+        
+        # 以前のチェック状態を保持
+        prev_states = {ttid: cb.isChecked() for ttid, cb in self.type_checkboxes.items()}
+
+        # 既存のチェックボックスをレイアウトから削除
+        while self.type_filter_layout.count() > 0:
+            item = self.type_filter_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+        self.type_checkboxes = {}
+
         for ttid in self.project.train_types_order:
             tt = self.project.train_types.get(ttid, {})
             tt_name = tt.get("train_type_name", ttid)
             t_name = tt.get("train_name")
-            if t_name:
-                self.diagram_type_combo.addItem(f"{tt_name} {t_name}", ttid)
-            else:
-                self.diagram_type_combo.addItem(tt_name, ttid)
+            display_text = f"{tt_name} {t_name}" if t_name else tt_name
 
-        # 以前選択していた値があれば再選択
-        if current_data is not None:
-            idx = self.diagram_type_combo.findData(current_data)
-            if idx >= 0:
-                self.diagram_type_combo.setCurrentIndex(idx)
-            else:
-                self.diagram_type_combo.setCurrentIndex(0)
+            cb = QCheckBox(display_text)
+            cb.setFixedHeight(24)
+            cb.setStyleSheet("font-size: 13px;")
+            # 以前の状態があれば復元、なければFalse（デフォルトでチェックなし）
+            is_checked = prev_states.get(ttid, False)
+            cb.setChecked(is_checked)
+            cb.toggled.connect(lambda checked, _ttid=ttid: self._on_type_checkbox_toggled(_ttid, checked))
+
+            self.type_filter_layout.addWidget(cb)
+            self.type_checkboxes[ttid] = cb
+
+    def _on_type_checkbox_toggled(self, ttid: str, checked: bool):
+        """列車種別チェックボックス変更時"""
+        self._update_diagram_view()
+
+    def _update_filter_op_group_combo(self):
+        """選択されているダイヤに応じて車両運用グループのコンボボックスを更新する"""
+        if not hasattr(self, "filter_op_group_combo"):
+            return
+
+        diagram_item = self.diagram_list_widget.currentItem()
+        diagram_id = diagram_item.data(Qt.UserRole) if diagram_item else None
+
+        diagram = self.project.diagrams.get(diagram_id, {}) if diagram_id else {}
+        op_groups_order = diagram.get("operation_groups_order", [])
+        op_groups = diagram.get("operation_groups", {})
+
+        current_og_id = self.filter_op_group_combo.currentData()
+
+        self.filter_op_group_combo.blockSignals(True)
+        self.filter_op_group_combo.clear()
+
+        if not op_groups_order:
+            self.filter_op_group_combo.setEnabled(False)
         else:
-            self.diagram_type_combo.setCurrentIndex(0)
+            self.filter_op_group_combo.setEnabled(True)
+            for og_id in op_groups_order:
+                og = op_groups.get(og_id, {})
+                og_name = og.get("operation_group_name", "")
+                self.filter_op_group_combo.addItem(og_name, og_id)
 
-        self.diagram_type_combo.blockSignals(False)
+            idx = self.filter_op_group_combo.findData(current_og_id)
+            if idx >= 0:
+                self.filter_op_group_combo.setCurrentIndex(idx)
+            else:
+                self.filter_op_group_combo.setCurrentIndex(0)
 
-    def _on_diagram_type_combo_changed(self, index: int):
-        """ダイヤグラム上部の列車種別フィルタコンボボックスの変更時"""
+        self.filter_op_group_combo.blockSignals(False)
+        self._update_filter_op_num_combo()
+
+    def _on_filter_op_group_changed(self, index: int):
+        """運用グループコンボボックス変更時"""
+        self._update_filter_op_num_combo()
+        self._update_diagram_view()
+
+    def _update_filter_op_num_combo(self):
+        """選択中の運用グループに属する運用番号コンボボックスの選択肢を更新する"""
+        if not hasattr(self, "filter_op_num_combo"):
+            return
+
+        diagram_item = self.diagram_list_widget.currentItem()
+        diagram_id = diagram_item.data(Qt.UserRole) if diagram_item else None
+        diagram = self.project.diagrams.get(diagram_id, {}) if diagram_id else {}
+
+        current_og_id = self.filter_op_group_combo.currentData()
+        op_groups = diagram.get("operation_groups", {})
+        operations = diagram.get("operations", {})
+
+        current_op_id = self.filter_op_num_combo.currentData()
+
+        self.filter_op_num_combo.blockSignals(True)
+        self.filter_op_num_combo.clear()
+
+        if not current_og_id or current_og_id not in op_groups:
+            self.filter_op_num_combo.setEnabled(False)
+        else:
+            self.filter_op_num_combo.setEnabled(True)
+            # 最上部に「全ての運用」を追加
+            self.filter_op_num_combo.addItem("全ての運用", "__ALL__")
+
+            og = op_groups[current_og_id]
+            for op_id in og.get("operations", []):
+                op = operations.get(op_id, {})
+                op_num = op.get("operation_number", op_id)
+                self.filter_op_num_combo.addItem(str(op_num), op_id)
+
+            idx = self.filter_op_num_combo.findData(current_op_id)
+            if idx >= 0:
+                self.filter_op_num_combo.setCurrentIndex(idx)
+            else:
+                self.filter_op_num_combo.setCurrentIndex(0)
+
+        self.filter_op_num_combo.blockSignals(False)
+
+    def _on_filter_op_num_changed(self, index: int):
+        """運用番号コンボボックス変更時"""
         self._update_diagram_view()
 
     def _get_timeline_scale_x(self) -> float:
@@ -1461,9 +1791,26 @@ class MainWindow(QMainWindow):
         }
         return mapping.get(key, 6.0)
 
-    def _get_diagram_scale_y(self) -> float:
+    def _get_diagram_scale_y(self, selected_target=None, route_id=None) -> float:
         """選択中のダイヤグラム表示高さに応じたスケール値 (px/秒) を返す"""
         key = self.diagram_height_combo.currentData() if hasattr(self, "diagram_height_combo") else "standard"
+        if key == "auto":
+            # ビューの表示高さにシーンの上下サイズがちょうど収まる倍率を計算
+            if hasattr(self, "diagram_view") and hasattr(self.diagram_view, "scene"):
+                viewport_h = self.diagram_view.viewport().height()
+                # 初期化直後などでビューポートの高さがまだ確定していない場合のフォールバック
+                if viewport_h <= 0:
+                    viewport_h = self.diagram_view.height()
+                target = selected_target or (self.diagram_line_combo.currentData() if hasattr(self, "diagram_line_combo") else "route") or "route"
+                if route_id is None and hasattr(self, "route_list_widget"):
+                    item = self.route_list_widget.currentItem()
+                    route_id = item.data(Qt.UserRole) if item else None
+                show_track_chart = self.cb_show_track_allocation_chart.isChecked() if hasattr(self, "cb_show_track_allocation_chart") else self.app_settings.load_diagram_show_track_allocation_chart()
+                auto_scale = self.diagram_view.scene.calculate_auto_scale_y(viewport_h, self.project, target, route_id, show_track_allocation_chart=show_track_chart)
+                if auto_scale is not None and auto_scale > 0:
+                    return auto_scale
+            return 1.0 / 3.0
+
         mapping = {
             "narrow": 1.0 / 6.0,
             "standard": 1.0 / 3.0,
@@ -1507,18 +1854,41 @@ class MainWindow(QMainWindow):
         route_id = route_item.data(Qt.UserRole) if route_item else None
         diagram_id = diagram_item.data(Qt.UserRole) if diagram_item else None
 
-        # 列車種別フィルタ (「全ての種別」の場合はNone)
-        filter_train_type_id = self.diagram_type_combo.currentData() if hasattr(self, "diagram_type_combo") else None
+        filter_train_type_ids = None
+        filter_operation_ids = None
+
+        if hasattr(self, "radio_filter_type") and self.radio_filter_type.isChecked():
+            # チェックされている列車種別IDの集合
+            filter_train_type_ids = {
+                ttid for ttid, cb in self.type_checkboxes.items() if cb.isChecked()
+            }
+        elif hasattr(self, "radio_filter_operation") and self.radio_filter_operation.isChecked():
+            # 選択されている運用ID
+            selected_op = self.filter_op_num_combo.currentData() if hasattr(self, "filter_op_num_combo") else None
+            if selected_op == "__ALL__":
+                # グループ内の全ての運用ID
+                current_og_id = self.filter_op_group_combo.currentData() if hasattr(self, "filter_op_group_combo") else None
+                diagram = self.project.diagrams.get(diagram_id, {}) if diagram_id else {}
+                og = diagram.get("operation_groups", {}).get(current_og_id, {})
+                filter_operation_ids = set(og.get("operations", []))
+            elif selected_op:
+                filter_operation_ids = {selected_op}
+            else:
+                filter_operation_ids = set()
+
+        show_track_chart = self.cb_show_track_allocation_chart.isChecked() if hasattr(self, "cb_show_track_allocation_chart") else self.app_settings.load_diagram_show_track_allocation_chart()
 
         scale_x = self._get_diagram_scale_x()
-        scale_y = self._get_diagram_scale_y()
+        scale_y = self._get_diagram_scale_y(selected_target=selected_target, route_id=route_id)
 
         self.diagram_view.scene.set_scales(scale_x, scale_y)
         self.diagram_header_view.scene.set_scale_x(scale_x)
 
         stations_data = self.diagram_view.update_diagram(
             self.project, selected_target, route_id, diagram_id,
-            filter_train_type_id=filter_train_type_id
+            filter_train_type_ids=filter_train_type_ids,
+            filter_operation_ids=filter_operation_ids,
+            show_track_allocation_chart=show_track_chart
         )
         self.diagram_header_view.update_header()
         self.diagram_station_view.update_stations(self.project, stations_data)

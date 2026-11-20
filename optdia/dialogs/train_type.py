@@ -4,11 +4,11 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QMessageBox, QLabel,
     QLineEdit, QListWidget, QListWidgetItem,
     QCheckBox, QColorDialog, QStackedWidget, QComboBox, QFormLayout,
-    QWidget, QPushButton
+    QWidget, QPushButton, QMenu
 )
 from core.project import OptDiaProject, generate_random_id
 from common.gui_utils import HtmlDelegate, create_color_square_pixmap
-from common.widgets import LineSampleWidget, ColorPickerWidget
+from common.widgets import LineSampleWidget, ColorPickerWidget, HelpLabel
 
 # 列車種別の追加ダイアログ
 class AddTrainTypeDialog(QDialog):
@@ -66,30 +66,33 @@ class TrainTypeEditorDialog(QDialog):
         super().__init__(parent)
         self.project = project
         self.setWindowTitle("種別情報")
-        self.setFixedSize(720, 540)
+        self.setFixedSize(720, 640)
 
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # 左側の垂直レイアウト (幅180px固定)
+        # 左側の垂直レイアウト (幅200px固定)
         left_panel = QWidget()
-        left_panel.setFixedWidth(180)
+        left_panel.setFixedWidth(200)
         left_panel.setProperty("class", "dialog_sidebar")
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(10, 10, 10, 10)
         left_layout.setSpacing(5)
 
         left_layout.addWidget(QLabel("<b>種別の一覧</b>"))
-        
+
+        # 列車種別リスト
         self.train_type_list_widget = QListWidget()
         self.train_type_list_widget.setStyleSheet("font-size: 12px;")
         self.train_type_list_widget.setItemDelegate(HtmlDelegate(self))
         self.train_type_list_widget.setDragDropMode(QListWidget.InternalMove)
         self.train_type_list_widget.itemSelectionChanged.connect(self._on_train_type_selected)
         self.train_type_list_widget.model().rowsMoved.connect(self._on_train_types_reordered)
+        self.train_type_list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.train_type_list_widget.customContextMenuRequested.connect(self._on_train_type_list_context_menu)
         left_layout.addWidget(self.train_type_list_widget)
-        
+
         self.add_train_type_button = QPushButton("種別の追加")
         self.add_train_type_button.clicked.connect(self._on_add_train_type)
         left_layout.addWidget(self.add_train_type_button)
@@ -104,24 +107,24 @@ class TrainTypeEditorDialog(QDialog):
         self.tt_editor_page = QWidget()
         self.tt_editor_layout = QVBoxLayout(self.tt_editor_page)
         self.tt_editor_layout.setContentsMargins(10, 10, 10, 10)
-        
+ 
         # フォームコンテナ
         self.tt_form_container = QWidget()
         self.tt_form_layout = QFormLayout(self.tt_form_container)
-        
+
         self.tt_name_edit = QLineEdit()
         self.tt_name_edit.textChanged.connect(self._on_train_type_form_changed)
         self.tt_form_layout.addRow("列車種別名:", self.tt_name_edit)
-        
+
         self.tt_nickname_edit = QLineEdit()
         self.tt_nickname_edit.textChanged.connect(self._on_train_type_form_changed)
         self.tt_form_layout.addRow("列車愛称:", self.tt_nickname_edit)
-        
+
         self.tt_short_name_edit = QLineEdit()
         self.tt_short_name_edit.setFixedWidth(100)
         self.tt_short_name_edit.textChanged.connect(self._on_train_type_form_changed)
         self.tt_form_layout.addRow("短縮表記:", self.tt_short_name_edit)
-        
+
         spacer_tt_1 = QWidget()
         spacer_tt_1.setFixedHeight(5)
         self.tt_form_layout.addRow(spacer_tt_1)
@@ -129,7 +132,7 @@ class TrainTypeEditorDialog(QDialog):
         self.tt_in_service_check = QCheckBox("営業列車")
         self.tt_in_service_check.stateChanged.connect(self._on_train_type_form_changed)
         self.tt_form_layout.addRow("", self.tt_in_service_check)
-        
+
         spacer_tt_2 = QWidget()
         spacer_tt_2.setFixedHeight(5)
         self.tt_form_layout.addRow(spacer_tt_2)
@@ -138,41 +141,51 @@ class TrainTypeEditorDialog(QDialog):
         self.tt_main_color_picker = ColorPickerWidget("#333333")
         self.tt_main_color_picker.colorChanged.connect(self._on_tt_main_color_changed)
         self.tt_form_layout.addRow("種別の基本色:", self.tt_main_color_picker)
-        
+
         # 時刻表背景色
-        self.tt_bg_color_picker = ColorPickerWidget("#ffffff")
+        self.tt_bg_color_picker = ColorPickerWidget("#ffffff", False)
         self.tt_bg_color_picker.colorChanged.connect(self._on_tt_bg_color_changed)
         self.tt_form_layout.addRow("時刻表での背景色:", self.tt_bg_color_picker)
-        
-        # 運行ダイヤグラムでの表示の設定
+
         spacer_tt_3 = QWidget()
         spacer_tt_3.setFixedHeight(10)
         self.tt_form_layout.addRow(spacer_tt_3)
 
+        # 列車種別コード
+        self.tt_type_code_edit = QLineEdit()
+        self.tt_type_code_edit.setFixedWidth(60)
+        self.tt_type_code_edit.textChanged.connect(self._on_train_type_form_changed)
+        self.tt_form_layout.addRow(HelpLabel("列車種別コード:", "列車種別コードは列車番号の自動生成のみに使用されます"), self.tt_type_code_edit)
+
+        spacer_tt_4 = QWidget()
+        spacer_tt_4.setFixedHeight(20)
+        self.tt_form_layout.addRow(spacer_tt_4)
+
+        # 運行ダイヤグラムでの表示の設定
         tt_diagram_label = QLabel("<b>ダイヤグラムでの表示</b>")
         tt_diagram_label.setStyleSheet("font-size: 14px;")
         self.tt_form_layout.addRow(tt_diagram_label)
-        
+
         self.tt_line_style_layout = QHBoxLayout()
         self.tt_weight_combo = QComboBox()
         self.tt_weight_combo.addItem("標準", "normal")
         self.tt_weight_combo.addItem("太", "bold")
         self.tt_weight_combo.addItem("細", "thin")
         self.tt_weight_combo.currentIndexChanged.connect(self._on_train_type_form_changed)
-        
+
         self.tt_style_combo = QComboBox()
         self.tt_style_combo.addItem("実線", "solid")
         self.tt_style_combo.addItem("破線", "dashed")
         self.tt_style_combo.addItem("点線", "dotted")
         self.tt_style_combo.currentIndexChanged.connect(self._on_train_type_form_changed)
-        
+
         self.tt_line_style_layout.addWidget(self.tt_weight_combo)
         self.tt_line_style_layout.addWidget(self.tt_style_combo)
         self.tt_form_layout.addRow("線のスタイル:", self.tt_line_style_layout)
 
         self.line_sample_widget = LineSampleWidget()
         self.tt_form_layout.addRow("プレビュー:", self.line_sample_widget)
-        
+
         self.tt_editor_layout.addWidget(self.tt_form_container)
         self.tt_editor_layout.addStretch()
 
@@ -186,14 +199,14 @@ class TrainTypeEditorDialog(QDialog):
         self.duplicate_tt_button.setProperty("class", "text_button")
         self.duplicate_tt_button.clicked.connect(self._on_duplicate_train_type)
         bottom_button_layout.addWidget(self.duplicate_tt_button)
-        
+
         # 削除ボタン
         self.delete_tt_button = QPushButton("この種別を削除")
         self.delete_tt_button.setFixedSize(120, 30)
         self.delete_tt_button.clicked.connect(self._on_delete_train_type)
         self.delete_tt_button.setProperty("class", "delete_button")
         bottom_button_layout.addWidget(self.delete_tt_button)
-        
+
         self.tt_editor_layout.addLayout(bottom_button_layout)
 
         self.tt_right_stack.addWidget(self.tt_editor_page)
@@ -205,7 +218,7 @@ class TrainTypeEditorDialog(QDialog):
         self.tt_empty_label.setAlignment(Qt.AlignCenter)
         self.tt_empty_label.setProperty("class", "placeholder_label")
         self.tt_placeholder_layout.addWidget(self.tt_empty_label)
-        
+
         self.tt_right_stack.addWidget(self.tt_placeholder_page)
 
         # 初期状態の設定
@@ -224,7 +237,7 @@ class TrainTypeEditorDialog(QDialog):
         for i in range(self.train_type_list_widget.count()):
             item = self.train_type_list_widget.item(i)
             new_order.append(item.data(Qt.UserRole))
-        
+
         self.project.train_types_order = new_order
         if hasattr(self.parent(), "set_modified"):
             self.parent().set_modified(True)
@@ -243,7 +256,7 @@ class TrainTypeEditorDialog(QDialog):
             return
 
         self._set_tt_form_enabled(True)
-        
+
         # UI更新中のシグナルをブロック
         self.tt_name_edit.blockSignals(True)
         self.tt_nickname_edit.blockSignals(True)
@@ -251,6 +264,7 @@ class TrainTypeEditorDialog(QDialog):
         self.tt_in_service_check.blockSignals(True)
         self.tt_weight_combo.blockSignals(True)
         self.tt_style_combo.blockSignals(True)
+        self.tt_type_code_edit.blockSignals(True)
         self.duplicate_tt_button.setEnabled(True)
         self.delete_tt_button.setEnabled(True)
 
@@ -258,17 +272,19 @@ class TrainTypeEditorDialog(QDialog):
         self.tt_nickname_edit.setText(tt_data.get("train_name") or "")
         self.tt_short_name_edit.setText(tt_data.get("train_type_short_name", ""))
         self.tt_in_service_check.setChecked(tt_data.get("is_in_service", True))
-        
+
         main_color = tt_data.get("main_color", "#333333")
         self.tt_main_color_picker.set_color(main_color)
-        
+
         bg_color = tt_data.get("background_color", "#ffffff")
         self.tt_bg_color_picker.set_color(bg_color)
-        
+
+        self.tt_type_code_edit.setText(tt_data.get("train_type_code") or "")
+
         weight = tt_data.get("line_weight", "normal")
         idx_w = self.tt_weight_combo.findData(weight)
         self.tt_weight_combo.setCurrentIndex(idx_w if idx_w >= 0 else 0)
-        
+
         style = tt_data.get("line_style", "solid")
         idx_s = self.tt_style_combo.findData(style)
         self.tt_style_combo.setCurrentIndex(idx_s if idx_s >= 0 else 0)
@@ -279,9 +295,10 @@ class TrainTypeEditorDialog(QDialog):
         self.tt_in_service_check.blockSignals(False)
         self.tt_weight_combo.blockSignals(False)
         self.tt_style_combo.blockSignals(False)
+        self.tt_type_code_edit.blockSignals(False)
         self.duplicate_tt_button.setEnabled(True)
         self.delete_tt_button.setEnabled(True)
-        
+
         self._update_line_sample()
 
     def _on_train_type_form_changed(self):
@@ -291,7 +308,7 @@ class TrainTypeEditorDialog(QDialog):
         tt_id = selected_items[0].data(Qt.UserRole)
         tt_data = self.project.train_types.get(tt_id)
         if not tt_data: return
-        
+
         tt_data["train_type_name"] = self.tt_name_edit.text()
         nickname = self.tt_nickname_edit.text().strip()
         tt_data["train_name"] = nickname if nickname else None
@@ -299,9 +316,11 @@ class TrainTypeEditorDialog(QDialog):
         tt_data["is_in_service"] = self.tt_in_service_check.isChecked()
         tt_data["line_weight"] = self.tt_weight_combo.currentData()
         tt_data["line_style"] = self.tt_style_combo.currentData()
-        
+        type_code = self.tt_type_code_edit.text().strip()
+        tt_data["train_type_code"] = type_code if type_code else None
+
         self._update_line_sample()
-        
+
         # リストの再描画のためにアイテムのテキストを再セット
         name = tt_data["train_type_name"]
         train_name = tt_data["train_name"]
@@ -309,7 +328,7 @@ class TrainTypeEditorDialog(QDialog):
         main_color = tt_data.get("main_color", "#333333")
         html_text = f"<font color='{main_color}'>{display_name}</font>"
         selected_items[0].setText(html_text)
-        
+
         if hasattr(self.parent(), "set_modified"):
             self.parent().set_modified(True)
 
@@ -320,7 +339,7 @@ class TrainTypeEditorDialog(QDialog):
         tt_id = selected_items[0].data(Qt.UserRole)
         tt_data = self.project.train_types.get(tt_id)
         if not tt_data: return
-        
+
         tt_data["main_color"] = new_hex
         self._on_train_type_form_changed()
 
@@ -331,7 +350,7 @@ class TrainTypeEditorDialog(QDialog):
         tt_id = selected_items[0].data(Qt.UserRole)
         tt_data = self.project.train_types.get(tt_id)
         if not tt_data: return
-        
+
         tt_data["background_color"] = new_hex
         selected_items[0].setBackground(QColor(new_hex))
         self._on_train_type_form_changed()
@@ -350,7 +369,7 @@ class TrainTypeEditorDialog(QDialog):
 
             # 文字色を反映したHTMLテキストを生成
             html_text = f"<font color='{main_color}'>{display_name}</font>"
-            
+
             item = QListWidgetItem(html_text)
             item.setData(Qt.UserRole, tt_id)
             item.setBackground(QColor(bg_color))
@@ -376,14 +395,15 @@ class TrainTypeEditorDialog(QDialog):
                 "main_color": "#333333",
                 "background_color": "#ffffff",
                 "line_weight": "normal",
-                "line_style": "solid"
+                "line_style": "solid",
+                "train_type_code": None
             }
-            
+
             self.project.train_types[new_id] = new_type
             self.project.train_types_order.append(new_id)
-            
+
             self._populate_train_type_list()
-            
+
             # 新しく追加された種別を選択
             for i in range(self.train_type_list_widget.count()):
                 if self.train_type_list_widget.item(i).data(Qt.UserRole) == new_id:
@@ -392,6 +412,25 @@ class TrainTypeEditorDialog(QDialog):
 
             if hasattr(self.parent(), "set_modified"):
                 self.parent().set_modified(True)
+
+    def _on_train_type_list_context_menu(self, pos):
+        """列車種別リストの右クリックメニューを表示する"""
+        item = self.train_type_list_widget.itemAt(pos)
+        if item is None:
+            return
+
+        # 右クリックされた項目を選択状態にする
+        self.train_type_list_widget.setCurrentItem(item)
+
+        menu = QMenu(self)
+        duplicate_action = menu.addAction("この種別のコピーを作成")
+        delete_action = menu.addAction("この種別を削除")
+
+        action = menu.exec(self.train_type_list_widget.viewport().mapToGlobal(pos))
+        if action == duplicate_action:
+            self._on_duplicate_train_type()
+        elif action == delete_action:
+            self._on_delete_train_type()
 
     def _on_duplicate_train_type(self):
         """現在選択中の列車種別のコピーを作成する"""
@@ -417,11 +456,13 @@ class TrainTypeEditorDialog(QDialog):
         new_type["train_type_id"] = new_id
         new_type["train_type_name"] = f"(コピー) {original_tt_data.get('train_type_name', '')}"
 
+        # コピー元の直後に挿入する
+        insert_index = self.project.train_types_order.index(original_tt_id) + 1
         self.project.train_types[new_id] = new_type
-        self.project.train_types_order.append(new_id)
+        self.project.train_types_order.insert(insert_index, new_id)
 
         self._populate_train_type_list()
-        self.train_type_list_widget.setCurrentRow(self.train_type_list_widget.count() - 1) # 新しい項目を選択
+        self.train_type_list_widget.setCurrentRow(insert_index) # 新しい項目を選択
         if hasattr(self.parent(), "set_modified"):
             self.parent().set_modified(True)
 
@@ -431,7 +472,7 @@ class TrainTypeEditorDialog(QDialog):
         if not selected_items: return
         tt_id = selected_items[0].data(Qt.UserRole)
         tt_data = self.project.train_types.get(tt_id)
-        
+
         self.line_sample_widget.set_line_properties(
             tt_data.get("main_color", "#333333"),
             tt_data.get("line_weight", "normal"),
@@ -444,7 +485,7 @@ class TrainTypeEditorDialog(QDialog):
             self.tt_right_stack.setCurrentWidget(self.tt_editor_page)
         else:
             self.tt_right_stack.setCurrentWidget(self.tt_placeholder_page)
-        
+
         # 新しいボタンの有効/無効を設定
         self.delete_tt_button.setEnabled(enabled)
 

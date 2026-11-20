@@ -2,7 +2,7 @@ from PySide6.QtCore import Qt, QByteArray, QDataStream, QIODevice
 from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QDialog, QHBoxLayout, QVBoxLayout, QLabel, QListWidget, QListWidgetItem, QStackedWidget, QTabWidget, QWidget, QPushButton, QLineEdit, QColorDialog,
-    QGroupBox, QSpinBox, QPlainTextEdit, QFormLayout, QScrollArea, QAbstractItemView, QMessageBox
+    QGroupBox, QSpinBox, QPlainTextEdit, QFormLayout, QScrollArea, QAbstractItemView, QMessageBox, QMenu
 )
 from core.project import OptDiaProject, generate_random_id
 from common.gui_utils import create_color_square_pixmap
@@ -88,10 +88,22 @@ class OperationGroupListWidget(QListWidget):
         # 内部で運用グループ自体のドラッグアンドドロップ入れ替えを行う場合はスーパークラスの処理
         super().dropEvent(event)
 
+    def contextMenuEvent(self, event):
+        item = self.itemAt(event.pos())
+        if item is None:
+            return
+        self.setCurrentItem(item)
+        menu = QMenu(self)
+        action = menu.addAction("この運用グループを削除")
+        selected = menu.exec(event.globalPos())
+        if selected == action:
+            self.dialog._on_delete_operation_group()
+
 class OperationListWidget(QListWidget):
     """運用のカスタムMIMEデータをサポートする運用リストウィジェット"""
-    def __init__(self, parent=None):
+    def __init__(self, parent_dialog, parent=None):
         super().__init__(parent)
+        self.dialog = parent_dialog
 
     def mimeData(self, items):
         mime_data = super().mimeData(items)
@@ -103,6 +115,17 @@ class OperationListWidget(QListWidget):
                 stream.writeQString(op_id)
                 mime_data.setData("application/x-optdia-op-id", encoded_data)
         return mime_data
+
+    def contextMenuEvent(self, event):
+        item = self.itemAt(event.pos())
+        if item is None:
+            return
+        self.setCurrentItem(item)
+        menu = QMenu(self)
+        action = menu.addAction("この運用を削除")
+        selected = menu.exec(event.globalPos())
+        if selected == action:
+            self.dialog._on_delete_operation()
 
 # 車両運用情報編集ダイアログ
 class VehicleOperationEditorDialog(QDialog):
@@ -166,7 +189,7 @@ class VehicleOperationEditorDialog(QDialog):
             if initial_group_id and og_id == initial_group_id:
                 initial_row = idx
 
-        # 「運用グループのリスト」の下にスペースを設けて、そこに「運用グループの追加」というボタンを追加
+        # 「運用グループの追加」ボタン
         self.add_group_button = QPushButton("運用グループの追加")
         self.add_group_button.clicked.connect(self._on_add_operation_group)
         left_layout.addWidget(self.add_group_button)
@@ -206,7 +229,8 @@ class VehicleOperationEditorDialog(QDialog):
         op_header_label = QLabel("<b>運用</b>")
         left_op_layout.addWidget(op_header_label)
 
-        self.op_list = OperationListWidget()
+        # 車両運用のリスト
+        self.op_list = OperationListWidget(self)
         self.op_list.setDragEnabled(True)
         self.op_list.setDragDropMode(QListWidget.DragDrop)
         self.op_list.setDefaultDropAction(Qt.MoveAction)
@@ -276,7 +300,7 @@ class VehicleOperationEditorDialog(QDialog):
         # 表示色の選択ボタン
         color_layout = QHBoxLayout()
         color_layout.addWidget(QLabel("表示色:"))
-        self.op_color_picker = ColorPickerWidget("#ffffff")
+        self.op_color_picker = ColorPickerWidget("#ffffff", False)
         self.op_color_picker.colorChanged.connect(self._on_op_color_changed)
         color_layout.addWidget(self.op_color_picker)
         color_layout.addStretch()
@@ -387,9 +411,17 @@ class VehicleOperationEditorDialog(QDialog):
         # 運用グループの表示色
         tab_group_layout.addSpacing(10)
         tab_group_layout.addWidget(QLabel("運用グループの表示色:"))
-        self.group_color_picker = ColorPickerWidget("#ffffff")
+        self.group_color_picker = ColorPickerWidget("#ffffff", False)
         self.group_color_picker.colorChanged.connect(self._on_group_color_changed)
         tab_group_layout.addWidget(self.group_color_picker)
+
+        # 運用グループコード
+        tab_group_layout.addSpacing(10)
+        tab_group_layout.addWidget(QLabel("運用グループコード:"))
+        self.group_code_edit = QLineEdit()
+        self.group_code_edit.setFixedWidth(80)
+        self.group_code_edit.textChanged.connect(self._on_group_code_changed)
+        tab_group_layout.addWidget(self.group_code_edit)
 
         tab_group_layout.addStretch()
 
@@ -445,6 +477,7 @@ class VehicleOperationEditorDialog(QDialog):
             "operation_group_id": new_id,
             "operation_group_name": "新しい運用グループ",
             "main_color": "#ffffff",
+            "operation_group_code": None,
             "operations": []
         }
         operation_groups[new_id] = new_group
@@ -489,6 +522,10 @@ class VehicleOperationEditorDialog(QDialog):
 
         main_color = og.get("main_color", "#ffffff")
         self.group_color_picker.set_color(main_color)
+
+        self.group_code_edit.blockSignals(True)
+        self.group_code_edit.setText(og.get("operation_group_code") or "")
+        self.group_code_edit.blockSignals(False)
 
         # 運用のクリアと読み込み
         self.op_list.blockSignals(True)
@@ -951,7 +988,8 @@ class VehicleOperationEditorDialog(QDialog):
             "end_track": None,
             "end_time": None,
             "note": "",
-            "temporary_stabling_events": []
+            "temporary_stabling_events": [],
+            "shunting_operations": []
         }
 
         operations[new_op_id] = new_op
@@ -1014,6 +1052,22 @@ class VehicleOperationEditorDialog(QDialog):
 
         og["main_color"] = new_color_hex
         selected_items[0].setBackground(QColor(new_color_hex))
+
+        if hasattr(self.parent(), "set_modified"):
+            self.parent().set_modified(True)
+
+    def _on_group_code_changed(self, text: str):
+        selected_items = self.group_list.selectedItems()
+        if not selected_items:
+            return
+        og_id = selected_items[0].data(Qt.UserRole)
+        diagram = self.project.diagrams.get(self.diagram_id, {})
+        operation_groups = diagram.get("operation_groups", {})
+        og = operation_groups.get(og_id)
+        if not og:
+            return
+
+        og["operation_group_code"] = text.strip() if text.strip() else None
 
         if hasattr(self.parent(), "set_modified"):
             self.parent().set_modified(True)

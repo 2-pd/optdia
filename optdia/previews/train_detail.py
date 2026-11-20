@@ -29,6 +29,9 @@ class TrainDetailPreviewDialog(QDialog):
         self.direction = direction
         self.train_id = train_id
 
+        # メインウィンドウへの参照(edit_train_in_timetableを持つ場合のみ保持)
+        self._main_window = parent if (parent is not None and hasattr(parent, "edit_train_in_timetable")) else None
+
         # 列車番号の取得
         route = self.project.routes.get(route_id, {})
         train_key = "inbound_trains" if direction == "inbound" else "outbound_trains"
@@ -69,7 +72,18 @@ class TrainDetailPreviewDialog(QDialog):
         self._update_content()
 
     def _on_anchor_clicked(self, url: QUrl):
-        anchor_name = url.fragment() or url.toString().lstrip("#")
+        url_str = url.toString()
+        if url_str.startswith("action://edit_in_timetable/"):
+            # 「時刻表で編集」リンクがクリックされた
+            parts = url_str[len("action://edit_in_timetable/"):].split("/")
+            if len(parts) == 3:
+                r_id, d_dir, t_id = parts
+                main_win = self._main_window
+                if main_win and hasattr(main_win, "edit_train_in_timetable"):
+                    self.accept()
+                    main_win.edit_train_in_timetable(r_id, d_dir, t_id)
+            return
+        anchor_name = url.fragment() or url_str.lstrip("#")
         if anchor_name:
             self.text_browser.scrollToAnchor(anchor_name)
 
@@ -198,6 +212,39 @@ class TrainDetailPreviewDialog(QDialog):
                 return line_id, line_data.get("line_color", "#333333"), str(entry.get("station_number") or "")
         return line_id, line_data.get("line_color", "#333333"), ""
 
+    def _is_forward_orientation(self, route_id: str, segment_id: str, direction: str) -> bool:
+        """指定されたsegmentで当該列車が前位向き(編成の前位方向に進行する向き)かを判定する。
+        前位向き: inbound_direction_is_forward_direction=True かつ上り列車(inbound)
+                  または inbound_direction_is_forward_direction=False かつ下り列車(outbound)
+        """
+        route = self.project.routes.get(route_id, {})
+        line_id = None
+        for seg in route.get("line_segments", []):
+            if seg.get("segment_id") == segment_id:
+                line_id = seg.get("line_id")
+                break
+        if not line_id:
+            return True  # 不明の場合はデフォルト前位
+        line_data = self.project.lines.get(line_id, {})
+        inbound_is_forward = line_data.get("inbound_direction_is_forward_direction", True)
+
+        start_entry = seg.get("start_station_entry")
+        end_entry = seg.get("end_station_entry")
+
+        line_entries = line_data.get("station_entries", [])
+        line_eids = [s.get("station_entry_id") for s in line_entries]
+
+        if start_entry in line_eids or end_entry in line_eids:
+            idx_start = line_eids.index(start_entry)
+            idx_end = line_eids.index(end_entry)
+            if idx_start > idx_end:
+                inbound_is_forward = not inbound_is_forward # 始点と終点の位置関係が路線情報での駅の順序と逆の場合はsegmentの上下と路線の上下も逆になる
+
+        if inbound_is_forward:
+            return direction == "inbound"
+        else:
+            return direction == "outbound"
+
     def _update_content(self):
         show_seconds = self.chk_show_seconds.isChecked()
         show_pass = self.chk_show_pass.isChecked()
@@ -263,6 +310,19 @@ class TrainDetailPreviewDialog(QDialog):
                         car_count_str = f"({cc}両)"
                     break
 
+            # 運用番号文字列に前位向き/後位向きを示す矢印を付加
+            # 最初のstopのsegment_idから路線を特定して方向を判定する
+            operations_str_base = operations_str  # 矢印付加前の素の運用番号文字列（エンド交換行で再利用）
+            if operations_str:
+                raw_stops_for_dir = m_train.get("stops", [])
+                first_seg_id = raw_stops_for_dir[0].get("segment_id") if raw_stops_for_dir else None
+                if first_seg_id:
+                    is_forward = self._is_forward_orientation(r_id, first_seg_id, d_dir)
+                    if is_forward:
+                        operations_str = "◀ " + operations_str
+                    else:
+                        operations_str = operations_str + " ▶"
+
             header_parts = [f'<span style="color: {train_color};">{train_type_short_name}']
             if nt_num:
                 header_parts.append(str(nt_num) + "号")
@@ -271,11 +331,32 @@ class TrainDetailPreviewDialog(QDialog):
                 header_parts.append('<span style="color: #666666; font-size: 14px;">' + html.escape(operations_str) + '</span>')
             if car_count_str:
                 header_parts.append('<span style="color: #666666; font-size: 14px;">' + html.escape(car_count_str) + '</span>')
+            # メインウィンドウから開かれた場合のみ「この列車を時刻表で編集」リンクを表示
+            if self._main_window is not None:
+                edit_link_url = f"action://edit_in_timetable/{r_id}/{d_dir}/{t_id}"
+                header_parts.append(
+                    f'<a href="{edit_link_url}" style="color: #888888; font-size: 12px;">'
+                    f'時刻表で編集</a>'
+                )
             header_html = " ".join(header_parts)
 
             # 2. 2行目以降: 経由駅情報
-            # まず stops をグループ化（同一駅が連続している場合は1駅分に統合）
             raw_stops = m_train.get("stops", [])
+
+            # --- エンド交換境界の事前検出（グループ化より前に実施） ---
+            # raw_stops を走査し、segment_id が変わりかつ前後位向きが切り替わる境界インデックスを収集。
+            # end_exchange_after[k] = True なら raw_stops[k] と raw_stops[k+1] の間でエンド交換が発生する。
+            end_exchange_after: set[int] = set()
+            for ei in range(len(raw_stops) - 1):
+                seg_a = raw_stops[ei].get("segment_id")
+                seg_b = raw_stops[ei + 1].get("segment_id")
+                if seg_a and seg_b and seg_a != seg_b:
+                    if self._is_forward_orientation(r_id, seg_a, d_dir) != self._is_forward_orientation(r_id, seg_b, d_dir):
+                        end_exchange_after.add(ei)
+
+            # --- stopsのグループ化（同一駅が連続している場合は1駅分に統合） ---
+            # 各グループに raw_end_idx（グループの末尾の raw stop インデックス）を記録する。
+            # これによりグループ間の境界が end_exchange_after に含まれるか確認できる。
             grouped_stations = []
             i = 0
             while i < len(raw_stops):
@@ -287,12 +368,13 @@ class TrainDetailPreviewDialog(QDialog):
                     s2 = raw_stops[i + 1]
                     s2_eid = s2.get("station_entry_id")
                     s2_sid = getattr(self.project, "station_entry_to_station_id", {}).get(s2_eid, s2.get("station_id"))
-                    if s1_sid and s2_sid and s1_sid == s2_sid:
+                    if s1_sid and s2_sid and s1_sid == s2_sid and i not in end_exchange_after:
                         grouped_stations.append({
                             "is_double": True,
                             "station_id": s1_sid,
                             "stop1": s1,
-                            "stop2": s2
+                            "stop2": s2,
+                            "raw_end_idx": i + 1,
                         })
                         i += 2
                         continue
@@ -301,13 +383,15 @@ class TrainDetailPreviewDialog(QDialog):
                     "is_double": False,
                     "station_id": s1_sid,
                     "stop1": s1,
-                    "stop2": None
+                    "stop2": None,
+                    "raw_end_idx": i,
                 })
                 i += 1
 
             # フィルタリング & 行HTML生成
             station_rows_html = []
             i = 0
+            prev_raw_end_idx = None  # 前の駅グループの末尾 raw インデックス（エンド交換検出用）
             for g in grouped_stations:
                 st_id = g["station_id"]
                 st_data = self.project.stations.get(st_id, {})
@@ -323,6 +407,31 @@ class TrainDetailPreviewDialog(QDialog):
                 if not show_pass and effective_stop_type != 1:
                     continue
 
+                seg1_id = stop1.get("segment_id")
+                seg2_id = stop2.get("segment_id")
+
+                # エンド交換の挿入:
+                # 前のグループの raw_end_idx が end_exchange_after に含まれる場合、その境界でエンド交換が発生する。
+                # (前グループ末尾インデックス k と現グループ先頭インデックス k+1 の間の境界 = k が対象)
+                if prev_raw_end_idx is not None and prev_raw_end_idx in end_exchange_after:
+                    # 交換後の向き（seg1_id が属するセグメント）から新しい矢印付き運用番号を生成
+                    if operations_str_base and seg1_id:
+                        new_is_forward = self._is_forward_orientation(r_id, seg1_id, d_dir)
+                        if new_is_forward:
+                            new_ops_str = "◀ " + operations_str_base
+                        else:
+                            new_ops_str = operations_str_base + " ▶"
+                        end_ex_ops_html = (
+                            f' <span style="color: #888888; font-size: 12px;">'
+                            f'{html.escape(new_ops_str)}</span>'
+                        )
+                    else:
+                        end_ex_ops_html = ""
+                    station_rows_html.append(
+                        f'<tr><td colspan="4" style="font-size: 14px; padding: 4px 8px;">'
+                        f'エンド交換 {end_ex_ops_html}</td></tr>'
+                    )
+
                 bg_color = "#ffffff" if i % 2 == 0 else "#f7f7f7"
                 i += 1
 
@@ -331,9 +440,6 @@ class TrainDetailPreviewDialog(QDialog):
 
                 arr_formatted = self._format_time(arr_raw, show_seconds)
                 dep_formatted = self._format_time(dep_raw, show_seconds)
-
-                seg1_id = stop1.get("segment_id")
-                seg2_id = stop2.get("segment_id")
 
                 row_color = " color: #888888;" if effective_stop_type != 1 else ""
                 row_style = f'background-color: {bg_color};{row_color}'
@@ -345,6 +451,9 @@ class TrainDetailPreviewDialog(QDialog):
                     line2_id, seg2_color, st_num2 = self._get_segment_station_info(r_id, seg2_id, st_entry_id2)
                 else:
                     line2_id = line1_id
+
+                # 次のグループとのエンド交換検出のために末尾 raw インデックスを記録
+                prev_raw_end_idx = g["raw_end_idx"]
 
                 if line1_id != line2_id:
                     if effective_stop_type == 0:

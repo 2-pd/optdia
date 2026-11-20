@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from core.project import OptDiaProject, generate_random_id
 from core.history_manager import HistoryManager
 from core.events import (
-    BaseEvent, AddTrainEvent, RemoveTrainEvent, ReorderTrainsEvent, ChangeTrainNumberEvent,
+    BaseTrainEvent, AddTrainEvent, RemoveTrainEvent, ReorderTrainsEvent, ChangeTrainNumberEvent,
     AddTrainDiagramEvent, RemoveTrainDiagramEvent, AddTrainOperationEvent,
     RemoveTrainOperationEvent, ChangeTrainOperationEvent, ChangeTrainCarCountEvent,
     ChangeTrainTypeEvent, ChangeTrainNamedNumberEvent, ChangeTrainDestinationEvent,
@@ -68,6 +68,9 @@ class TimetableModel(QAbstractTableModel):
         structural = False
         affected_train_ids = set()
         for ev in events:
+            if not isinstance(ev, BaseTrainEvent):
+                continue
+
             affected_train_ids.add(ev.train_id)
             if isinstance(ev, (AddTrainEvent, RemoveTrainEvent, ReorderTrainsEvent, AddTrainDiagramEvent, RemoveTrainDiagramEvent)):
                 structural = True
@@ -881,6 +884,17 @@ class TimetableModel(QAbstractTableModel):
             return Qt.AlignRight | Qt.AlignVCenter
 
         if role == Qt.BackgroundRole:
+            # 「運用番号」行（row == 2）は列車の1つ目の車両運用のmain_colorを背景色とする
+            if row == 2:
+                ops = d_train.get("operations", [])
+                if ops: # 運用が設定されていない場合のみ背景色を変更
+                    first_op = ops[0]
+                    op_id = first_op.get("operation_id") if isinstance(first_op, dict) else first_op
+                    if op_id:
+                        op_data = self.project.diagrams.get(self.diagram_id, {}).get("operations", {}).get(op_id)
+                        if op_data:
+                            return QColor(op_data.get("main_color", "#ffffff"))
+
             tt = self.project.train_types.get(m_train.get("train_type_id"))
             return QColor(tt.get("background_color", "#ffffff")) if tt else None
         if role == Qt.ForegroundRole:

@@ -128,6 +128,7 @@ class TrainTimelineItem(TimelineRectItem):
     def contextMenuEvent(self, event):
         menu = QMenu()
         act_detail = menu.addAction("列車の詳細")
+        act_edit = menu.addAction("この列車を時刻表で編集")
         act_remove = menu.addAction("この列車を除外")
         selected_act = menu.exec(event.screenPos())
 
@@ -136,6 +137,10 @@ class TrainTimelineItem(TimelineRectItem):
         if selected_act == act_detail:
             dialog = TrainDetailPreviewDialog(parent_widget, self.timeline_scene.project, self.route_id, self.direction_key[:-7], self.train_id)
             dialog.exec()
+        elif selected_act == act_edit:
+            if parent_widget and hasattr(parent_widget, "edit_train_in_timetable"):
+                direction = self.direction_key[:-7] if self.direction_key.endswith("_trains") else self.direction_key
+                parent_widget.edit_train_in_timetable(self.route_id, direction, self.train_id)
         elif selected_act == act_remove:
             reply = QMessageBox.question(
                 parent_widget,

@@ -1,10 +1,10 @@
 import re
-from PySide6.QtCore import Qt, QModelIndex
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtCore import Qt, QModelIndex, QPoint
+from PySide6.QtGui import QColor, QFont, QAction
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QMessageBox, QLabel,
     QLineEdit, QListWidget, QListWidgetItem, QStackedWidget, QComboBox, QFormLayout,
-    QWidget, QPushButton, QSizePolicy, QScrollArea
+    QWidget, QPushButton, QSizePolicy, QScrollArea, QMenu
 )
 from core.project import OptDiaProject, generate_random_id
 
@@ -460,6 +460,8 @@ class RouteEditorDialog(QDialog):
         self.route_list_widget.setDragDropMode(QListWidget.InternalMove)
         self.route_list_widget.model().rowsMoved.connect(self._on_routes_reordered)
         self.route_list_widget.itemSelectionChanged.connect(self._on_route_selected)
+        self.route_list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.route_list_widget.customContextMenuRequested.connect(self._on_route_list_context_menu)
         sidebar_layout.addWidget(self.route_list_widget)
 
         # 運行系統追加ボタン
@@ -998,6 +1000,21 @@ class RouteEditorDialog(QDialog):
             self._populate_station_preview(route_data) # プレビューの更新
             if hasattr(self.parent(), "set_modified"):
                 self.parent().set_modified(True)
+
+    def _on_route_list_context_menu(self, pos: QPoint):
+        """運行系統リストの右クリックコンテキストメニューを表示する"""
+        item = self.route_list_widget.itemAt(pos)
+        if item is None:
+            return
+
+        # 右クリックされた項目を選択状態にする
+        self.route_list_widget.setCurrentItem(item)
+
+        menu = QMenu(self)
+        action_delete = QAction("この運行系統を削除", self)
+        action_delete.triggered.connect(self._on_delete_route)
+        menu.addAction(action_delete)
+        menu.exec(self.route_list_widget.viewport().mapToGlobal(pos))
 
     def _on_delete_route(self):
         """選択中の運行系統を削除する"""

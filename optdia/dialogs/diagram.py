@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QPushButton, QWidget, QListWidget, QListWidgetItem,
     QStackedWidget, QColorDialog, QMessageBox, QTabWidget,
     QScrollArea, QCalendarWidget, QDateEdit, QComboBox,
-    QGridLayout, QFrame, QTableView
+    QGridLayout, QFrame, QTableView, QMenu
 )
 from core.project import OptDiaProject
 from common.gui_utils import create_color_square_pixmap
@@ -692,6 +692,8 @@ class DiagramEditorDialog(QDialog):
         self.diagram_list_widget.setDragDropMode(QListWidget.InternalMove)
         self.diagram_list_widget.model().rowsMoved.connect(self._on_diagrams_reordered)
         self.diagram_list_widget.itemSelectionChanged.connect(self._on_diagram_selected)
+        self.diagram_list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.diagram_list_widget.customContextMenuRequested.connect(self._on_diagram_list_context_menu)
         sidebar_layout.addWidget(self.diagram_list_widget)
 
         # ダイヤ追加ボタン
@@ -744,7 +746,7 @@ class DiagramEditorDialog(QDialog):
         # 背景色
         edit_form_layout.addSpacing(10)
         edit_form_layout.addWidget(QLabel("背景色:"))
-        self.background_color_picker = ColorPickerWidget("#cccccc")
+        self.background_color_picker = ColorPickerWidget("#cccccc", False)
         self.background_color_picker.colorChanged.connect(self._on_background_color_changed)
         edit_form_layout.addWidget(self.background_color_picker)
 
@@ -1056,6 +1058,21 @@ class DiagramEditorDialog(QDialog):
             if hasattr(self.parent(), "set_modified"):
                 self.parent().set_modified(True)
             self._refresh_calendar_tab()
+
+    def _on_diagram_list_context_menu(self, pos):
+        """ダイヤリストの右クリックメニューを表示する"""
+        item = self.diagram_list_widget.itemAt(pos)
+        if item is None:
+            return
+        self.diagram_list_widget.setCurrentItem(item)
+        menu = QMenu(self)
+        action_duplicate = menu.addAction("このダイヤを複製")
+        action_delete = menu.addAction("このダイヤを削除")
+        selected = menu.exec(self.diagram_list_widget.mapToGlobal(pos))
+        if selected == action_duplicate:
+            self._on_duplicate_diagram()
+        elif selected == action_delete:
+            self._on_delete_diagram()
 
     def _on_duplicate_diagram(self):
         """選択中の運転ダイヤを複製する"""
