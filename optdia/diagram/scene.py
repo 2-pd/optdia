@@ -170,8 +170,20 @@ class DiagramScene(QGraphicsScene):
         #   "station_id": str,                       # 始点の駅ID
         #   "operation_id": str,                     # 車両運用ID
         #   "diagram_id": str,                       # 運転ダイヤID
+        #    "origin_track": str,                    # 移動元発着番線ID
+        #    "destination_track": str                # 移動先発着番線ID
         # }
         self.track_allocation_segments = []
+        # 発着番線占有表エリアの構内入換を表す垂直線分情報（右クリック当たり判定用）
+        # 各要素: {
+        #   "x": float, "y1": float, "y2": float,  # 線分の座標
+        #   "station_id": str,                       # 始点の駅ID
+        #   "operation_id": str,                     # 車両運用ID
+        #   "diagram_id": str,                       # 運転ダイヤID
+        #    "origin_track": str,                    # 移動元発着番線ID
+        #    "destination_track": str                # 移動先発着番線ID
+        # }
+        self.shunting_segments = []
 
     def set_scales(self, scale_x: float, scale_y: float):
         if self.scale_x != scale_x or self.scale_y != scale_y:
@@ -372,6 +384,7 @@ class DiagramScene(QGraphicsScene):
         self.current_highlight_train = None
         self.current_highlight_query = ""
         self.track_allocation_segments = []
+        self.shunting_segments = []
 
         self.clear()
 
@@ -2133,6 +2146,18 @@ class DiagramScene(QGraphicsScene):
                     item.setPen(pen_dotted)
                     item.setZValue(2)
                     self.addItem(item)
+                    # 当たり判定用メタデータを記録
+                    if op_id:
+                        seg_sid = stg_a.get("station_id") or st_id_next
+                        self.shunting_segments.append({
+                            "x": pt_a[0],
+                            "y1": pt_a[1], "y2": pt_b[1],
+                            "station_id": seg_sid,
+                            "operation_id": op_id,
+                            "diagram_id": self.diagram_id,
+                            "origin_track": stg_a.get("track_id"),
+                            "destination_track": stg_b.get("track_id"),
+                        })
                 else:
                     # 時間間隔を伴う移動 (終着〜入換、入換間、入換〜始発)
                     match = (
@@ -2307,4 +2332,20 @@ class DiagramScene(QGraphicsScene):
                 # 水平線分: X範囲内かつY距離が許容範囲内
                 if (x1 - tolerance <= scene_x <= x2 + tolerance) and (abs(scene_y - y1) <= tolerance):
                     result.append(seg)
+        return result
+
+    def get_shunting_segments_at(self, scene_x: float, scene_y: float, tolerance: float = 5.0) -> list:
+        """
+        指定されたシーン座標 (scene_x, scene_y) の近傍に存在する
+        発着番線占有表エリアの垂直線分を返す。
+        tolerance: 判定する距離の許容範囲（px）
+        戻り値: マッチしたセグメント情報のリスト。
+        """
+        result = []
+        for seg in self.shunting_segments:
+            x = seg["x"]
+            y1, y2 = seg["y1"], seg["y2"]
+
+            if (abs(scene_x - x) <= tolerance) and (min(y1, y2) - tolerance <= scene_y <= min(y1, y2) + tolerance):
+                result.append(seg)
         return result

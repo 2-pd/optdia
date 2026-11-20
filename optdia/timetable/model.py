@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from core.project import OptDiaProject, generate_random_id
 from core.history_manager import HistoryManager
 from core.events import (
-    AddTrainEvent, RemoveTrainEvent, ReorderTrainsEvent, ChangeTrainNumberEvent,
+    BaseTrainEvent, AddTrainEvent, RemoveTrainEvent, ReorderTrainsEvent, ChangeTrainNumberEvent,
     AddTrainDiagramEvent, RemoveTrainDiagramEvent, AddTrainOperationEvent,
     RemoveTrainOperationEvent, ChangeTrainOperationEvent, ChangeTrainCarCountEvent,
     ChangeTrainTypeEvent, ChangeTrainNamedNumberEvent, ChangeTrainDestinationEvent,
@@ -68,6 +68,9 @@ class TimetableModel(QAbstractTableModel):
         structural = False
         affected_train_ids = set()
         for ev in events:
+            if not isinstance(ev, BaseTrainEvent):
+                continue
+
             affected_train_ids.add(ev.train_id)
             if isinstance(ev, (AddTrainEvent, RemoveTrainEvent, ReorderTrainsEvent, AddTrainDiagramEvent, RemoveTrainDiagramEvent)):
                 structural = True

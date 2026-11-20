@@ -1,6 +1,7 @@
 import copy
 import re
 from typing import Optional, List, Dict, Any
+from collections import defaultdict
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
@@ -1854,3 +1855,124 @@ class AddShuntingOperationDialog(QDialog):
             self.history_manager.push_events(events_to_push)
 
         self.accept()
+
+
+class DeleteShuntingOperationDialog(QDialog):
+    """
+    削除する構内入換の選択ダイアログ
+
+    右クリック位置に複数の構内入換パスが存在する場合に表示する。
+    """
+
+    def __init__(self, parent, project: OptDiaProject, diagram_id: str,
+                 candidates: list):
+        """
+        parent: 親ウィジェット
+        project: OptDiaProject インスタンス
+        diagram_id: 現在の運転ダイヤID
+        candidates: list of (operation_id, shunting_index, shunting_entry)
+        """
+        super().__init__(parent)
+        self.setWindowTitle("削除する構内入換の選択")
+        self.project = project
+        self.diagram_id = diagram_id
+        self.candidates = candidates
+        self._checkboxes = []  # list of (candidate_index, QCheckBox)
+        self._init_ui()
+
+    def _get_track_short_name(self, station_id: str, track_id: Optional[str]) -> str:
+        """発着番線の短縮名を返す。取得できない場合は track_id をそのまま返す。"""
+        if not station_id or not track_id:
+            return track_id or ""
+        st_obj = self.project.stations.get(station_id, {})
+        tracks_dict = st_obj.get("tracks", {})
+        trk_info = tracks_dict.get(track_id, {}) if isinstance(tracks_dict, dict) else {}
+        return trk_info.get("track_short_name", track_id)
+
+    def _get_operation_number(self, operation_id: str) -> str:
+        """運用番号文字列を返す。取得できない場合は operation_id をそのまま返す。"""
+        diag = self.project.diagrams.get(self.diagram_id, {})
+        op_info = diag.get("operations", {}).get(operation_id, {})
+        op_num = op_info.get("operation_number")
+        return str(op_num) if op_num is not None else str(operation_id)
+
+    def _init_ui(self):
+        main_layout = QVBoxLayout(self)
+
+        lbl = QLabel("削除対象の構内入換を選択してください")
+        main_layout.addWidget(lbl)
+
+        diag_ops = self.project.diagrams.get(self.diagram_id, {}).get("operations", {})
+
+        for i, (op_id, sh_idx, sh_entry) in enumerate(self.candidates):
+            station_id = sh_entry.get("station_id", "")
+            origin_track = sh_entry.get("origin_track")
+            dest_track = sh_entry.get("destination_track")
+
+            origin_name = self._get_track_short_name(station_id, origin_track)
+            dest_name = self._get_track_short_name(station_id, dest_track)
+            op_num_str = self._get_operation_number(op_id)
+
+            label_text = f"{origin_name} → {dest_name} ({op_num_str})"
+            cb = QCheckBox(label_text)
+            cb.setChecked(True)
+            self._checkboxes.append((i, cb))
+            main_layout.addWidget(cb)
+
+        main_layout.addStretch()
+
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        btn_ok = QPushButton("OK")
+        btn_cancel = QPushButton("キャンセル")
+        btn_ok.clicked.connect(self.accept)
+        btn_cancel.clicked.connect(self.reject)
+        btn_ok.setProperty("class", "ok_button")
+        btn_layout.addWidget(btn_ok)
+        btn_layout.addWidget(btn_cancel)
+        main_layout.addLayout(btn_layout)
+
+    def get_selected_candidates(self) -> list:
+        """チェックされている候補のリストを返す。"""
+        result = []
+        for i, cb in self._checkboxes:
+            if cb.isChecked():
+                result.append(self.candidates[i])
+        return result
+
+
+def delete_shunting_operations(candidates, project, diagram_id, history_manager):
+    """
+    指定された (operation_id, shunting_index, shunting_entry) のリストの構内入換を削除し、
+    RemoveShuntingOperationEvent をヒストリーマネージャーに登録する。
+    candidates は shunting_index の降順でソートして削除する（インデックスのずれを防ぐため）。
+    """
+    diag_ops = project.diagrams.get(diagram_id, {}).get("operations", {})
+
+    # operation_id ごとにグループ化し、index 降順で削除
+    grouped = defaultdict(list)
+    for op_id, sh_idx, sh_entry in candidates:
+        grouped[op_id].append((sh_idx, sh_entry))
+
+    events_to_push = []
+    for op_id, items in grouped.items():
+        op_info = diag_ops.get(op_id)
+        if op_info is None:
+            continue
+        shunting_ops = op_info.get("shunting_operations", [])
+        # index 降順でソートして削除（前のインデックスへの影響を防ぐ）
+        items_sorted = sorted(items, key=lambda x: x[0], reverse=True)
+        for sh_idx, sh_entry in items_sorted:
+            if 0 <= sh_idx < len(shunting_ops):
+                removed = copy.deepcopy(shunting_ops[sh_idx])
+                shunting_ops.pop(sh_idx)
+                ev = RemoveShuntingOperationEvent(
+                    diagram_id=diagram_id,
+                    operation_id=op_id,
+                    index=sh_idx,
+                    shunting_event=removed
+                )
+                events_to_push.append(ev)
+
+    if history_manager and events_to_push:
+        history_manager.push_events(events_to_push)

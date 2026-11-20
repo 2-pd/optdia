@@ -3,7 +3,7 @@ from PySide6.QtWidgets import QGraphicsView, QMenu, QMessageBox, QGraphicsPathIt
 from PySide6.QtCore import Qt, QRectF
 from PySide6.QtGui import QPainter, QWheelEvent
 from .scene import DiagramScene, DiagramHeaderScene, DiagramStationScene
-from .dialogs import AddTrainDialog, delete_train, OperationPickerDialog, AddShuntingOperationDialog
+from .dialogs import AddTrainDialog, delete_train, OperationPickerDialog, AddShuntingOperationDialog, DeleteShuntingOperationDialog, delete_shunting_operations
 from previews.train_detail import TrainDetailPreviewDialog
 
 # 運行ダイヤグラムの上部ビュー（時刻ヘッダー）
@@ -101,6 +101,22 @@ class DiagramView(QGraphicsView):
         # 半径4pxの矩形領域内にあるQGraphicsPathItemを探索
         rect = QRectF(scene_pos.x() - 4.0, scene_pos.y() - 4.0, 8.0, 8.0)
         items = [i for i in self.scene.items(rect) if isinstance(i, QGraphicsPathItem)]
+
+        # 発着番線占有表エリアの垂直線分(構内入換)を右クリックしたか判定
+        shunting_segs = self.scene.get_shunting_segments_at(scene_pos.x(), scene_pos.y(), tolerance=5.0)
+
+        if shunting_segs:
+            # 駅構内入換の垂直パス上での専用コンテキストメニュー
+            menu = QMenu(self)
+            delete_shunting_action = menu.addAction("この構内入換を削除")
+            add_train_action = menu.addAction("ここに列車を追加")
+            selected_action = menu.exec(event.globalPos())
+            if selected_action == delete_shunting_action:
+                self._handle_delete_shunting_action(scene_pos, shunting_segs)
+            elif selected_action == add_train_action:
+                self._handle_add_train_action(scene_pos)
+            return
+
 
         # 発着番線占有表エリアの水平線分・点線を右クリックしたか判定
         track_segs = self.scene.get_track_allocation_segments_at(scene_pos.x(), scene_pos.y(), tolerance=5.0)
@@ -290,6 +306,92 @@ class DiagramView(QGraphicsView):
                     main_win.timetable_model.diagram_id,
                     main_win.timetable_model.direction
                 )
+
+    def _handle_delete_shunting_action(self, scene_pos, shunting_segs: list):
+        """
+        発着番線占有表エリアの垂直パス（入換パス）を右クリックして
+        「この構内入換を削除」を選択したときの処理。
+        """
+        main_win = self.window()
+        project = getattr(main_win, "project", getattr(self.scene, "project", None))
+        diagram_id = getattr(self.scene, "diagram_id", None)
+        if not diagram_id and hasattr(main_win, "diagram_selector_combo"):
+            diagram_id = main_win.diagram_selector_combo.currentData()
+
+        if not project or not diagram_id:
+            return
+
+        history_manager = getattr(main_win, "history_manager", None)
+
+        # 右クリック位置に存在する入換パスに対応する shunting_operations を収集
+        # vertical_shunting_segs の各セグメントから (operation_id, shunting_index, shunting_entry) を集める
+        # クリック位置のX座標から入換時刻を推定し、該当する shunting_operations を特定する
+        scale_x = getattr(self.scene, "scale_x", 6.0)
+        click_time_min = scene_pos.x() / scale_x
+        click_time_sec = click_time_min * 60.0
+
+        diag_ops = project.diagrams.get(diagram_id, {}).get("operations", {})
+
+        # 重複を防ぐため、(operation_id, shunting_index) をキーとして収集
+        seen_keys = set()
+        shunting_candidates = []  # list of (operation_id, shunting_index, shunting_entry)
+
+        for seg in shunting_segs:
+            op_id = seg.get("operation_id")
+            if not op_id:
+                continue
+            op_info = diag_ops.get(op_id)
+            if op_info is None:
+                continue
+
+            shunting_ops = op_info.get("shunting_operations", []) or []
+            # セグメントのx1はシーン上での入換時刻に対応するX座標
+            seg_x = seg.get("x", 0)
+            seg_time_sec = (seg_x / scale_x) * 60.0
+
+            # この時刻に最も近い shunting_operation を探す（1秒以内）
+            for idx, sh in enumerate(shunting_ops):
+                sh_time_str = sh.get("shunting_time", "")
+                sh_parts = sh_time_str.split(":")
+                try:
+                    sh_sec = int(sh_parts[0]) * 3600 + int(sh_parts[1]) * 60 + (int(sh_parts[2]) if len(sh_parts) > 2 else 0)
+                except (ValueError, IndexError):
+                    continue
+
+                if abs(sh_sec - seg_time_sec) <= 1.0:
+                    key = (op_id, idx)
+                    if key not in seen_keys:
+                        seen_keys.add(key)
+                        shunting_candidates.append((op_id, idx, sh))
+
+        if not shunting_candidates:
+            return
+
+        if len(shunting_candidates) == 1:
+            # 1件のみ: 確認ダイアログ
+            op_id, sh_idx, sh_entry = shunting_candidates[0]
+            reply = QMessageBox.question(
+                self,
+                "確認",
+                "この構内入換を削除しますか？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply != QMessageBox.Yes:
+                return
+            delete_shunting_operations([(op_id, sh_idx, sh_entry)], project, diagram_id, history_manager)
+        else:
+            # 複数件: 選択ダイアログ
+            dlg = DeleteShuntingOperationDialog(self, project, diagram_id, shunting_candidates)
+            if dlg.exec():
+                selected = dlg.get_selected_candidates()
+                if selected:
+                    delete_shunting_operations(selected, project, diagram_id, history_manager)
+
+        if hasattr(main_win, "set_modified"):
+            main_win.set_modified(True)
+        if hasattr(main_win, "_update_diagram_view"):
+            main_win._update_diagram_view()
 
     def _handle_add_shunting_action(self, scene_pos, track_segs: list):
         """
