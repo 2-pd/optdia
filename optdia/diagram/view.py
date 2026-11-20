@@ -3,7 +3,7 @@ from PySide6.QtWidgets import QGraphicsView, QMenu, QMessageBox, QGraphicsPathIt
 from PySide6.QtCore import Qt, QRectF
 from PySide6.QtGui import QPainter, QWheelEvent
 from .scene import DiagramScene, DiagramHeaderScene, DiagramStationScene
-from .dialogs import AddTrainDialog, delete_train, OperationPickerDialog
+from .dialogs import AddTrainDialog, delete_train, OperationPickerDialog, AddShuntingOperationDialog
 from previews.train_detail import TrainDetailPreviewDialog
 
 # 運行ダイヤグラムの上部ビュー（時刻ヘッダー）
@@ -101,6 +101,21 @@ class DiagramView(QGraphicsView):
         # 半径4pxの矩形領域内にあるQGraphicsPathItemを探索
         rect = QRectF(scene_pos.x() - 4.0, scene_pos.y() - 4.0, 8.0, 8.0)
         items = [i for i in self.scene.items(rect) if isinstance(i, QGraphicsPathItem)]
+
+        # 発着番線占有表エリアの水平線分・点線を右クリックしたか判定
+        track_segs = self.scene.get_track_allocation_segments_at(scene_pos.x(), scene_pos.y(), tolerance=5.0)
+
+        if track_segs:
+            # 発着番線占有表エリアでの専用コンテキストメニュー
+            menu = QMenu(self)
+            set_shunting_action = menu.addAction("ここに構内入換を設定")
+            add_train_action = menu.addAction("ここに列車を追加")
+            selected_action = menu.exec(event.globalPos())
+            if selected_action == set_shunting_action:
+                self._handle_add_shunting_action(scene_pos, track_segs)
+            elif selected_action == add_train_action:
+                self._handle_add_train_action(scene_pos)
+            return
 
         if items:
             # 列車のパスが存在する場合はパス上専用のコンテキストメニューを表示
@@ -276,3 +291,58 @@ class DiagramView(QGraphicsView):
                     main_win.timetable_model.direction
                 )
 
+    def _handle_add_shunting_action(self, scene_pos, track_segs: list):
+        """
+        発着番線占有表エリアの水平線分または点線を右クリックして
+        「ここに構内入換を設定」を選択したときの処理。
+        """
+        main_win = self.window()
+        project = getattr(main_win, "project", getattr(self.scene, "project", None))
+        diagram_id = getattr(self.scene, "diagram_id", None)
+        if not diagram_id and hasattr(main_win, "diagram_selector_combo"):
+            diagram_id = main_win.diagram_selector_combo.currentData()
+
+        if not project or not diagram_id:
+            return
+
+        # クリック位置に存在するセグメントから情報を集約する
+        # station_id: 最初のセグメントの始点の駅ID
+        # operation_ids: 重複を除いた車両運用IDのリスト（最大5件）
+        station_id = track_segs[0].get("station_id") if track_segs else None
+        if not station_id:
+            return
+
+        seen_op_ids = []
+        for seg in track_segs:
+            op_id = seg.get("operation_id")
+            if op_id and op_id not in seen_op_ids:
+                seen_op_ids.append(op_id)
+                if len(seen_op_ids) >= 5:
+                    break
+
+        # クリック位置に対応する時刻を計算
+        scale_x = getattr(self.scene, "scale_x", 6.0)
+        click_time_min = scene_pos.x() / scale_x
+        click_time_sec = click_time_min * 60.0
+
+        history_manager = getattr(main_win, "history_manager", None)
+        default_origin_track = track_segs[0].get("origin_track") if track_segs else None
+        default_dest_track = track_segs[0].get("destination_track") if track_segs else None
+
+        dlg = AddShuntingOperationDialog(
+            self,
+            project=project,
+            diagram_id=diagram_id,
+            station_id=station_id,
+            operation_ids=seen_op_ids,
+            click_time_sec=click_time_sec,
+            history_manager=history_manager,
+            default_origin_track=default_origin_track,
+            default_dest_track=default_dest_track,
+        )
+
+        if dlg.exec():
+            if hasattr(main_win, "set_modified"):
+                main_win.set_modified(True)
+            if hasattr(main_win, "_update_diagram_view"):
+                main_win._update_diagram_view()

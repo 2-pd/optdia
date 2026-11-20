@@ -162,6 +162,16 @@ class DiagramScene(QGraphicsScene):
         self.stations_data = []
         self.current_highlight_train = None
         self.current_highlight_query = ""
+        # 発着番線占有表エリアの水平線分・点線情報（右クリック当たり判定用）
+        # 各要素: {
+        #   "x1": float, "x2": float, "y": float,  # 線分の座標 (y は水平線分。点線の場合はy1,y2)
+        #   "y1": float, "y2": float,               # 点線の場合のみ使用
+        #   "is_dotted": bool,                       # Trueなら点線、Falseなら水平線分
+        #   "station_id": str,                       # 始点の駅ID
+        #   "operation_id": str,                     # 車両運用ID
+        #   "diagram_id": str,                       # 運転ダイヤID
+        # }
+        self.track_allocation_segments = []
 
     def set_scales(self, scale_x: float, scale_y: float):
         if self.scale_x != scale_x or self.scale_y != scale_y:
@@ -361,6 +371,7 @@ class DiagramScene(QGraphicsScene):
         self.rendered_trains = []
         self.current_highlight_train = None
         self.current_highlight_query = ""
+        self.track_allocation_segments = []
 
         self.clear()
 
@@ -1717,7 +1728,7 @@ class DiagramScene(QGraphicsScene):
                         continue
                     drawn_connections.add(conn_key)
 
-                    self._draw_operation_connecting_path(info_prev, info_next, item_next["m_train"], op_info=op_info)
+                    self._draw_operation_connecting_path(info_prev, info_next, item_next["m_train"], op_info=op_info, op_id=op_id)
 
         # 4. 始発・終着運用番号ラベルの描画
         self._render_operation_start_end_labels(first_train_ops, last_train_ops)
@@ -1919,7 +1930,7 @@ class DiagramScene(QGraphicsScene):
             return min(candidates, key=lambda y_val: abs(y_val - ref_y))
         return candidates[0]
 
-    def _draw_operation_connecting_path(self, info_prev, info_next, m_train_next, op_info=None):
+    def _draw_operation_connecting_path(self, info_prev, info_next, m_train_next, op_info=None, op_id=None):
         """
         前の列車の終着駅(x_arr, y_arr)と後の列車の始発駅(x_dep, y_dep)を結ぶパスを描画する。
         発着番線占有表有効時、番線一致判定および入換（shunting_operations）の描画を行う。
@@ -2017,6 +2028,18 @@ class DiagramScene(QGraphicsScene):
                 item.setPen(pen_solid)
                 item.setZValue(2)
                 self.addItem(item)
+                # 当たり判定用メタデータを記録
+                if op_id:
+                    self.track_allocation_segments.append({
+                        "x1": min(x1, x2), "x2": max(x1, x2),
+                        "y1": y, "y2": y,
+                        "is_dotted": False,
+                        "station_id": st_id_next,
+                        "operation_id": op_id,
+                        "diagram_id": self.diagram_id,
+                        "origin_track": track_prev,
+                        "destination_track": track_next,
+                    })
             else:
                 # 点線で結ぶ
                 path = QPainterPath()
@@ -2026,6 +2049,18 @@ class DiagramScene(QGraphicsScene):
                 item.setPen(pen_dotted)
                 item.setZValue(2)
                 self.addItem(item)
+                # 当たり判定用メタデータを記録
+                if op_id:
+                    self.track_allocation_segments.append({
+                        "x1": min(p_prev[0], p_next[0]), "x2": max(p_prev[0], p_next[0]),
+                        "y1": min(p_prev[1], p_next[1]), "y2": max(p_prev[1], p_next[1]),
+                        "is_dotted": True,
+                        "station_id": st_id_next,
+                        "operation_id": op_id,
+                        "diagram_id": self.diagram_id,
+                        "origin_track": track_prev,
+                        "destination_track": track_next,
+                    })
         else:
             # 入換あり
             # 区間ごとに判定:
@@ -2113,6 +2148,19 @@ class DiagramScene(QGraphicsScene):
                         item.setPen(pen_solid)
                         item.setZValue(2)
                         self.addItem(item)
+                        # 当たり判定用メタデータを記録
+                        if op_id:
+                            seg_sid = stg_a.get("station_id") or st_id_next
+                            self.track_allocation_segments.append({
+                                "x1": min(pt_a[0], pt_b[0]), "x2": max(pt_a[0], pt_b[0]),
+                                "y1": pt_a[1], "y2": pt_a[1],
+                                "is_dotted": False,
+                                "station_id": seg_sid,
+                                "operation_id": op_id,
+                                "diagram_id": self.diagram_id,
+                                "origin_track": stg_a.get("track_id"),
+                                "destination_track": stg_b.get("track_id"),
+                            })
                     else:
                         path = QPainterPath()
                         path.moveTo(pt_a[0], pt_a[1])
@@ -2121,6 +2169,19 @@ class DiagramScene(QGraphicsScene):
                         item.setPen(pen_dotted)
                         item.setZValue(2)
                         self.addItem(item)
+                        # 当たり判定用メタデータを記録
+                        if op_id:
+                            seg_sid = stg_b.get("station_id") or st_id_next
+                            self.track_allocation_segments.append({
+                                "x1": min(pt_a[0], pt_b[0]), "x2": max(pt_a[0], pt_b[0]),
+                                "y1": min(pt_a[1], pt_b[1]), "y2": max(pt_a[1], pt_b[1]),
+                                "is_dotted": True,
+                                "station_id": seg_sid,
+                                "operation_id": op_id,
+                                "diagram_id": self.diagram_id,
+                                "origin_track": stg_a.get("track_id"),
+                                "destination_track": stg_b.get("track_id"),
+                            })
                 i += 1
 
 
@@ -2215,3 +2276,35 @@ class DiagramScene(QGraphicsScene):
             text_item.setZValue(3)
             self.addItem(text_item)
 
+    def get_track_allocation_segments_at(self, scene_x: float, scene_y: float, tolerance: float = 5.0) -> list:
+        """
+        指定されたシーン座標 (scene_x, scene_y) の近傍に存在する
+        発着番線占有表エリアの水平線分・点線セグメントを返す。
+        tolerance: 判定する距離の許容範囲（px）
+        戻り値: マッチしたセグメント情報のリスト（track_allocation_segments の要素）。
+        """
+        result = []
+        for seg in self.track_allocation_segments:
+            x1, x2 = seg["x1"], seg["x2"]
+            y1, y2 = seg["y1"], seg["y2"]
+            is_dotted = seg["is_dotted"]
+            if is_dotted:
+                # 点線: 2点を結ぶ線分との距離を計算
+                dx = x2 - x1
+                dy = y2 - y1
+                length_sq = dx * dx + dy * dy
+                if length_sq < 1e-9:
+                    dist = ((scene_x - x1) ** 2 + (scene_y - y1) ** 2) ** 0.5
+                else:
+                    t = max(0.0, min(1.0, ((scene_x - x1) * dx + (scene_y - y1) * dy) / length_sq))
+                    proj_x = x1 + t * dx
+                    proj_y = y1 + t * dy
+                    dist = ((scene_x - proj_x) ** 2 + (scene_y - proj_y) ** 2) ** 0.5
+                x_in_range = (min(x1, x2) - tolerance <= scene_x <= max(x1, x2) + tolerance)
+                if dist <= tolerance and x_in_range:
+                    result.append(seg)
+            else:
+                # 水平線分: X範囲内かつY距離が許容範囲内
+                if (x1 - tolerance <= scene_x <= x2 + tolerance) and (abs(scene_y - y1) <= tolerance):
+                    result.append(seg)
+        return result

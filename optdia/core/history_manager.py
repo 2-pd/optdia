@@ -2,23 +2,23 @@ from collections import deque
 from typing import List, Union
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QMessageBox, QApplication
-from core.events import BaseEvent, BaseTemporaryStablingEvent, HistoryExecutionError
+from core.events import BaseTrainEvent, BaseTemporaryStablingEvent, BaseShuntingOperationEvent, HistoryExecutionError
 
 
 class HistoryManager(QObject):
     """
     OptDiaのUndo / Redo履歴を管理するクラス
-    - ユーザーによる1回の操作ごとにBaseEventまたはBaseTemporaryStablingEventのリストとしてundo_stack/redo_stackに格納される
+    - ユーザーによる1回の操作ごとにBaseTrainEventまたはBaseTemporaryStablingEvent、BaseShuntingOperationEventのリストとしてundo_stack/redo_stackに格納される
     - 最大100件の履歴を保持する
     """
     historyChanged = Signal()
-    undone = Signal(list)  # list[BaseEvent | BaseTemporaryStablingEvent]
-    redone = Signal(list)  # list[BaseEvent | BaseTemporaryStablingEvent]
+    undone = Signal(list)  # list[BaseTrainEvent | BaseTemporaryStablingEvent | BaseShuntingOperationEvent]
+    redone = Signal(list)  # list[BaseTrainEvent | BaseTemporaryStablingEvent | BaseShuntingOperationEvent]
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.undo_stack: deque[List[Union[BaseEvent, BaseTemporaryStablingEvent]]] = deque(maxlen=100)
-        self.redo_stack: deque[List[Union[BaseEvent, BaseTemporaryStablingEvent]]] = deque(maxlen=100)
+        self.undo_stack: deque[List[Union[BaseTrainEvent, BaseTemporaryStablingEvent, BaseShuntingOperationEvent]]] = deque(maxlen=100)
+        self.redo_stack: deque[List[Union[BaseTrainEvent, BaseTemporaryStablingEvent, BaseShuntingOperationEvent]]] = deque(maxlen=100)
 
     def can_undo(self) -> bool:
         return len(self.undo_stack) > 0
@@ -26,7 +26,7 @@ class HistoryManager(QObject):
     def can_redo(self) -> bool:
         return len(self.redo_stack) > 0
 
-    def push_events(self, events: List[Union[BaseEvent, BaseTemporaryStablingEvent]]) -> None:
+    def push_events(self, events: List[Union[BaseTrainEvent, BaseTemporaryStablingEvent, BaseShuntingOperationEvent]]) -> None:
         """1回の操作に対応するイベントのリストをスタックに追加する"""
         if not events:
             return

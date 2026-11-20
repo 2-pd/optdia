@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from core.project import OptDiaProject, generate_random_id
 from core.history_manager import HistoryManager
 from core.events import (
-    BaseEvent, AddTrainEvent, RemoveTrainEvent, ReorderTrainsEvent, ChangeTrainNumberEvent,
+    AddTrainEvent, RemoveTrainEvent, ReorderTrainsEvent, ChangeTrainNumberEvent,
     AddTrainDiagramEvent, RemoveTrainDiagramEvent, AddTrainOperationEvent,
     RemoveTrainOperationEvent, ChangeTrainOperationEvent, ChangeTrainCarCountEvent,
     ChangeTrainTypeEvent, ChangeTrainNamedNumberEvent, ChangeTrainDestinationEvent,
