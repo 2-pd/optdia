@@ -289,7 +289,7 @@ class DiagramScene(QGraphicsScene):
                 if target == "route" and r_id and r_id in proj.routes:
                     route = proj.routes[r_id]
                     segments = route.get("line_segments", [])
-                    for seg in segments:
+                    for seg_idx, seg in enumerate(segments):
                         line_id = seg.get("line_id")
                         line = proj.lines.get(line_id)
                         if not line:
@@ -307,7 +307,19 @@ class DiagramScene(QGraphicsScene):
                             seg_eids = line_eids[idx_start:idx_end + 1]
                         else:
                             seg_eids = line_eids[idx_start:idx_end - 1:-1] if idx_end > 0 else line_eids[idx_start::-1]
-                        for eid in seg_eids:
+                        for i_eid, eid in enumerate(seg_eids):
+                            # 連続する部分区間で境界駅が同一駅の場合、統合するため重複加算をスキップ
+                            if seg_idx > 0 and i_eid == 0:
+                                prev_seg = segments[seg_idx - 1]
+                                prev_line = proj.lines.get(prev_seg.get("line_id"))
+                                if prev_line:
+                                    prev_end_eid = prev_seg.get("end_station_entry", prev_seg.get("end_station"))
+                                    prev_st_map = {s.get("station_entry_id"): s for s in prev_line.get("station_entries", [])}
+                                    st_prev = prev_st_map.get(prev_end_eid)
+                                    st_curr = station_map.get(eid)
+                                    if st_prev and st_curr and st_prev.get("station_id") == st_curr.get("station_id"):
+                                        continue
+
                             st_info = station_map.get(eid)
                             if st_info:
                                 sid = st_info.get("station_id")
@@ -529,7 +541,27 @@ class DiagramScene(QGraphicsScene):
                     return None
                 end_abs_time = end_st_info.get("absolute_standard_running_time")
 
-                for eid in seg_eids:
+                for i_eid, eid in enumerate(seg_eids):
+                    # 連続する部分区間で前の区間の最後の駅と後の区間の最初の駅が同一駅の場合
+                    # 発着番線占有表エリア（および駅エントリ）を統合する
+                    if seg_idx > 0 and i_eid == 0:
+                        prev_seg = segments[seg_idx - 1]
+                        prev_line = self.project.lines.get(prev_seg.get("line_id"))
+                        if prev_line:
+                            prev_end_eid = prev_seg.get("end_station_entry", prev_seg.get("end_station"))
+                            prev_st_map = {s.get("station_entry_id"): s for s in prev_line.get("station_entries", [])}
+                            st_prev = prev_st_map.get(prev_end_eid)
+                            st_curr = station_map.get(eid)
+                            if st_prev and st_curr and st_prev.get("station_id") == st_curr.get("station_id"):
+                                # 境界駅が同一駅の場合、直前の区間のエントリに segment_id / station_entry_id を統合してスキップ
+                                for prev_entry in reversed(stations_data):
+                                    if prev_entry.get("station_id") == st_curr.get("station_id"):
+                                        prev_entry.setdefault("alt_segment_ids", set()).add(seg_id)
+                                        prev_entry.setdefault("alt_station_entry_ids", set()).add(eid)
+                                    else:
+                                        break
+                                continue
+
                     st_info = station_map.get(eid)
                     if not st_info or st_info.get("absolute_standard_running_time") is None:
                         return None
@@ -677,6 +709,20 @@ class DiagramScene(QGraphicsScene):
     def _render_station_lines(self, stations_data, line_end_x):
         pen_normal = QPen(QColor("#dddddd"), 1)
         pen_major = QPen(QColor("#aaaaaa"), 2)
+
+        # 発着番線占有表エリアの背景（薄い灰色のドット柄）を描画
+        rendered_areas = set()
+        brush_track_chart = QBrush(QColor("#eeeeee"), Qt.Dense6Pattern)
+        pen_none = QPen(Qt.NoPen)
+        for st in stations_data:
+            if st.get("is_track_entry", False):
+                top_y = st.get("station_y_top")
+                bot_y = st.get("station_y_bottom")
+                if top_y is not None and bot_y is not None and (top_y, bot_y) not in rendered_areas:
+                    rendered_areas.add((top_y, bot_y))
+                    h = bot_y - top_y
+                    bg_rect = self.addRect(0, top_y, line_end_x, h, pen_none, brush_track_chart)
+                    bg_rect.setZValue(-1)
 
         for st in stations_data:
             y = st["y"]
@@ -868,10 +914,12 @@ class DiagramScene(QGraphicsScene):
                 # 運行系統表示では segment_id と station_entry_id
                 # 路線表示では station_entry_id のみ (segment_id は None)
                 if target_segment_ids is not None:
-                    if st.get("station_entry_id") == eid:
+                    if st.get("station_entry_id") == eid or eid in st.get("alt_station_entry_ids", set()):
                         matching_entries.append(st)
                 else:
-                    if st.get("segment_id") == seg_id and st.get("station_entry_id") == eid:
+                    match_seg = (st.get("segment_id") == seg_id or seg_id in st.get("alt_segment_ids", set()))
+                    match_eid = (st.get("station_entry_id") == eid or eid in st.get("alt_station_entry_ids", set()))
+                    if match_seg and match_eid:
                         matching_entries.append(st)
 
             if not matching_entries:
@@ -1456,7 +1504,7 @@ class DiagramScene(QGraphicsScene):
         self.addItem(path_item)
         return path_item
 
-    def _create_train_pen(self, train_type_id):
+    def _create_train_pen(self, train_type_id, weight_override=None):
         tt = self.project.train_types.get(train_type_id) if (self.project and train_type_id) else None
         if tt:
             color_str = tt.get("main_color", "#333333")
@@ -1466,6 +1514,9 @@ class DiagramScene(QGraphicsScene):
             color_str = "#333333"
             weight_str = "normal"
             style_str = "solid"
+
+        if weight_override:
+            weight_str = weight_override
 
         pen = QPen(QColor(color_str))
 
@@ -1682,6 +1733,7 @@ class DiagramScene(QGraphicsScene):
                 continue
 
             num_segments = len(train_segments)
+            drawn_shunting_ids = set()
 
             # 3. 各セグメント内で表示対象列車を判定し、接続パスおよび運用番号ラベルを登録
             for seg_idx, seg_train_items in enumerate(train_segments):
@@ -1741,9 +1793,70 @@ class DiagramScene(QGraphicsScene):
                         continue
                     drawn_connections.add(conn_key)
 
-                    self._draw_operation_connecting_path(info_prev, info_next, item_next["m_train"], op_info=op_info, op_id=op_id)
+                    self._draw_operation_connecting_path(info_prev, info_next, item_next["m_train"], op_info=op_info, op_id=op_id, drawn_shunting_ids=drawn_shunting_ids)
 
-        # 4. 始発・終着運用番号ラベルの描画
+            # 4. 時間外の駅構内入換の描画
+            # 前の列車の到着〜後の列車の発車までの時間から外れている構内入換、
+            # あるいは列車間に該当しなかった構内入換を薄い灰色(#dddddd)・赤(#ee3333)ドロップシャドウで描画
+            all_shunts = op_info.get("shunting_operations", []) or []
+            for sh_idx, sh in enumerate(all_shunts):
+                sh_ident = sh.get("shunting_id", sh_idx)
+                if sh_ident in drawn_shunting_ids:
+                    continue
+
+                sh_time_str = sh.get("shunting_time")
+                sh_sec = self._time_to_seconds(sh_time_str)
+                if sh_sec is None:
+                    continue
+
+                sh_sid = sh.get("station_id")
+                if not sh_sid:
+                    continue
+
+                st_obj = self.project.stations.get(sh_sid, {})
+                if not (self.show_track_allocation_chart and st_obj.get("show_track_allocation_chart", False)):
+                    continue
+
+                orig_trk = sh.get("origin_track")
+                dest_trk = sh.get("destination_track")
+
+                y_orig = self._get_track_y(sh_sid, orig_trk, stations_data)
+                y_dest = self._get_track_y(sh_sid, dest_trk, stations_data, ref_y=y_orig)
+                if y_orig is None or y_dest is None:
+                    continue
+
+                x_sh = (sh_sec / 60.0) * self.scale_x
+
+                path = QPainterPath()
+                path.moveTo(x_sh, y_orig)
+                path.lineTo(x_sh, y_dest)
+                item = QGraphicsPathItem(path)
+
+                pen_out_of_time = QPen(QColor("#dddddd"), 2.0, Qt.DotLine)
+                item.setPen(pen_out_of_time)
+                item.setZValue(2)
+
+                shadow = QGraphicsDropShadowEffect()
+                shadow.setColor(QColor("#ee3333"))
+                shadow.setBlurRadius(5)
+                shadow.setOffset(0, 0)
+                item.setGraphicsEffect(shadow)
+
+                self.addItem(item)
+
+                if op_id:
+                    self.shunting_segments.append({
+                        "x": x_sh,
+                        "y1": y_orig,
+                        "y2": y_dest,
+                        "station_id": sh_sid,
+                        "operation_id": op_id,
+                        "diagram_id": self.diagram_id,
+                        "origin_track": orig_trk,
+                        "destination_track": dest_trk,
+                    })
+
+        # 5. 始発・終着運用番号ラベルの描画
         self._render_operation_start_end_labels(first_train_ops, last_train_ops)
 
     def _get_train_display_info(self, item, stations_data):
@@ -1943,7 +2056,7 @@ class DiagramScene(QGraphicsScene):
             return min(candidates, key=lambda y_val: abs(y_val - ref_y))
         return candidates[0]
 
-    def _draw_operation_connecting_path(self, info_prev, info_next, m_train_next, op_info=None, op_id=None):
+    def _draw_operation_connecting_path(self, info_prev, info_next, m_train_next, op_info=None, op_id=None, drawn_shunting_ids=None):
         """
         前の列車の終着駅(x_arr, y_arr)と後の列車の始発駅(x_dep, y_dep)を結ぶパスを描画する。
         発着番線占有表有効時、番線一致判定および入換（shunting_operations）の描画を行う。
@@ -1956,7 +2069,7 @@ class DiagramScene(QGraphicsScene):
         dy_next = info_next["origin_dy"]
 
         tt_id = m_train_next.get("train_type_id")
-        pen_default = self._create_train_pen(tt_id)
+        pen_default = self._create_train_pen(tt_id, "thin")
         tt = self.project.train_types.get(tt_id) if (self.project and tt_id) else None
         main_color = tt.get("main_color", "#333333") if tt else "#333333"
 
@@ -2015,11 +2128,13 @@ class DiagramScene(QGraphicsScene):
         shunting_ops = []
         if op_info:
             all_shunts = op_info.get("shunting_operations", []) or []
-            for sh in all_shunts:
+            for sh_idx, sh in enumerate(all_shunts):
                 sh_time_str = sh.get("shunting_time")
                 sh_sec = self._time_to_seconds(sh_time_str)
                 if sh_sec is not None and t_prev_sec < sh_sec < t_next_sec:
                     shunting_ops.append((sh_sec, sh))
+                    if drawn_shunting_ids is not None:
+                        drawn_shunting_ids.add(sh.get("shunting_id", sh_idx))
             shunting_ops.sort(key=lambda x: x[0])
 
         pen_solid = QPen(QColor(main_color), 2.0, Qt.SolidLine)
@@ -2346,6 +2461,6 @@ class DiagramScene(QGraphicsScene):
             x = seg["x"]
             y1, y2 = seg["y1"], seg["y2"]
 
-            if (abs(scene_x - x) <= tolerance) and (min(y1, y2) - tolerance <= scene_y <= min(y1, y2) + tolerance):
+            if (abs(scene_x - x) <= tolerance) and (min(y1, y2) - tolerance <= scene_y <= max(y1, y2) + tolerance):
                 result.append(seg)
         return result
