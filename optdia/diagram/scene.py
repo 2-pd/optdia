@@ -158,6 +158,7 @@ class DiagramScene(QGraphicsScene):
         self.scale_x = scale_x
         self.scale_y = scale_y
         self.show_track_allocation_chart = False
+        self.filter_direction = "both"
         self.rendered_trains = []
         self.stations_data = []
         self.current_highlight_train = None
@@ -373,7 +374,8 @@ class DiagramScene(QGraphicsScene):
             filter_train_type_id: str = None,
             filter_train_type_ids: set = None,
             filter_operation_ids: set = None,
-            show_track_allocation_chart: bool = False):
+            show_track_allocation_chart: bool = False,
+            filter_direction: str = "both"):
         """
         運行ダイヤグラムを更新描画する。
         selected_target: "route" または line_id (str)
@@ -383,6 +385,7 @@ class DiagramScene(QGraphicsScene):
         filter_train_type_ids: 表示する列車種別IDの集合。Noneの場合は全種別を表示
         filter_operation_ids: 表示する車両運用IDの集合。Noneの場合は全運用を表示
         show_track_allocation_chart: 発着番線占有表を表示するか否か
+        filter_direction: "both" (上下列車), "inbound" (上り列車のみ), "outbound" (下り列車のみ)
         """
         self.project = project
         self.selected_target = selected_target
@@ -392,6 +395,7 @@ class DiagramScene(QGraphicsScene):
         self.filter_train_type_ids = filter_train_type_ids
         self.filter_operation_ids = filter_operation_ids
         self.show_track_allocation_chart = show_track_allocation_chart
+        self.filter_direction = filter_direction
         self.rendered_trains = []
         self.current_highlight_train = None
         self.current_highlight_query = ""
@@ -783,6 +787,30 @@ class DiagramScene(QGraphicsScene):
         # 「全て表示」または「車両運用」フィルタリング時は接続パスおよび運用番号ラベルを描画する
         if self.filter_train_type_id is None and self.filter_train_type_ids is None:
             self._render_operations(stations_data)
+
+    def _get_train_overall_dy(self, subpaths, label_subpaths=None):
+        """
+        列車のサブパスから運行ダイヤグラム上での進行方向（dy）を判定する。
+        dy > 0: 上から下に向かう列車（下り列車）
+        dy < 0: 下から上に向かう列車（上り列車）
+        dy == 0: 判定不能
+        """
+        effective_subpaths = label_subpaths if label_subpaths else subpaths
+        if not effective_subpaths:
+            return 0.0
+        first_sp = effective_subpaths[0]
+        last_sp = effective_subpaths[-1]
+        if not first_sp or not last_sp:
+            return 0.0
+        y_start = first_sp[0][1]
+        y_end = last_sp[-1][1]
+        if y_end != y_start:
+            return y_end - y_start
+        for sp in effective_subpaths:
+            for pt in sp:
+                if pt[1] != y_start:
+                    return pt[1] - y_start
+        return 0.0
 
     def _render_trains_for_route(self, stations_data):
         route = self.project.routes.get(self.route_id)
@@ -1237,6 +1265,14 @@ class DiagramScene(QGraphicsScene):
             stops, stations_data, segment_indices=segment_indices, target_segment_ids=None
         )
 
+        overall_dy = self._get_train_overall_dy(subpaths, label_subpaths)
+        if self.filter_direction == "inbound" and overall_dy > 0:
+            # 上り列車のみ表示時に下り列車（上から下に向かう列車 dy > 0）は非表示
+            return
+        elif self.filter_direction == "outbound" and overall_dy < 0:
+            # 下り列車のみ表示時に上り列車（下から上に向かう列車 dy < 0）は非表示
+            return
+
         path_items = []
         # 通常のサブパスを描画
         for sp in subpaths:
@@ -1345,6 +1381,14 @@ class DiagramScene(QGraphicsScene):
                     subpaths, track_h_segs, track_v_segs, label_subpaths, all_subpath_stops = self._build_train_subpaths(
                         stops, stations_data, segment_indices=None, target_segment_ids=target_segment_ids
                     )
+
+                    overall_dy = self._get_train_overall_dy(subpaths, label_subpaths)
+                    if self.filter_direction == "inbound" and overall_dy > 0:
+                        # 上り列車のみ表示時に下り列車（上から下に向かう列車 dy > 0）は非表示
+                        continue
+                    elif self.filter_direction == "outbound" and overall_dy < 0:
+                        # 下り列車のみ表示時に上り列車（下から上に向かう列車 dy < 0）は非表示
+                        continue
 
                     path_items = []
                     for sp in subpaths:
@@ -1947,6 +1991,7 @@ class DiagramScene(QGraphicsScene):
                 "terminal": term_pt,
                 "origin_dy": origin_dy,
                 "term_dy": term_dy,
+                "overall_dy": self._get_train_overall_dy(subpaths, label_subpaths),
                 "origin_displayed": origin_displayed,
                 "terminal_displayed": terminal_displayed,
                 "first_stop": first_stop,
@@ -2020,6 +2065,7 @@ class DiagramScene(QGraphicsScene):
                 "terminal": term_pt,
                 "origin_dy": origin_dy,
                 "term_dy": term_dy,
+                "overall_dy": self._get_train_overall_dy(subpaths, label_subpaths),
                 "origin_displayed": origin_displayed,
                 "terminal_displayed": terminal_displayed,
                 "first_stop": first_stop,
@@ -2080,6 +2126,20 @@ class DiagramScene(QGraphicsScene):
         is_track_chart_active = self.show_track_allocation_chart and st_next_obj.get("show_track_allocation_chart", False)
 
         if not is_track_chart_active:
+            # 発着番線占有表以外の箇所（曲線/直線）の接続パス:
+            # 後の列車が非表示となる方向の場合（または前の列車が非表示となる方向の場合）は非表示
+            dy_next_overall = info_next.get("overall_dy", dy_next)
+            if self.filter_direction == "inbound" and dy_next_overall > 0:
+                return
+            elif self.filter_direction == "outbound" and dy_next_overall < 0:
+                return
+
+            dy_prev_overall = info_prev.get("overall_dy", dy_prev)
+            if self.filter_direction == "inbound" and dy_prev_overall > 0:
+                return
+            elif self.filter_direction == "outbound" and dy_prev_overall < 0:
+                return
+
             # 発着番線占有表が無効な場合は従来通りの曲線/直線描画
             path = QPainterPath()
             path.moveTo(p_prev[0], p_prev[1])
@@ -2336,6 +2396,13 @@ class DiagramScene(QGraphicsScene):
 
         # 始発ラベル
         for t_key, data in first_train_ops.items():
+            info = data["info"]
+            dy_overall = info.get("overall_dy", info["origin_dy"])
+            if self.filter_direction == "inbound" and dy_overall > 0:
+                continue
+            elif self.filter_direction == "outbound" and dy_overall < 0:
+                continue
+
             symbols_dict = data.get("symbols", {})
             label_parts = []
             for sym in ["○", "(○)"]:
@@ -2377,6 +2444,13 @@ class DiagramScene(QGraphicsScene):
 
         # 終着ラベル
         for t_key, data in last_train_ops.items():
+            info = data["info"]
+            dy_overall = info.get("overall_dy", info["term_dy"])
+            if self.filter_direction == "inbound" and dy_overall > 0:
+                continue
+            elif self.filter_direction == "outbound" and dy_overall < 0:
+                continue
+
             symbols_dict = data.get("symbols", {})
             label_parts = []
             for sym in ["△", "(△)"]:

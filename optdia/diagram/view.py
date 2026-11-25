@@ -53,12 +53,14 @@ class DiagramView(QGraphicsView):
             filter_train_type_id: str = None,
             filter_train_type_ids: set = None,
             filter_operation_ids: set = None,
-            show_track_allocation_chart: bool = False):
+            show_track_allocation_chart: bool = False,
+            filter_direction: str = "both"):
         return self.scene.update_diagram(project, selected_target, route_id, diagram_id,
                 filter_train_type_id=filter_train_type_id,
                 filter_train_type_ids=filter_train_type_ids,
                 filter_operation_ids=filter_operation_ids,
-                show_track_allocation_chart=show_track_allocation_chart)
+                show_track_allocation_chart=show_track_allocation_chart,
+                filter_direction=filter_direction)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

@@ -1483,7 +1483,19 @@ class MainWindow(QMainWindow):
 
         frame_layout = QVBoxLayout(frame)
         frame_layout.setContentsMargins(10, 10, 10, 10)
-        frame_layout.setSpacing(6)
+        frame_layout.setSpacing(5)
+
+        # 上下列車表示フィルタコンボボックス
+        self.diagram_direction_combo = QComboBox()
+        self.diagram_direction_combo.setFixedHeight(28)
+        self.diagram_direction_combo.addItem("上下列車を表示", "both")
+        self.diagram_direction_combo.addItem("上り列車のみ表示", "inbound")
+        self.diagram_direction_combo.addItem("下り列車のみ表示", "outbound")
+        self.diagram_direction_combo.setCurrentIndex(0)
+        self.diagram_direction_combo.currentIndexChanged.connect(self._on_diagram_direction_filter_changed)
+        frame_layout.addWidget(self.diagram_direction_combo)
+
+        frame_layout.addSpacing(5)
 
         lbl_target = QLabel("表示フィルタリング対象:")
         lbl_target.setStyleSheet("font-weight: bold;")
@@ -1565,6 +1577,10 @@ class MainWindow(QMainWindow):
 
         self.type_checkboxes = {}  # {tt_id: QCheckBox}
 
+    def _on_diagram_direction_filter_changed(self, index: int):
+        """上下列車表示フィルタコンボボックス変更時"""
+        self._update_diagram_view()
+
     def _init_diagram_display_settings_popup(self):
         """ダイヤグラムの「表示設定」ポップアップウィジェットを初期化する"""
         self.diagram_settings_popup = HoverPopupWindow(self.lbl_diagram_display_settings)
@@ -1578,7 +1594,7 @@ class MainWindow(QMainWindow):
 
         frame_layout = QVBoxLayout(frame)
         frame_layout.setContentsMargins(10, 10, 10, 10)
-        frame_layout.setSpacing(6)
+        frame_layout.setSpacing(5)
 
         # ダイヤグラム表示幅コンボボックス
         lbl_diag_width = QLabel("表示幅:")
@@ -1620,6 +1636,8 @@ class MainWindow(QMainWindow):
             self.diagram_height_combo.setCurrentIndex(0) # デフォルトは「自動」
         self.diagram_height_combo.currentIndexChanged.connect(self._on_diagram_height_changed)
         frame_layout.addWidget(self.diagram_height_combo)
+
+        frame_layout.addSpacing(10)
 
         # 「発着番線占有表を表示」チェックボックス
         self.cb_show_track_allocation_chart = QCheckBox("発着番線占有表を表示")
@@ -1884,11 +1902,14 @@ class MainWindow(QMainWindow):
         self.diagram_view.scene.set_scales(scale_x, scale_y)
         self.diagram_header_view.scene.set_scale_x(scale_x)
 
+        filter_direction = self.diagram_direction_combo.currentData() if hasattr(self, "diagram_direction_combo") else "both"
+
         stations_data = self.diagram_view.update_diagram(
             self.project, selected_target, route_id, diagram_id,
             filter_train_type_ids=filter_train_type_ids,
             filter_operation_ids=filter_operation_ids,
-            show_track_allocation_chart=show_track_chart
+            show_track_allocation_chart=show_track_chart,
+            filter_direction=filter_direction
         )
         self.diagram_header_view.update_header()
         self.diagram_station_view.update_stations(self.project, stations_data)

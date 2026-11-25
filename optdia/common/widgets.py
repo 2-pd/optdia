@@ -343,6 +343,18 @@ class HoverPopupLabel(QLabel):
         if self.popup_widget:
             self.popup_widget.show_below()
 
+    def mouseReleaseEvent(self, event):
+        # 左クリックされた場合にポップアップを強制表示(表示するポップアップが登録済みの場合のみ)
+        if self.popup_widget and event.button() == Qt.MouseButton.LeftButton:
+            # ボタンを離した際、マウスがまだこのラベルの上にある場合のみ実行
+            if self.rect().contains(event.position().toPoint()):
+                global_pos = event.globalPosition().toPoint()
+                QTimer.singleShot(
+                    50, self.popup_widget.show_below()
+                )
+
+        super().mouseReleaseEvent(event)
+
 
 # ホバー時に表示されるポップアップウィジェット基底クラス
 class HoverPopupWindow(QWidget):
