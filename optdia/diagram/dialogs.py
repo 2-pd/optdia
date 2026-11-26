@@ -1941,6 +1941,308 @@ class DeleteShuntingOperationDialog(QDialog):
         return result
 
 
+class EditShuntingOperationDialog(QDialog):
+    """
+    駅構内入換編集ダイアログ
+
+    駅構内入換のパスを右クリックして「この構内入換を編集」を選択したとき、
+    または構内入換のパスをダブルクリックしたときに表示するダイアログ。
+    AddShuntingOperationDialog をベースに、「入換を行う運用」セクションの代わりに
+    「運用番号:」ラベルと運用番号ラベル（背景色はmain_color）を縦に表示する。
+    """
+
+    def __init__(self, parent, project: OptDiaProject, diagram_id: str,
+                 operation_id: str, shunting_index: int, shunting_entry: dict,
+                 history_manager: Optional[HistoryManager] = None,
+                 co_located_entries: Optional[List] = None):
+        """
+        parent: 親ウィジェット
+        project: OptDiaProject インスタンス
+        diagram_id: 現在の運転ダイヤID
+        operation_id: 編集対象の車両運用ID
+        shunting_index: 編集対象の shunting_operations リスト内のインデックス
+        shunting_entry: 編集対象の駅構内入換エントリ（辞書）
+        history_manager: HistoryManager インスタンス
+        co_located_entries: ターゲットと全く同じ位置にある他の入換エントリのリスト
+                           各要素: (operation_id, shunting_index, shunting_entry)
+        """
+        super().__init__(parent)
+        self.project = project
+        self.diagram_id = diagram_id
+        self.operation_id = operation_id
+        self.shunting_index = shunting_index
+        self.shunting_entry = shunting_entry
+        self.history_manager = history_manager
+        self.co_located_entries = co_located_entries or []
+
+        self.station_id = shunting_entry.get("station_id", "")
+
+        # 駅名の取得
+        st_obj = project.stations.get(self.station_id, {})
+        station_name = st_obj.get("station_name", self.station_id)
+        self.setWindowTitle("駅構内入換の編集")
+        self.resize(440, 440)
+
+        self._is_updating_spin = False
+        self._init_ui(st_obj)
+
+    def _init_ui(self, st_obj: dict):
+        main_layout = QVBoxLayout(self)
+
+        # ----- 運用番号: ラベル + 運用番号表示ラベル -----
+        lbl_op_title = QLabel("運用番号:")
+        main_layout.addWidget(lbl_op_title)
+
+        diag_ops = self.project.diagrams.get(self.diagram_id, {}).get("operations", {})
+        op_info = diag_ops.get(self.operation_id, {})
+        op_num = op_info.get("operation_number", self.operation_id)
+        op_main_color = op_info.get("main_color", "#ffffff")
+
+        lbl_op_number = QLabel(str(op_num))
+        lbl_op_number.setStyleSheet(
+            f"background-color: {op_main_color}; font-weight: bold; padding: 4px 8px; border-radius: 2px;"
+        )
+        lbl_op_number.setFixedHeight(28)
+        main_layout.addWidget(lbl_op_number)
+
+        # ----- 同位置の他入換があればチェックボックスを表示 -----
+        self.chk_also_update = None
+        if self.co_located_entries:
+            n = len(self.co_located_entries)
+            if n == 1:
+                co_op_id, _, _ = self.co_located_entries[0]
+                co_op_info = diag_ops.get(co_op_id, {})
+                co_op_num = co_op_info.get("operation_number", co_op_id)
+                cb_text = f"同時に {co_op_num} 運用の入換時刻と移動元・移動先番線も変更"
+            else:
+                cb_text = f"同時に {n}件 の運用の入換時刻と移動元・移動先番線も変更"
+            self.chk_also_update = QCheckBox(cb_text)
+            self.chk_also_update.setChecked(True)
+            main_layout.addWidget(self.chk_also_update)
+
+        # ----- 入換時刻: ラベル + 時分秒スピンボックス -----
+        lbl_time = QLabel("入換時刻:")
+        main_layout.addWidget(lbl_time)
+
+        # 既存の入換時刻から初期値を計算
+        existing_time_str = self.shunting_entry.get("shunting_time", "00:00:00")
+        existing_sec = _time_to_seconds(existing_time_str) or 0
+        init_h = existing_sec // 3600
+        init_m = (existing_sec % 3600) // 60
+        init_s = existing_sec % 60
+
+        time_layout = QHBoxLayout()
+        self.spin_hour = QSpinBox()
+        self.spin_hour.setRange(0, 99)
+        self.spin_hour.setValue(init_h)
+        self.spin_hour.setSuffix("時")
+
+        self.spin_min = QSpinBox()
+        self.spin_min.setRange(-1, 60)
+        self.spin_min.setValue(init_m)
+        self.spin_min.setSuffix("分")
+
+        self.spin_sec = QSpinBox()
+        self.spin_sec.setRange(-1, 60)
+        self.spin_sec.setValue(init_s)
+        self.spin_sec.setSuffix("秒")
+
+        time_layout.addWidget(self.spin_hour)
+        time_layout.addWidget(self.spin_min)
+        time_layout.addWidget(self.spin_sec)
+        time_layout.addStretch()
+        main_layout.addLayout(time_layout)
+
+        # スピンボックスのシグナル接続（繰り上がり・繰り下がり処理）
+        self.spin_sec.valueChanged.connect(self._on_sec_changed)
+        self.spin_min.valueChanged.connect(self._on_min_changed)
+
+        # ----- 移動元番線: ラベル + コンボボックス -----
+        lbl_origin = QLabel("移動元番線:")
+        main_layout.addWidget(lbl_origin)
+
+        self.combo_origin_track = QComboBox()
+        self._populate_track_combo(self.combo_origin_track, st_obj,
+                                   self.shunting_entry.get("origin_track"))
+        main_layout.addWidget(self.combo_origin_track)
+
+        # ----- 移動先番線: ラベル + コンボボックス -----
+        lbl_dest = QLabel("移動先番線:")
+        main_layout.addWidget(lbl_dest)
+
+        self.combo_dest_track = QComboBox()
+        self._populate_track_combo(self.combo_dest_track, st_obj,
+                                   self.shunting_entry.get("destination_track"))
+        main_layout.addWidget(self.combo_dest_track)
+
+        # ----- 備考: ラベル + 複数行テキストボックス -----
+        lbl_note = QLabel("備考:")
+        main_layout.addWidget(lbl_note)
+
+        self.txt_note = QTextEdit()
+        self.txt_note.setMaximumHeight(80)
+        self.txt_note.setPlainText(self.shunting_entry.get("note", ""))
+        main_layout.addWidget(self.txt_note)
+
+        main_layout.addStretch()
+
+        # ----- OK / キャンセル -----
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        self.btn_ok = QPushButton("OK")
+        self.btn_cancel = QPushButton("キャンセル")
+        self.btn_ok.clicked.connect(self._on_ok_clicked)
+        self.btn_cancel.clicked.connect(self.reject)
+        self.btn_ok.setProperty("class", "ok_button")
+        btn_layout.addWidget(self.btn_ok)
+        btn_layout.addWidget(self.btn_cancel)
+        main_layout.addLayout(btn_layout)
+
+    def _populate_track_combo(self, combo: QComboBox, st_obj: dict, default_track_id: Optional[str] = None):
+        """駅の発着番線をコンボボックスに追加する"""
+        tracks_dict = st_obj.get("tracks", {})
+        tracks_order = st_obj.get("tracks_order", [])
+        if not tracks_order:
+            tracks_order = list(tracks_dict.keys()) if isinstance(tracks_dict, dict) else []
+        for trk_id in tracks_order:
+            trk_info = tracks_dict.get(trk_id, {}) if isinstance(tracks_dict, dict) else {}
+            trk_name = trk_info.get("track_name", trk_id)
+            combo.addItem(trk_name, trk_id)
+
+        if default_track_id is not None:
+            idx = combo.findData(default_track_id)
+            if idx != -1:
+                combo.setCurrentIndex(idx)
+
+    def _on_sec_changed(self, val: int):
+        """秒スピンボックスの繰り上がり・繰り下がり処理"""
+        if self._is_updating_spin:
+            return
+        self._is_updating_spin = True
+        try:
+            if val == 60:
+                self.spin_sec.setValue(0)
+                new_min = self.spin_min.value() + 1
+                if new_min == 60:
+                    self.spin_min.setValue(0)
+                    if self.spin_hour.value() < 99:
+                        self.spin_hour.setValue(self.spin_hour.value() + 1)
+                else:
+                    self.spin_min.setValue(new_min)
+            elif val == -1:
+                self.spin_sec.setValue(59)
+                new_min = self.spin_min.value() - 1
+                if new_min == -1:
+                    self.spin_min.setValue(59)
+                    if self.spin_hour.value() > 0:
+                        self.spin_hour.setValue(self.spin_hour.value() - 1)
+                else:
+                    self.spin_min.setValue(new_min)
+        finally:
+            self._is_updating_spin = False
+
+    def _on_min_changed(self, val: int):
+        """分スピンボックスの繰り上がり・繰り下がり処理"""
+        if self._is_updating_spin:
+            return
+        self._is_updating_spin = True
+        try:
+            if val == 60:
+                self.spin_min.setValue(0)
+                if self.spin_hour.value() < 99:
+                    self.spin_hour.setValue(self.spin_hour.value() + 1)
+            elif val == -1:
+                self.spin_min.setValue(59)
+                if self.spin_hour.value() > 0:
+                    self.spin_hour.setValue(self.spin_hour.value() - 1)
+        finally:
+            self._is_updating_spin = False
+
+    def _get_shunting_time_str(self) -> str:
+        """現在の時分秒スピンボックスの値からhh:mm:ss形式の文字列を返す"""
+        h = self.spin_hour.value()
+        m = self.spin_min.value()
+        s = self.spin_sec.value()
+        return f"{h:02d}:{m:02d}:{s:02d}"
+
+    def _on_ok_clicked(self):
+        """OKボタン押下時の処理"""
+        shunting_time_str = self._get_shunting_time_str()
+        origin_track = self.combo_origin_track.currentData()
+        dest_track = self.combo_dest_track.currentData()
+        note = self.txt_note.toPlainText()
+
+        if origin_track == dest_track:
+            QMessageBox.critical(self, "エラー", "移動元番線と移動先番線が同一です。")
+            return
+
+        diag_ops = self.project.diagrams.get(self.diagram_id, {}).get("operations", {})
+        op_info = diag_ops.get(self.operation_id)
+        if op_info is None:
+            self.reject()
+            return
+
+        shunting_ops = op_info.get("shunting_operations", [])
+        if not (0 <= self.shunting_index < len(shunting_ops)):
+            self.reject()
+            return
+
+        old_entry = copy.deepcopy(shunting_ops[self.shunting_index])
+
+        new_entry = {
+            "station_id": self.station_id,
+            "shunting_time": shunting_time_str,
+            "origin_track": origin_track,
+            "destination_track": dest_track,
+            "note": note,
+        }
+
+        shunting_ops[self.shunting_index] = new_entry
+
+        events_to_push = []
+
+        if self.history_manager:
+            ev = ChangeShuntingOperationEvent(
+                diagram_id=self.diagram_id,
+                operation_id=self.operation_id,
+                index=self.shunting_index,
+                old_shunting_event=old_entry,
+                new_shunting_event=new_entry
+            )
+            events_to_push.append(ev)
+
+        # 同位置の他入換もチェックボックスがONなら一括更新
+        if self.chk_also_update is not None and self.chk_also_update.isChecked():
+            diag_ops_all = self.project.diagrams.get(self.diagram_id, {}).get("operations", {})
+            for co_op_id, co_sh_idx, _ in self.co_located_entries:
+                co_op_info = diag_ops_all.get(co_op_id)
+                if co_op_info is None:
+                    continue
+                co_shunting_ops = co_op_info.get("shunting_operations", [])
+                if not (0 <= co_sh_idx < len(co_shunting_ops)):
+                    continue
+                co_old_entry = copy.deepcopy(co_shunting_ops[co_sh_idx])
+                co_new_entry = copy.deepcopy(co_old_entry)
+                co_new_entry["shunting_time"] = shunting_time_str
+                co_new_entry["origin_track"] = origin_track
+                co_new_entry["destination_track"] = dest_track
+                co_shunting_ops[co_sh_idx] = co_new_entry
+                if self.history_manager:
+                    co_ev = ChangeShuntingOperationEvent(
+                        diagram_id=self.diagram_id,
+                        operation_id=co_op_id,
+                        index=co_sh_idx,
+                        old_shunting_event=co_old_entry,
+                        new_shunting_event=co_new_entry
+                    )
+                    events_to_push.append(co_ev)
+
+        if self.history_manager and events_to_push:
+            self.history_manager.push_events(events_to_push)
+
+        self.accept()
+
+
 def delete_shunting_operations(candidates, project, diagram_id, history_manager):
     """
     指定された (operation_id, shunting_index, shunting_entry) のリストの構内入換を削除し、

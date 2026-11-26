@@ -3,7 +3,7 @@ from PySide6.QtWidgets import QGraphicsView, QMenu, QMessageBox, QGraphicsPathIt
 from PySide6.QtCore import Qt, QRectF
 from PySide6.QtGui import QPainter, QWheelEvent
 from .scene import DiagramScene, DiagramHeaderScene, DiagramStationScene
-from .dialogs import AddTrainDialog, delete_train, OperationPickerDialog, AddShuntingOperationDialog, DeleteShuntingOperationDialog, delete_shunting_operations
+from .dialogs import AddTrainDialog, delete_train, OperationPickerDialog, AddShuntingOperationDialog, DeleteShuntingOperationDialog, delete_shunting_operations, EditShuntingOperationDialog
 from previews.train_detail import TrainDetailPreviewDialog
 
 # 運行ダイヤグラムの上部ビュー（時刻ヘッダー）
@@ -91,6 +91,13 @@ class DiagramView(QGraphicsView):
         scene_pos = self.mapToScene(event.pos())
         rect = QRectF(scene_pos.x() - 4.0, scene_pos.y() - 4.0, 8.0, 8.0)
         items = [i for i in self.scene.items(rect) if isinstance(i, QGraphicsPathItem)]
+
+        # 発着番線占有表エリアの垂直線分(構内入換)をダブルクリックしたか判定
+        shunting_segs = self.scene.get_shunting_segments_at(scene_pos.x(), scene_pos.y(), tolerance=5.0)
+        if shunting_segs:
+            self._handle_edit_shunting_action(scene_pos, shunting_segs)
+            return
+
         if items:
             train_data = self._find_train_by_path_items(items)
             if train_data:
@@ -110,10 +117,13 @@ class DiagramView(QGraphicsView):
         if shunting_segs:
             # 駅構内入換の垂直パス上での専用コンテキストメニュー
             menu = QMenu(self)
+            edit_shunting_action = menu.addAction("この構内入換を編集")
             delete_shunting_action = menu.addAction("この構内入換を削除")
             add_train_action = menu.addAction("ここに列車を追加")
             selected_action = menu.exec(event.globalPos())
-            if selected_action == delete_shunting_action:
+            if selected_action == edit_shunting_action:
+                self._handle_edit_shunting_action(scene_pos, shunting_segs)
+            elif selected_action == delete_shunting_action:
                 self._handle_delete_shunting_action(scene_pos, shunting_segs)
             elif selected_action == add_train_action:
                 self._handle_add_train_action(scene_pos)
@@ -308,6 +318,127 @@ class DiagramView(QGraphicsView):
                     main_win.timetable_model.diagram_id,
                     main_win.timetable_model.direction
                 )
+
+    def _handle_edit_shunting_action(self, scene_pos, shunting_segs: list):
+        """
+        発着番線占有表エリアの垂直パス（入換パス）を右クリックして
+        「この構内入換を編集」を選択したとき、またはダブルクリックしたときの処理。
+        """
+        main_win = self.window()
+        project = getattr(main_win, "project", getattr(self.scene, "project", None))
+        diagram_id = getattr(self.scene, "diagram_id", None)
+        if not diagram_id and hasattr(main_win, "diagram_selector_combo"):
+            diagram_id = main_win.diagram_selector_combo.currentData()
+
+        if not project or not diagram_id:
+            return
+
+        history_manager = getattr(main_win, "history_manager", None)
+
+        scale_x = getattr(self.scene, "scale_x", 6.0)
+        diag_ops = project.diagrams.get(diagram_id, {}).get("operations", {})
+
+        # クリック位置に存在する入換パスに対応する shunting_operations を収集
+        seen_keys = set()
+        shunting_candidates = []  # list of (operation_id, shunting_index, shunting_entry)
+
+        for seg in shunting_segs:
+            op_id = seg.get("operation_id")
+            if not op_id:
+                continue
+            op_info = diag_ops.get(op_id)
+            if op_info is None:
+                continue
+
+            shunting_ops = op_info.get("shunting_operations", []) or []
+            seg_x = seg.get("x", 0)
+            seg_time_sec = (seg_x / scale_x) * 60.0
+
+            for idx, sh in enumerate(shunting_ops):
+                sh_time_str = sh.get("shunting_time", "")
+                sh_parts = sh_time_str.split(":")
+                try:
+                    sh_sec = int(sh_parts[0]) * 3600 + int(sh_parts[1]) * 60 + (int(sh_parts[2]) if len(sh_parts) > 2 else 0)
+                except (ValueError, IndexError):
+                    continue
+
+                if abs(sh_sec - seg_time_sec) <= 1.0:
+                    key = (op_id, idx)
+                    if key not in seen_keys:
+                        seen_keys.add(key)
+                        shunting_candidates.append((op_id, idx, sh))
+
+        if not shunting_candidates:
+            return
+
+        # 編集対象を1件に絞る（複数件の場合は最初の1件を対象とする）
+        op_id, sh_idx, sh_entry = shunting_candidates[0]
+
+        # ターゲットセグメントのシーン座標 (x, y1, y2) を特定する
+        target_seg_coords = None
+        for seg in shunting_segs:
+            if seg.get("operation_id") == op_id:
+                seg_x = seg.get("x", 0)
+                seg_time_sec = (seg_x / scale_x) * 60.0
+                sh_time_str = sh_entry.get("shunting_time", "")
+                sh_parts = sh_time_str.split(":")
+                try:
+                    sh_sec = int(sh_parts[0]) * 3600 + int(sh_parts[1]) * 60 + (int(sh_parts[2]) if len(sh_parts) > 2 else 0)
+                except (ValueError, IndexError):
+                    sh_sec = -1
+                if abs(sh_sec - seg_time_sec) <= 1.0:
+                    target_seg_coords = (seg.get("x", 0), seg.get("y1", 0), seg.get("y2", 0))
+                    break
+
+        # ターゲットと全く同じ位置 (x, y1, y2) の他セグメントから co_located_candidates を収集
+        co_located_candidates = []
+        if target_seg_coords is not None:
+            tx, ty1, ty2 = target_seg_coords
+            seen_co_keys = {(op_id, sh_idx)}
+            # シーン上の全入換セグメントを対象に完全一致判定
+            all_shunting_segs = getattr(self.scene, "shunting_segments", [])
+            for seg in all_shunting_segs:
+                sx = seg.get("x", 0)
+                sy1 = seg.get("y1", 0)
+                sy2 = seg.get("y2", 0)
+                if abs(sx - tx) < 0.01 and abs(sy1 - ty1) < 0.01 and abs(sy2 - ty2) < 0.01:
+                    co_op_id = seg.get("operation_id")
+                    if not co_op_id:
+                        continue
+                    co_op_info = diag_ops.get(co_op_id)
+                    if co_op_info is None:
+                        continue
+                    co_shunting_ops = co_op_info.get("shunting_operations", []) or []
+                    co_seg_time_sec = (sx / scale_x) * 60.0
+                    for co_idx, co_sh in enumerate(co_shunting_ops):
+                        co_sh_time_str = co_sh.get("shunting_time", "")
+                        co_sh_parts = co_sh_time_str.split(":")
+                        try:
+                            co_sh_sec = int(co_sh_parts[0]) * 3600 + int(co_sh_parts[1]) * 60 + (int(co_sh_parts[2]) if len(co_sh_parts) > 2 else 0)
+                        except (ValueError, IndexError):
+                            continue
+                        if abs(co_sh_sec - co_seg_time_sec) <= 1.0:
+                            key = (co_op_id, co_idx)
+                            if key not in seen_co_keys:
+                                seen_co_keys.add(key)
+                                co_located_candidates.append((co_op_id, co_idx, co_sh))
+
+        dlg = EditShuntingOperationDialog(
+            self,
+            project=project,
+            diagram_id=diagram_id,
+            operation_id=op_id,
+            shunting_index=sh_idx,
+            shunting_entry=sh_entry,
+            history_manager=history_manager,
+            co_located_entries=co_located_candidates,
+        )
+
+        if dlg.exec():
+            if hasattr(main_win, "set_modified"):
+                main_win.set_modified(True)
+            if hasattr(main_win, "_update_diagram_view"):
+                main_win._update_diagram_view()
 
     def _handle_delete_shunting_action(self, scene_pos, shunting_segs: list):
         """
